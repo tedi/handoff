@@ -12,7 +12,6 @@ import type {
   HandoffStateChangeEvent,
   SessionListItem
 } from "../shared/contracts"
-import appIconUrl from "./assets/handoff-icon.png"
 
 function formatTimestamp(value: string) {
   return new Intl.DateTimeFormat("en-US", {
@@ -69,21 +68,6 @@ const markdownComponents = {
 
     return <span className="file-link">{children}</span>
   }
-}
-
-function SessionMeta({
-  label,
-  value
-}: {
-  label: string
-  value: string | null | undefined
-}) {
-  return (
-    <div className="meta-item">
-      <p className="meta-label">{label}</p>
-      <p className="meta-value">{value || "Unavailable"}</p>
-    </div>
-  )
 }
 
 function EmptyState({
@@ -159,7 +143,7 @@ function ThoughtChain({
         onClick={onToggle}
         type="button"
       >
-        <span className={`thought-chain-chevron ${expanded ? "is-open" : ""}`}>›</span>
+        <span className={`thought-chain-chevron ${expanded ? "is-open" : ""}`}>&rsaquo;</span>
         <span className="thought-chain-title">
           {`Thought chain (${entry.messageCount})`}
         </span>
@@ -418,21 +402,26 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <div className="topbar-brand">
-          <img alt="Handoff icon" className="topbar-mark" src={appIconUrl} />
-          <div>
-            <p className="eyebrow">Codex Sessions</p>
-            <h1>Handoff</h1>
-            <p className="status-line">
-              Browse Codex conversations from `session_index.jsonl` and inspect each
-              parsed conversation with inline diffs.
-            </p>
-          </div>
+        <div className="topbar-left">
+          {activeSession ? (
+            <>
+              <span className="topbar-thread">{activeSession.threadName}</span>
+              <span className="topbar-separator">&middot;</span>
+              <span className="topbar-updated">
+                {formatTimestamp(activeSession.updatedAt)}
+              </span>
+              {activeTranscript?.hasDiffs ? (
+                <span className="topbar-badge">Diffs</span>
+              ) : null}
+            </>
+          ) : (
+            <span className="topbar-thread">Handoff</span>
+          )}
         </div>
 
         <div className="toolbar">
           <button
-            className="ghost-button"
+            className="topbar-button"
             onClick={() => {
               const api = getHandoffApi()
               if (!api) {
@@ -453,33 +442,8 @@ export default function App() {
         <div className="banner banner-error">{listError}</div>
       ) : null}
 
-      <div className="summary-bar">
-        <SessionMeta label="Session Index" value={stateInfo?.indexPath} />
-        <SessionMeta label="Sessions Root" value={stateInfo?.sessionsRoot} />
-        <SessionMeta
-          label="Sessions"
-          value={`${sessions.length}${isLoadingSessions ? " loading" : ""}`}
-        />
-        <SessionMeta
-          label="Last Event"
-          value={
-            lastEvent
-              ? `${lastEvent.reason} · ${formatTimestamp(lastEvent.at)}`
-              : "Idle"
-          }
-        />
-      </div>
-
       <div className="workspace">
-        <section className="pane sidebar-pane">
-          <div className="pane-header">
-            <div>
-              <p className="pane-label">Threads</p>
-              <h2>Recent Conversations</h2>
-            </div>
-            <span className="count-pill">{sessions.length}</span>
-          </div>
-
+        <section className="sidebar-pane">
           <div className="session-list" role="list">
             {isLoadingSessions && sessions.length === 0 ? (
               <EmptyState
@@ -516,26 +480,7 @@ export default function App() {
           </div>
         </section>
 
-        <section className="pane detail-pane">
-          <div className="pane-header detail-header">
-            <div>
-              <p className="pane-label">Conversation</p>
-              <h2>{activeSession?.threadName ?? "Select a conversation"}</h2>
-            </div>
-            {activeSession ? (
-              <div className="detail-meta">
-                <span>{formatTimestamp(activeSession.updatedAt)}</span>
-                <span>{activeTranscript?.hasDiffs ? "Diffs included" : "No diffs"}</span>
-              </div>
-            ) : null}
-          </div>
-
-          <div className="detail-info-grid">
-            <SessionMeta label="Thread Name" value={activeSession?.threadName} />
-            <SessionMeta label="Updated" value={activeSession?.updatedAt ?? null} />
-            <SessionMeta label="Session Path" value={activeSession?.sessionPath} />
-          </div>
-
+        <section className="detail-pane">
           <div className="transcript-surface">
             {!activeSession ? (
               <EmptyState
