@@ -166,7 +166,24 @@ describe("Handoff App", () => {
                 {
                   id: "session-2-patch-1",
                   files: ["/tmp/demo.ts"],
-                  patch: "+test"
+                  patch: [
+                    "*** Begin Patch",
+                    "*** Update File: /tmp/demo.ts",
+                    "@@",
+                    "-const value = 1",
+                    "+const value = 2",
+                    "*** End Patch"
+                  ].join("\n")
+                },
+                {
+                  id: "session-2-patch-2",
+                  files: ["/tmp/extra.ts"],
+                  patch: [
+                    "*** Begin Patch",
+                    "*** Add File: /tmp/extra.ts",
+                    "+export const extra = true",
+                    "*** End Patch"
+                  ].join("\n")
                 }
               ]
             }
@@ -187,7 +204,11 @@ describe("Handoff App", () => {
     expect(screen.getByText("Thought chain (2)")).toBeInTheDocument()
     expect(screen.queryByText("Tracing swipe path in highlights.tsx.")).not.toBeInTheDocument()
     expect(screen.queryByText("Checking gesture ownership.")).not.toBeInTheDocument()
+    expect(screen.getByText("2 files changed")).toBeInTheDocument()
     expect(screen.getByText("/tmp/demo.ts")).toBeInTheDocument()
+    expect(screen.getByText("/tmp/extra.ts")).toBeInTheDocument()
+    expect(screen.queryByText("const value = 2")).not.toBeInTheDocument()
+    expect(screen.queryByText("1 file changed")).not.toBeInTheDocument()
     expect(screen.queryByText("Transcript")).not.toBeInTheDocument()
     expect(screen.queryByText(/^User$/)).not.toBeInTheDocument()
     expect(screen.queryByText(/^Assistant$/)).not.toBeInTheDocument()
@@ -200,6 +221,14 @@ describe("Handoff App", () => {
 
     expect(await screen.findByText("Tracing swipe path in highlights.tsx.")).toBeInTheDocument()
     expect(await screen.findByText("Checking gesture ownership.")).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole("button", { name: /\/tmp\/demo\.ts/i }))
+
+    expect(
+      await screen.findByText((_content, element) =>
+        element?.textContent === "const value = 2"
+      )
+    ).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole("button", { name: /Older session/i }))
 
@@ -256,7 +285,14 @@ describe("Handoff App", () => {
                 {
                   id: "copy-patch-1",
                   files: ["/tmp/demo.ts"],
-                  patch: "+test"
+                  patch: [
+                    "*** Begin Patch",
+                    "*** Update File: /tmp/demo.ts",
+                    "@@",
+                    "-const value = 1",
+                    "+const value = 2",
+                    "*** End Patch"
+                  ].join("\n")
                 }
               ]
             }

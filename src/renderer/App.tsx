@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
+import Prism from "prismjs"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
+import "prismjs/components/prism-bash"
+import "prismjs/components/prism-clike"
+import "prismjs/components/prism-css"
+import "prismjs/components/prism-javascript"
+import "prismjs/components/prism-jsx"
+import "prismjs/components/prism-json"
+import "prismjs/components/prism-markdown"
+import "prismjs/components/prism-markup"
+import "prismjs/components/prism-tsx"
+import "prismjs/components/prism-typescript"
 
 import type {
   AppStateInfo,
@@ -12,6 +23,12 @@ import type {
   HandoffStateChangeEvent,
   SessionListItem
 } from "../shared/contracts"
+import {
+  detectCodeLanguage,
+  parseApplyPatches,
+  type ParsedPatchFile,
+  type ParsedPatchLine
+} from "../shared/patch"
 
 function formatTimestamp(value: string) {
   return new Intl.DateTimeFormat("en-US", {
@@ -44,6 +61,34 @@ function formatRelativeTimestamp(value: string) {
     month: "short",
     day: "numeric"
   }).format(new Date(value))
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+}
+
+function formatAdditionCount(value: number) {
+  return `+${Math.max(value, 0)}`
+}
+
+function formatDeletionCount(value: number) {
+  return `-${Math.max(value, 0)}`
+}
+
+function highlightCodeHtml(content: string, language: string) {
+  if (!content) {
+    return "&nbsp;"
+  }
+
+  const grammar = Prism.languages[language]
+  if (!grammar) {
+    return escapeHtml(content)
+  }
+
+  return Prism.highlight(content, grammar, language)
 }
 
 const markdownComponents = {
@@ -101,29 +146,137 @@ function MarkdownBlock({
   )
 }
 
-function PatchList({ patches }: { patches: ConversationPatch[] }) {
-  if (patches.length === 0) {
+function DiffLine({
+  line,
+  language
+}: {
+  line: ParsedPatchLine
+  language: string
+}) {
+  const symbol =
+    line.type === "add" ? "+" : line.type === "remove" ? "-" : " "
+
+  return (
+    <div className={`diff-line diff-line-${line.type}`}>
+      <span className="diff-line-symbol">{symbol}</span>
+      <div
+        className="diff-line-code"
+        dangerouslySetInnerHTML={{
+          __html: highlightCodeHtml(line.content, language)
+        }}
+      />
+    </div>
+  )
+}
+
+function PatchFileDiff({ file }: { file: ParsedPatchFile }) {
+  const language = detectCodeLanguage(file.path)
+
+  if (file.hunks.length === 0) {
+    return (
+      <div className="patch-file-diff-empty">
+        {file.operation === "delete"
+          ? "File deleted"
+          : file.operation === "add"
+            ? "File added"
+            : "No line diff available"}
+      </div>
+    )
+  }
+
+  return (
+    <div className="patch-file-diff">
+      <div className="patch-file-diff-content">
+        {file.hunks.map(hunk => (
+          <div className="diff-hunk" key={hunk.id}>
+            {hunk.header ? (
+              <div className="diff-hunk-header">{`@@ ${hunk.header}`}</div>
+            ) : null}
+            <div className="diff-hunk-lines">
+              {hunk.lines.map((line, index) => (
+                <DiffLine
+                  key={`${hunk.id}-${index + 1}`}
+                  language={language}
+                  line={line}
+                />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function PatchPanel({ patches }: { patches: ConversationPatch[] }) {
+  const summary = useMemo(
+    () => parseApplyPatches(patches.map(patch => patch.patch)),
+    [patches]
+  )
+  const [expandedFileId, setExpandedFileId] = useState<string | null>(null)
+
+  if (summary.files.length === 0) {
     return null
   }
 
   return (
     <div className="patch-panel">
       <div className="patch-panel-header">
-        <span>{patches.length === 1 ? "1 patch" : `${patches.length} patches`}</span>
+        <div className="patch-panel-summary">
+          <span>
+            {summary.files.length === 1
+              ? "1 file changed"
+              : `${summary.files.length} files changed`}
+          </span>
+          <span className="patch-additions">{formatAdditionCount(summary.additions)}</span>
+          <span className="patch-deletions">{formatDeletionCount(summary.deletions)}</span>
+        </div>
       </div>
 
-      {patches.map(patch => (
-        <div className="patch-card" key={patch.id}>
-          <div className="patch-files">
-            {patch.files.length > 0 ? patch.files.join(", ") : "Unknown files"}
-          </div>
-          <pre>
-            <code className="language-diff">{patch.patch}</code>
-          </pre>
-        </div>
-      ))}
+      <div className="patch-file-list">
+        {summary.files.map(file => {
+          const isExpanded = expandedFileId === file.id
+
+          return (
+            <div className="patch-file-section" key={file.id}>
+              <button
+                aria-expanded={isExpanded}
+                className="patch-file-toggle"
+                onClick={() => {
+                  setExpandedFileId(current => (current === file.id ? null : file.id))
+                }}
+                type="button"
+              >
+                <span className="patch-file-label-group">
+                  <span className="patch-file-name">{file.path}</span>
+                  {file.operation !== "update" ? (
+                    <span className="patch-file-operation">{file.operation}</span>
+                  ) : null}
+                  <span className="patch-file-stats">
+                    <span className="patch-additions">{formatAdditionCount(file.additions)}</span>
+                    <span className="patch-deletions">{formatDeletionCount(file.deletions)}</span>
+                  </span>
+                </span>
+                <span className={`patch-file-chevron ${isExpanded ? "is-open" : ""}`}>
+                  &rsaquo;
+                </span>
+              </button>
+
+              {isExpanded ? <PatchFileDiff file={file} /> : null}
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
+}
+
+function PatchList({ patches }: { patches: ConversationPatch[] }) {
+  if (patches.length === 0) {
+    return null
+  }
+
+  return <PatchPanel patches={patches} />
 }
 
 function ThoughtChain({

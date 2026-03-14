@@ -476,46 +476,237 @@ pre {
   max-width: min(100%, 980px);
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.035);
+  background: #292a31;
   overflow: hidden;
 }
 
 .patch-panel-header {
-  padding: 10px 12px;
+  padding: 12px 16px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   color: var(--ink);
-  font-size: 0.76rem;
+  font-size: 0.86rem;
   font-weight: 600;
 }
 
-.patch-card {
-  padding: 10px 12px 12px;
+.patch-panel-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.patch-card + .patch-card {
+.patch-file-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.patch-file-section + .patch-file-section {
   border-top: 1px solid rgba(255, 255, 255, 0.05);
 }
 
-.patch-files {
-  margin-bottom: 8px;
+.patch-file-toggle {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.patch-file-toggle:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.patch-file-label-group {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.patch-file-name {
   color: var(--ink);
-  font-size: 0.72rem;
-  font-weight: 500;
+  font-size: 0.78rem;
+  font-weight: 600;
   word-break: break-word;
 }
 
-.patch-card pre {
-  margin: 0;
-  overflow-x: auto;
-  padding: 11px 12px;
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  background: rgba(0, 0, 0, 0.28);
-  font-size: 0.76rem;
+.patch-file-operation {
+  color: var(--muted);
+  font-size: 0.66rem;
+  text-transform: capitalize;
 }
 
-.patch-card code {
+.patch-file-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.patch-additions {
+  color: #4df389;
+}
+
+.patch-deletions {
+  color: #ff625d;
+}
+
+.patch-file-chevron {
+  color: var(--muted);
+  font-size: 0.9rem;
+  transform: rotate(90deg);
+  transition: transform 140ms ease;
+}
+
+.patch-file-chevron.is-open {
+  transform: rotate(-90deg);
+}
+
+.patch-file-diff {
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  background: #262730;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.patch-file-diff-content {
+  width: max-content;
+  min-width: 100%;
+}
+
+.patch-file-diff-empty {
+  padding: 14px 16px;
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.diff-hunk + .diff-hunk {
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.diff-hunk-header {
+  padding: 8px 16px;
+  color: #7dd3fc;
+  background: rgba(125, 211, 252, 0.08);
   font-family: "SFMono-Regular", "JetBrains Mono", "Menlo", monospace;
+  font-size: 0.72rem;
+}
+
+.diff-hunk-lines {
+  padding: 8px 0;
+}
+
+.diff-line {
+  display: grid;
+  grid-template-columns: 28px max-content;
+  align-items: stretch;
+  width: max-content;
+  min-width: 100%;
+  font-family: "SFMono-Regular", "JetBrains Mono", "Menlo", monospace;
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.diff-line-symbol,
+.diff-line-code {
+  white-space: pre;
+}
+
+.diff-line-symbol {
+  padding: 0 8px 0 12px;
+  color: rgba(255, 255, 255, 0.55);
+  user-select: none;
+}
+
+.diff-line-code {
+  display: block;
+  padding: 0 16px 0 10px;
+  overflow: visible;
+}
+
+.diff-line-add {
+  background: rgba(70, 166, 100, 0.24);
+}
+
+.diff-line-add .diff-line-symbol {
+  color: #57ff85;
+}
+
+.diff-line-remove {
+  background: rgba(175, 70, 70, 0.24);
+}
+
+.diff-line-remove .diff-line-symbol {
+  color: #ff625d;
+}
+
+.diff-line-context {
+  background: transparent;
+}
+
+.diff-line-context .diff-line-symbol {
+  color: rgba(255, 255, 255, 0.28);
+}
+
+.diff-line-code .token.comment,
+.diff-line-code .token.prolog,
+.diff-line-code .token.doctype,
+.diff-line-code .token.cdata {
+  color: #7c8397;
+}
+
+.diff-line-code .token.punctuation {
+  color: #d8dae3;
+}
+
+.diff-line-code .token.property,
+.diff-line-code .token.tag,
+.diff-line-code .token.boolean,
+.diff-line-code .token.number,
+.diff-line-code .token.constant,
+.diff-line-code .token.symbol,
+.diff-line-code .token.deleted {
+  color: #f7768e;
+}
+
+.diff-line-code .token.selector,
+.diff-line-code .token.attr-name,
+.diff-line-code .token.string,
+.diff-line-code .token.char,
+.diff-line-code .token.builtin,
+.diff-line-code .token.inserted {
+  color: #9ece6a;
+}
+
+.diff-line-code .token.operator,
+.diff-line-code .token.entity,
+.diff-line-code .token.url,
+.diff-line-code .language-css .token.string,
+.diff-line-code .style .token.string {
+  color: #89ddff;
+}
+
+.diff-line-code .token.atrule,
+.diff-line-code .token.attr-value,
+.diff-line-code .token.keyword {
+  color: #bb9af7;
+}
+
+.diff-line-code .token.function,
+.diff-line-code .token.class-name {
+  color: #7aa2f7;
+}
+
+.diff-line-code .token.regex,
+.diff-line-code .token.important,
+.diff-line-code .token.variable {
+  color: #e0af68;
 }
 
 /* ── Empty state ──────────────────────────────────────── */
