@@ -165,6 +165,10 @@ interface ProjectFilterOption {
   label: string
 }
 
+type FilterMenuKey = "archived" | "provider" | "project" | "date"
+type CopyActionKey = "chat" | "chat-with-diffs" | "last-message"
+type OutputFormatKey = "markdown" | "json" | "structured"
+
 const DEFAULT_SIDEBAR_FILTERS: SearchFilters = {
   archived: "not-archived",
   provider: "all",
@@ -173,10 +177,10 @@ const DEFAULT_SIDEBAR_FILTERS: SearchFilters = {
 }
 
 const DEFAULT_SEARCH_FILTERS: SearchFilters = {
-  archived: "all",
+  archived: "not-archived",
   provider: "all",
   projectPaths: [],
-  dateRange: "all"
+  dateRange: "30d"
 }
 
 const ARCHIVED_FILTER_OPTIONS: Array<{
@@ -208,6 +212,15 @@ const DATE_FILTER_OPTIONS: Array<{
   { label: "All dates", value: "all" }
 ]
 
+const OUTPUT_FORMAT_OPTIONS: Array<{
+  key: OutputFormatKey
+  label: string
+}> = [
+  { key: "markdown", label: "Markdown" },
+  { key: "json", label: "JSON" },
+  { key: "structured", label: "Structured" }
+]
+
 function clampSidebarWidth(value: number, viewportWidth: number) {
   const maxWidth = Math.max(COLLAPSED_SIDEBAR_WIDTH, Math.floor(viewportWidth * 0.4))
   const minWidth = Math.min(MIN_SIDEBAR_WIDTH, maxWidth)
@@ -220,6 +233,238 @@ function getPathBasename(filePath: string) {
 
 function formatProjectFilterLabel(projectPath: string) {
   return getPathBasename(projectPath) || projectPath
+}
+
+function getFilterOptionLabel<TValue extends string>(
+  options: Array<{ label: string; value: TValue }>,
+  value: TValue
+) {
+  return options.find(option => option.value === value)?.label ?? value
+}
+
+function formatProjectSummary(
+  selectedProjectPaths: string[],
+  projectOptions: ProjectFilterOption[]
+) {
+  if (selectedProjectPaths.length === 0) {
+    return "All"
+  }
+
+  if (selectedProjectPaths.length === 1) {
+    return (
+      projectOptions.find(option => option.path === selectedProjectPaths[0])?.label ??
+      formatProjectFilterLabel(selectedProjectPaths[0])
+    )
+  }
+
+  return `${selectedProjectPaths.length} selected`
+}
+
+function escapeStructuredValue(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+}
+
+function buildMarkdownExport(
+  transcript: ConversationTranscript,
+  includeDiffs: boolean
+) {
+  const parts: string[] = []
+
+  transcript.entries.forEach(entry => {
+    if (entry.kind !== "message") {
+      return
+    }
+
+    parts.push(`## ${entry.role === "assistant" ? "Assistant" : "User"}`)
+    parts.push(entry.bodyMarkdown)
+
+    if (includeDiffs && entry.role === "assistant" && entry.patches.length > 0) {
+      parts.push("### Diffs")
+      entry.patches.forEach((patch, patchIndex) => {
+        parts.push(`#### Patch ${patchIndex + 1}`)
+        parts.push(`Files: ${patch.files.length > 0 ? patch.files.join(", ") : "unknown files"}`)
+        parts.push(`\`\`\`diff\n${patch.patch}\n\`\`\``)
+      })
+    }
+  })
+
+  return `${parts.join("\n\n").trim()}\n`
+}
+
+function getLastAssistantEntry(transcript: ConversationTranscript) {
+  for (let index = transcript.entries.length - 1; index >= 0; index -= 1) {
+    const entry = transcript.entries[index]
+    if (entry.kind === "message" && entry.role === "assistant") {
+      return entry
+    }
+  }
+
+  return null
+}
+
+function buildConversationPayload(
+  transcript: ConversationTranscript,
+  includeDiffs: boolean
+) {
+  return {
+    type: "conversation",
+    threadName: transcript.threadName,
+    provider: transcript.provider,
+    archived: transcript.archived,
+    updatedAt: transcript.updatedAt,
+    projectPath: transcript.projectPath ?? transcript.sessionCwd ?? null,
+    messages: transcript.entries.flatMap(entry => {
+      if (entry.kind !== "message") {
+        return []
+      }
+
+      return [
+        {
+          role: entry.role,
+          timestamp: entry.timestamp,
+          markdown: entry.bodyMarkdown,
+          ...(entry.role === "assistant" && includeDiffs && entry.patches.length > 0
+            ? {
+                patches: entry.patches.map(patch => ({
+                  files: patch.files,
+                  patch: patch.patch
+                }))
+              }
+            : {})
+        }
+      ]
+    })
+  }
+}
+
+function buildLastAssistantPayload(transcript: ConversationTranscript) {
+  const entry = getLastAssistantEntry(transcript)
+
+  return {
+    type: "assistant_message",
+    threadName: transcript.threadName,
+    provider: transcript.provider,
+    archived: transcript.archived,
+    updatedAt: transcript.updatedAt,
+    projectPath: transcript.projectPath ?? transcript.sessionCwd ?? null,
+    message: entry
+      ? {
+          role: "assistant" as const,
+          timestamp: entry.timestamp,
+          markdown: entry.bodyMarkdown
+        }
+      : null
+  }
+}
+
+function buildStructuredConversationExport(
+  transcript: ConversationTranscript,
+  includeDiffs: boolean
+) {
+  const payload = buildConversationPayload(transcript, includeDiffs)
+  const parts = [
+    `<conversation_thread provider="${payload.provider}" archived="${payload.archived ? "true" : "false"}">`,
+    `  <thread_name>${escapeStructuredValue(payload.threadName)}</thread_name>`,
+    `  <updated_at>${escapeStructuredValue(payload.updatedAt)}</updated_at>`
+  ]
+
+  if (payload.projectPath) {
+    parts.push(`  <project_path>${escapeStructuredValue(payload.projectPath)}</project_path>`)
+  }
+
+  parts.push("  <messages>")
+
+  payload.messages.forEach(message => {
+    parts.push(`    <message role="${message.role}">`)
+    parts.push(`      <timestamp>${escapeStructuredValue(message.timestamp)}</timestamp>`)
+    parts.push("      <content format=\"markdown\">")
+    parts.push(escapeStructuredValue(message.markdown))
+    parts.push("      </content>")
+
+    if ("patches" in message && message.patches) {
+      parts.push("      <diffs>")
+      message.patches.forEach(patch => {
+        parts.push("        <diff>")
+        parts.push(
+          `          <files>${escapeStructuredValue(
+            patch.files.length > 0 ? patch.files.join(", ") : "unknown files"
+          )}</files>`
+        )
+        parts.push("          <patch format=\"diff\">")
+        parts.push(escapeStructuredValue(patch.patch))
+        parts.push("          </patch>")
+        parts.push("        </diff>")
+      })
+      parts.push("      </diffs>")
+    }
+
+    parts.push("    </message>")
+  })
+
+  parts.push("  </messages>")
+  parts.push("</conversation_thread>")
+
+  return `${parts.join("\n")}\n`
+}
+
+function buildStructuredLastMessageExport(transcript: ConversationTranscript) {
+  const payload = buildLastAssistantPayload(transcript)
+  const parts = [
+    `<assistant_response provider="${payload.provider}" archived="${payload.archived ? "true" : "false"}">`,
+    `  <thread_name>${escapeStructuredValue(payload.threadName)}</thread_name>`,
+    `  <updated_at>${escapeStructuredValue(payload.updatedAt)}</updated_at>`
+  ]
+
+  if (payload.projectPath) {
+    parts.push(`  <project_path>${escapeStructuredValue(payload.projectPath)}</project_path>`)
+  }
+
+  if (payload.message) {
+    parts.push(`  <timestamp>${escapeStructuredValue(payload.message.timestamp)}</timestamp>`)
+    parts.push("  <content format=\"markdown\">")
+    parts.push(escapeStructuredValue(payload.message.markdown))
+    parts.push("  </content>")
+  }
+
+  parts.push("</assistant_response>")
+  return `${parts.join("\n")}\n`
+}
+
+function serializeConversationOutput(
+  transcript: ConversationTranscript,
+  format: OutputFormatKey,
+  action: CopyActionKey
+) {
+  if (action === "last-message") {
+    if (!transcript.lastAssistantMarkdown) {
+      return ""
+    }
+
+    if (format === "markdown") {
+      return `${transcript.lastAssistantMarkdown.trim()}\n`
+    }
+
+    if (format === "json") {
+      return `${JSON.stringify(buildLastAssistantPayload(transcript), null, 2)}\n`
+    }
+
+    return buildStructuredLastMessageExport(transcript)
+  }
+
+  const includeDiffs = action === "chat-with-diffs"
+
+  if (format === "markdown") {
+    return buildMarkdownExport(transcript, includeDiffs)
+  }
+
+  if (format === "json") {
+    return `${JSON.stringify(buildConversationPayload(transcript, includeDiffs), null, 2)}\n`
+  }
+
+  return buildStructuredConversationExport(transcript, includeDiffs)
 }
 
 function isDefaultSearchFilters(filters: SearchFilters) {
@@ -317,6 +562,114 @@ function SearchIcon() {
         stroke="currentColor"
         strokeLinecap="round"
         strokeWidth="1.2"
+      />
+    </svg>
+  )
+}
+
+function ChevronDownIcon({ isOpen = false }: { isOpen?: boolean }) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={`filter-menu-chevron ${isOpen ? "is-open" : ""}`}
+      fill="none"
+      viewBox="0 0 16 16"
+    >
+      <path
+        d="m4.25 6.25 3.75 3.75 3.75-3.75"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.35"
+      />
+    </svg>
+  )
+}
+
+function CopyChevronIcon({ isOpen = false }: { isOpen?: boolean }) {
+  return (
+    <svg
+      aria-hidden="true"
+      className={`copy-chevron-icon ${isOpen ? "is-open" : ""}`}
+      fill="none"
+      viewBox="0 0 16 16"
+    >
+      <path
+        d={isOpen ? "m4.25 6.25 3.75 3.75 3.75-3.75" : "m4.25 9.75 3.75-3.75 3.75 3.75"}
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.35"
+      />
+    </svg>
+  )
+}
+
+function OutputFormatIcon({
+  format,
+  className
+}: {
+  format: OutputFormatKey
+  className?: string
+}) {
+  if (format === "json") {
+    return (
+      <svg
+        aria-hidden="true"
+        className={className}
+        fill="none"
+        viewBox="0 0 16 16"
+      >
+        <path
+          d="M6 3.25c-1.5 0-2 1.15-2 2.5v.25c0 .88-.4 1.5-1.35 1.75.95.25 1.35.87 1.35 1.75v.25c0 1.35.5 2.5 2 2.5"
+          stroke="currentColor"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth="1.15"
+        />
+        <path
+          d="M10 3.25c1.5 0 2 1.15 2 2.5v.25c0 .88.4 1.5 1.35 1.75-.95.25-1.35.87-1.35 1.75v.25c0 1.35-.5 2.5-2 2.5"
+          stroke="currentColor"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth="1.15"
+        />
+      </svg>
+    )
+  }
+
+  if (format === "structured") {
+    return (
+      <svg
+        aria-hidden="true"
+        className={className}
+        fill="none"
+        viewBox="0 0 16 16"
+      >
+        <path
+          d="M6.25 3.5 2.75 8l3.5 4.5M9.75 3.5 13.25 8l-3.5 4.5"
+          stroke="currentColor"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth="1.15"
+        />
+      </svg>
+    )
+  }
+
+  return (
+    <svg
+      aria-hidden="true"
+      className={className}
+      fill="none"
+      viewBox="0 0 16 16"
+    >
+      <path
+        d="M3.5 4.25h9M3.5 8h9M3.5 11.75h5.25M4.75 2.75v10.5"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.15"
       />
     </svg>
   )
@@ -608,6 +961,225 @@ function AssistantMessage({ entry }: { entry: AssistantMessageEntry }) {
   )
 }
 
+function FilterMenuRow({
+  ariaLabel,
+  filters,
+  projectOptions,
+  onArchivedChange,
+  onProviderChange,
+  onDateChange,
+  onProjectToggle
+}: {
+  ariaLabel: string
+  filters: SearchFilters
+  projectOptions: ProjectFilterOption[]
+  onArchivedChange(value: ArchivedFilterValue): void
+  onProviderChange(value: ProviderFilterValue): void
+  onDateChange(value: DateRangeFilterValue): void
+  onProjectToggle(projectPath: string): void
+}) {
+  const [openMenuKey, setOpenMenuKey] = useState<FilterMenuKey | null>(null)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!openMenuKey) {
+      return () => undefined
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target
+      if (target instanceof Node && rootRef.current?.contains(target)) {
+        return
+      }
+
+      setOpenMenuKey(null)
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpenMenuKey(null)
+      }
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown)
+    window.addEventListener("keydown", handleKeyDown)
+
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown)
+      window.removeEventListener("keydown", handleKeyDown)
+    }
+  }, [openMenuKey])
+
+  const triggerItems: Array<{
+    key: FilterMenuKey
+    label: string
+    summary: string
+  }> = [
+    {
+      key: "archived",
+      label: "Archived",
+      summary: getFilterOptionLabel(ARCHIVED_FILTER_OPTIONS, filters.archived)
+    },
+    {
+      key: "provider",
+      label: "Provider",
+      summary: getFilterOptionLabel(PROVIDER_FILTER_OPTIONS, filters.provider)
+    },
+    {
+      key: "project",
+      label: "Project",
+      summary: formatProjectSummary(filters.projectPaths, projectOptions)
+    },
+    {
+      key: "date",
+      label: "Date",
+      summary: getFilterOptionLabel(DATE_FILTER_OPTIONS, filters.dateRange)
+    }
+  ]
+
+  function renderPanel() {
+    if (openMenuKey === "archived") {
+      return (
+        <div
+          aria-label={`${ariaLabel} archived options`}
+          className="filter-menu-panel"
+          role="group"
+        >
+          {ARCHIVED_FILTER_OPTIONS.map(option => (
+            <button
+              className={`filter-menu-option ${
+                filters.archived === option.value ? "is-selected" : ""
+              }`}
+              key={option.value}
+              onClick={() => {
+                onArchivedChange(option.value)
+                setOpenMenuKey(null)
+              }}
+              type="button"
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      )
+    }
+
+    if (openMenuKey === "provider") {
+      return (
+        <div
+          aria-label={`${ariaLabel} provider options`}
+          className="filter-menu-panel"
+          role="group"
+        >
+          {PROVIDER_FILTER_OPTIONS.map(option => (
+            <button
+              className={`filter-menu-option ${
+                filters.provider === option.value ? "is-selected" : ""
+              }`}
+              key={option.value}
+              onClick={() => {
+                onProviderChange(option.value)
+                setOpenMenuKey(null)
+              }}
+              type="button"
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      )
+    }
+
+    if (openMenuKey === "date") {
+      return (
+        <div
+          aria-label={`${ariaLabel} date options`}
+          className="filter-menu-panel"
+          role="group"
+        >
+          {DATE_FILTER_OPTIONS.map(option => (
+            <button
+              className={`filter-menu-option ${
+                filters.dateRange === option.value ? "is-selected" : ""
+              }`}
+              key={option.value}
+              onClick={() => {
+                onDateChange(option.value)
+                setOpenMenuKey(null)
+              }}
+              type="button"
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      )
+    }
+
+    if (openMenuKey === "project") {
+      return (
+        <div
+          aria-label={`${ariaLabel} project options`}
+          className="filter-menu-panel filter-menu-project-panel"
+          role="group"
+        >
+          {projectOptions.length === 0 ? (
+            <span className="filter-menu-empty">No projects available.</span>
+          ) : (
+            <div className="filter-menu-project-list">
+              {projectOptions.map(option => (
+                <label
+                  className="filter-menu-project-option"
+                  key={option.path}
+                  title={option.path}
+                >
+                  <input
+                    checked={filters.projectPaths.includes(option.path)}
+                    onChange={() => onProjectToggle(option.path)}
+                    type="checkbox"
+                  />
+                  <span className="filter-menu-project-copy">
+                    <span className="filter-menu-project-name">{option.label}</span>
+                    <span className="filter-menu-project-path">{option.path}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+      )
+    }
+
+    return null
+  }
+
+  return (
+    <div className="filter-menu" ref={rootRef}>
+      <div className="filter-menu-row">
+        {triggerItems.map(item => (
+          <button
+            aria-expanded={openMenuKey === item.key}
+            className={`filter-menu-trigger ${
+              openMenuKey === item.key ? "is-open" : ""
+            }`}
+            key={item.key}
+            onClick={() =>
+              setOpenMenuKey(current => (current === item.key ? null : item.key))
+            }
+            type="button"
+          >
+            <span className="filter-menu-trigger-label">{item.label}</span>
+            <span className="filter-menu-trigger-value">{item.summary}</span>
+            <ChevronDownIcon isOpen={openMenuKey === item.key} />
+          </button>
+        ))}
+      </div>
+
+      {renderPanel()}
+    </div>
+  )
+}
+
 function SearchFilterBar({
   filters,
   projectOptions,
@@ -625,87 +1197,44 @@ function SearchFilterBar({
 }) {
   return (
     <div className="search-filter-bar">
-      <div className="search-filter-section">
-        <span className="search-filter-label">Archived</span>
-        <div className="search-filter-option-group">
-          {ARCHIVED_FILTER_OPTIONS.map(option => (
-            <button
-              className={`search-filter-option-button ${
-                filters.archived === option.value ? "is-selected" : ""
-              }`}
-              key={`search-archived-${option.value}`}
-              onClick={() => onArchivedChange(option.value)}
-              type="button"
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="search-filter-section">
-        <span className="search-filter-label">Provider</span>
-        <div className="search-filter-option-group">
-          {PROVIDER_FILTER_OPTIONS.map(option => (
-            <button
-              className={`search-filter-option-button ${
-                filters.provider === option.value ? "is-selected" : ""
-              }`}
-              key={`search-provider-${option.value}`}
-              onClick={() => onProviderChange(option.value)}
-              type="button"
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="search-filter-section">
-        <span className="search-filter-label">Date</span>
-        <div className="search-filter-option-group">
-          {DATE_FILTER_OPTIONS.map(option => (
-            <button
-              className={`search-filter-option-button ${
-                filters.dateRange === option.value ? "is-selected" : ""
-              }`}
-              key={`search-date-${option.value}`}
-              onClick={() => onDateChange(option.value)}
-              type="button"
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="search-filter-section search-filter-projects">
-        <span className="search-filter-label">Projects</span>
-        {projectOptions.length === 0 ? (
-          <span className="search-filter-empty">No projects available.</span>
-        ) : (
-          <div className="search-project-list">
-            {projectOptions.map(option => (
-              <label
-                className="search-project-option"
-                key={`search-project-${option.path}`}
-                title={option.path}
-              >
-                <input
-                  checked={filters.projectPaths.includes(option.path)}
-                  onChange={() => onProjectToggle(option.path)}
-                  type="checkbox"
-                />
-                <span className="search-project-copy">
-                  <span className="search-project-name">{option.label}</span>
-                  <span className="search-project-path">{option.path}</span>
-                </span>
-              </label>
-            ))}
-          </div>
-        )}
-      </div>
+      <FilterMenuRow
+        ariaLabel="Search filters"
+        filters={filters}
+        onArchivedChange={onArchivedChange}
+        onDateChange={onDateChange}
+        onProjectToggle={onProjectToggle}
+        onProviderChange={onProviderChange}
+        projectOptions={projectOptions}
+      />
     </div>
+  )
+}
+
+function SidebarFilterContent({
+  filters,
+  projectOptions,
+  onArchivedChange,
+  onProviderChange,
+  onDateChange,
+  onProjectToggle
+}: {
+  filters: SearchFilters
+  projectOptions: ProjectFilterOption[]
+  onArchivedChange(value: ArchivedFilterValue): void
+  onProviderChange(value: ProviderFilterValue): void
+  onDateChange(value: DateRangeFilterValue): void
+  onProjectToggle(projectPath: string): void
+}) {
+  return (
+    <FilterMenuRow
+      ariaLabel="Session filters"
+      filters={filters}
+      onArchivedChange={onArchivedChange}
+      onDateChange={onDateChange}
+      onProjectToggle={onProjectToggle}
+      onProviderChange={onProviderChange}
+      projectOptions={projectOptions}
+    />
   )
 }
 
@@ -816,7 +1345,12 @@ export default function App() {
   const [isLoadingConversation, setIsLoadingConversation] = useState(false)
   const [listError, setListError] = useState<string | null>(null)
   const [conversationError, setConversationError] = useState<string | null>(null)
-  const [copyStatus, setCopyStatus] = useState<string | null>(null)
+  const [toastState, setToastState] = useState<{
+    id: number
+    message: string
+    tone: "success" | "error"
+    visible: boolean
+  } | null>(null)
   const [viewportWidth, setViewportWidth] = useState(() =>
     typeof window === "undefined" ? 1440 : window.innerWidth
   )
@@ -836,6 +1370,12 @@ export default function App() {
   const [isSearchLoading, setIsSearchLoading] = useState(false)
   const [searchReturnActive, setSearchReturnActive] = useState(false)
   const [isFilterPopoverOpen, setIsFilterPopoverOpen] = useState(false)
+  const [selectedOutputFormat, setSelectedOutputFormat] =
+    useState<OutputFormatKey>("markdown")
+  const [selectedCopyAction, setSelectedCopyAction] =
+    useState<CopyActionKey>("chat-with-diffs")
+  const [isOutputFormatMenuOpen, setIsOutputFormatMenuOpen] = useState(false)
+  const [isCopyMenuOpen, setIsCopyMenuOpen] = useState(false)
   const [sidebarDragState, setSidebarDragState] = useState<{
     startX: number
     startWidth: number
@@ -845,8 +1385,13 @@ export default function App() {
   )
   const filterButtonRef = useRef<HTMLButtonElement | null>(null)
   const filterPopoverRef = useRef<HTMLDivElement | null>(null)
+  const outputFormatMenuRef = useRef<HTMLDivElement | null>(null)
+  const copyMenuRef = useRef<HTMLDivElement | null>(null)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const searchRequestIdRef = useRef(0)
+  const toastSequenceRef = useRef(0)
+  const toastHideTimerRef = useRef<number | null>(null)
+  const toastClearTimerRef = useRef<number | null>(null)
   const resolvedSidebarWidth = isSidebarCollapsed
     ? COLLAPSED_SIDEBAR_WIDTH
     : clampSidebarWidth(sidebarWidth, viewportWidth)
@@ -981,6 +1526,41 @@ export default function App() {
       : activeSession?.provider ?? null
   const activeProviderLabel = activeProvider ? formatProviderLabel(activeProvider) : null
 
+  const showToast = useCallback(
+    (message: string, tone: "success" | "error" = "success") => {
+      toastSequenceRef.current += 1
+      const toastId = toastSequenceRef.current
+
+      if (toastHideTimerRef.current) {
+        window.clearTimeout(toastHideTimerRef.current)
+      }
+
+      if (toastClearTimerRef.current) {
+        window.clearTimeout(toastClearTimerRef.current)
+      }
+
+      setToastState({
+        id: toastId,
+        message,
+        tone,
+        visible: true
+      })
+
+      toastHideTimerRef.current = window.setTimeout(() => {
+        setToastState(current =>
+          current && current.id === toastId ? { ...current, visible: false } : current
+        )
+      }, 1800)
+
+      toastClearTimerRef.current = window.setTimeout(() => {
+        setToastState(current =>
+          current && current.id === toastId ? null : current
+        )
+      }, 2100)
+    },
+    []
+  )
+
   const loadSessions = useCallback(
     async (preferredSessionId?: string | null) => {
       setIsLoadingSessions(true)
@@ -1059,53 +1639,124 @@ export default function App() {
     }
   }, [])
 
-  const copyMarkdown = useCallback(async (text: string, successLabel: string) => {
-    const api = getHandoffApi()
-    if (!api) {
-      setCopyStatus("Preload bridge unavailable")
-      return
-    }
+  const copyMarkdown = useCallback(
+    async (text: string, successLabel: string) => {
+      const api = getHandoffApi()
+      if (!api) {
+        showToast("Preload bridge unavailable", "error")
+        return
+      }
 
-    await api.clipboard.writeText(text)
-    setCopyStatus(successLabel)
-    window.setTimeout(() => {
-      setCopyStatus(current => (current === successLabel ? null : current))
-    }, 2400)
-  }, [])
+      try {
+        await api.clipboard.writeText(text)
+        showToast(successLabel)
+      } catch (error) {
+        showToast(
+          error instanceof Error ? error.message : "Unable to copy to clipboard.",
+          "error"
+        )
+      }
+    },
+    [showToast]
+  )
+
+  const handleCopyAction = useCallback(
+    async (action: CopyActionKey) => {
+      if (!activeTranscript) {
+        return
+      }
+
+      const output = serializeConversationOutput(
+        activeTranscript,
+        selectedOutputFormat,
+        action
+      )
+
+      if (!output.trim()) {
+        return
+      }
+
+      const actionLabel =
+        action === "chat"
+          ? "chat"
+          : action === "chat-with-diffs"
+            ? "chat + diffs"
+            : "last message"
+
+      const formatLabel =
+        selectedOutputFormat === "markdown"
+          ? "Markdown"
+          : selectedOutputFormat === "json"
+            ? "JSON"
+            : "Structured"
+
+      await copyMarkdown(output, `Copied ${actionLabel} as ${formatLabel}`)
+    },
+    [activeTranscript, copyMarkdown, selectedOutputFormat]
+  )
 
   const handleCopyChat = useCallback(async () => {
-    if (!activeSession) {
+    if (!activeTranscript) {
       return
     }
 
-    const api = getHandoffApi()
-    if (!api) {
-      setCopyStatus("Preload bridge unavailable")
-      return
-    }
-
-    const transcript = await api.sessions.getTranscript(activeSession.id, {
-      includeCommentary: false,
-      includeDiffs: false
-    })
-    await copyMarkdown(transcript.markdown, "Copied chat")
-  }, [activeSession, copyMarkdown])
+    await handleCopyAction("chat")
+  }, [activeTranscript, handleCopyAction])
 
   const handleCopyChatWithDiffs = useCallback(async () => {
-    if (!activeTranscript?.markdown) {
+    if (!activeTranscript) {
       return
     }
 
-    await copyMarkdown(activeTranscript.markdown, "Copied chat + diffs")
-  }, [activeTranscript, copyMarkdown])
+    await handleCopyAction("chat-with-diffs")
+  }, [activeTranscript, handleCopyAction])
 
   const handleCopyLastMessage = useCallback(async () => {
     if (!activeTranscript?.lastAssistantMarkdown) {
       return
     }
 
-    await copyMarkdown(activeTranscript.lastAssistantMarkdown, "Copied last message")
-  }, [activeTranscript, copyMarkdown])
+    await handleCopyAction("last-message")
+  }, [activeTranscript, handleCopyAction])
+
+  const copyActions = useMemo(
+    () => [
+      {
+        key: "chat-with-diffs" as const,
+        label: "Copy Chat + Diffs",
+        disabled: !activeTranscript?.markdown,
+        run: handleCopyChatWithDiffs
+      },
+      {
+        key: "chat" as const,
+        label: "Copy Chat",
+        disabled: !activeSession?.sessionPath,
+        run: handleCopyChat
+      },
+      {
+        key: "last-message" as const,
+        label: "Copy Last Message",
+        disabled: !activeTranscript?.lastAssistantMarkdown,
+        run: handleCopyLastMessage
+      }
+    ],
+    [
+      activeSession?.sessionPath,
+      activeTranscript?.lastAssistantMarkdown,
+      activeTranscript?.markdown,
+      handleCopyChat,
+      handleCopyChatWithDiffs,
+      handleCopyLastMessage
+    ]
+  )
+  const selectedOutputFormatOption =
+    OUTPUT_FORMAT_OPTIONS.find(option => option.key === selectedOutputFormat) ??
+    OUTPUT_FORMAT_OPTIONS[0]
+  const selectedCopyActionOption =
+    copyActions.find(action => action.key === selectedCopyAction) ?? copyActions[0]
+  const alternateCopyActions = copyActions.filter(
+    action => action.key !== selectedCopyActionOption.key
+  )
 
   const handleOpenInSource = useCallback(async () => {
     if (!activeSession?.id || activeTranscript?.id !== activeSession.id) {
@@ -1114,7 +1765,7 @@ export default function App() {
 
     const api = getHandoffApi()
     if (!api) {
-      setCopyStatus("Preload bridge unavailable")
+      showToast("Preload bridge unavailable", "error")
       return
     }
 
@@ -1127,20 +1778,15 @@ export default function App() {
         activeTranscript.sessionClient,
         activeTranscript.projectPath ?? activeTranscript.sessionCwd
       )
-      setCopyStatus(`Opened in ${providerLabel}`)
-      window.setTimeout(() => {
-        setCopyStatus(current =>
-          current === `Opened in ${providerLabel}` ? null : current
-        )
-      }, 2400)
+      showToast(`Opened in ${providerLabel}`)
     } catch (error) {
       const message =
         error instanceof Error
           ? error.message
           : `Unable to open ${formatProviderLabel(activeTranscript.provider)}`
-      setCopyStatus(message)
+      showToast(message, "error")
     }
-  }, [activeSession, activeTranscript])
+  }, [activeSession, activeTranscript, showToast])
 
   const handleOpenProjectPath = useCallback(
     async (target: ProjectLocationTarget) => {
@@ -1150,7 +1796,7 @@ export default function App() {
 
       const api = getHandoffApi()
       if (!api) {
-        setCopyStatus("Preload bridge unavailable")
+        showToast("Preload bridge unavailable", "error")
         return
       }
 
@@ -1158,19 +1804,14 @@ export default function App() {
 
       try {
         await api.app.openProjectPath(target, activeProjectPath)
-        setCopyStatus(`Opened in ${targetLabel}`)
-        window.setTimeout(() => {
-          setCopyStatus(current =>
-            current === `Opened in ${targetLabel}` ? null : current
-          )
-        }, 2400)
+        showToast(`Opened in ${targetLabel}`)
       } catch (error) {
         const message =
           error instanceof Error ? error.message : `Unable to open ${targetLabel}`
-        setCopyStatus(message)
+        showToast(message, "error")
       }
     },
-    [activeProjectPath]
+    [activeProjectPath, showToast]
   )
 
   const toggleThoughtChainEntry = useCallback((entryId: string) => {
@@ -1363,6 +2004,11 @@ export default function App() {
   }, [isSidebarCollapsed, sidebarWidth, viewportWidth])
 
   useEffect(() => {
+    setIsCopyMenuOpen(false)
+    setIsOutputFormatMenuOpen(false)
+  }, [activeSessionId, rightPaneMode])
+
+  useEffect(() => {
     if (!isFilterPopoverOpen) {
       return () => undefined
     }
@@ -1397,6 +2043,76 @@ export default function App() {
       window.removeEventListener("keydown", handleKeyDown)
     }
   }, [isFilterPopoverOpen])
+
+  useEffect(() => {
+    if (!isCopyMenuOpen) {
+      return () => undefined
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target
+      if (target instanceof Node && copyMenuRef.current?.contains(target)) {
+        return
+      }
+
+      setIsCopyMenuOpen(false)
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsCopyMenuOpen(false)
+      }
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown)
+    window.addEventListener("keydown", handleKeyDown)
+
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown)
+      window.removeEventListener("keydown", handleKeyDown)
+    }
+  }, [isCopyMenuOpen])
+
+  useEffect(() => {
+    if (!isOutputFormatMenuOpen) {
+      return () => undefined
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target
+      if (target instanceof Node && outputFormatMenuRef.current?.contains(target)) {
+        return
+      }
+
+      setIsOutputFormatMenuOpen(false)
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsOutputFormatMenuOpen(false)
+      }
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown)
+    window.addEventListener("keydown", handleKeyDown)
+
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown)
+      window.removeEventListener("keydown", handleKeyDown)
+    }
+  }, [isOutputFormatMenuOpen])
+
+  useEffect(() => {
+    return () => {
+      if (toastHideTimerRef.current) {
+        window.clearTimeout(toastHideTimerRef.current)
+      }
+
+      if (toastClearTimerRef.current) {
+        window.clearTimeout(toastClearTimerRef.current)
+      }
+    }
+  }, [])
 
   useEffect(() => {
     if (!sidebarDragState) {
@@ -1634,90 +2350,14 @@ export default function App() {
                   ×
                 </button>
               </div>
-
-              <div className="sidebar-filter-section">
-                <p className="sidebar-filter-section-label">Archived</p>
-                <div className="sidebar-filter-option-group">
-                  {ARCHIVED_FILTER_OPTIONS.map(option => (
-                    <button
-                      aria-label={`Archived: ${option.label}`}
-                      className={`sidebar-filter-option-button ${
-                        sidebarFilters.archived === option.value ? "is-selected" : ""
-                      }`}
-                      key={option.value}
-                      onClick={() => handleArchivedFilterChange(option.value)}
-                      type="button"
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="sidebar-filter-section">
-                <p className="sidebar-filter-section-label">Provider</p>
-                <div className="sidebar-filter-option-group">
-                  {PROVIDER_FILTER_OPTIONS.map(option => (
-                    <button
-                      aria-label={`Provider: ${option.label}`}
-                      className={`sidebar-filter-option-button ${
-                        sidebarFilters.provider === option.value ? "is-selected" : ""
-                      }`}
-                      key={option.value}
-                      onClick={() => handleProviderFilterChange(option.value)}
-                      type="button"
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="sidebar-filter-section">
-                <p className="sidebar-filter-section-label">Project</p>
-                {projectOptions.length === 0 ? (
-                  <p className="sidebar-filter-empty">No projects available.</p>
-                ) : (
-                  <div className="sidebar-filter-project-list">
-                    {projectOptions.map(option => (
-                      <label
-                        className="sidebar-filter-project-option"
-                        key={option.path}
-                        title={option.path}
-                      >
-                        <input
-                          checked={sidebarFilters.projectPaths.includes(option.path)}
-                          onChange={() => handleProjectFilterToggle(option.path)}
-                          type="checkbox"
-                        />
-                        <span className="sidebar-filter-project-copy">
-                          <span className="sidebar-filter-project-name">{option.label}</span>
-                          <span className="sidebar-filter-project-path">{option.path}</span>
-                        </span>
-                      </label>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="sidebar-filter-section">
-                <p className="sidebar-filter-section-label">Date</p>
-                <div className="sidebar-filter-option-group">
-                  {DATE_FILTER_OPTIONS.map(option => (
-                    <button
-                      aria-label={`Date: ${option.label}`}
-                      className={`sidebar-filter-option-button ${
-                        sidebarFilters.dateRange === option.value ? "is-selected" : ""
-                      }`}
-                      key={option.value}
-                      onClick={() => handleDateFilterChange(option.value)}
-                      type="button"
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
+              <SidebarFilterContent
+                filters={sidebarFilters}
+                onArchivedChange={handleArchivedFilterChange}
+                onDateChange={handleDateFilterChange}
+                onProjectToggle={handleProjectFilterToggle}
+                onProviderChange={handleProviderFilterChange}
+                projectOptions={projectOptions}
+              />
             </div>
           ) : null}
 
@@ -1788,6 +2428,18 @@ export default function App() {
         </section>
 
         <section className="main-pane">
+          {toastState ? (
+            <div
+              aria-live="polite"
+              className={`top-toast is-${toastState.tone} ${
+                toastState.visible ? "is-visible" : ""
+              }`}
+              role="status"
+            >
+              <span className="top-toast-message">{toastState.message}</span>
+            </div>
+          ) : null}
+
           <header className="topbar">
             <div className="topbar-left">
               {rightPaneMode === "search" ? (
@@ -1988,7 +2640,6 @@ export default function App() {
           {rightPaneMode === "conversation" ? (
             <div className="copy-bar">
               <div className="copy-bar-inner">
-                <div className="copy-status">{copyStatus ?? " "}</div>
                 <div className="copy-bar-row">
                   <button
                     className="ghost-button codex-thread-button"
@@ -2012,30 +2663,108 @@ export default function App() {
                   </button>
 
                   <div className="copy-actions">
-                    <button
-                      className="ghost-button"
-                      disabled={!activeSession?.sessionPath}
-                      onClick={() => void handleCopyChat()}
-                      type="button"
-                    >
-                      Copy Chat
-                    </button>
-                    <button
-                      className="accent-button"
-                      disabled={!activeTranscript?.markdown}
-                      onClick={() => void handleCopyChatWithDiffs()}
-                      type="button"
-                    >
-                      Copy Chat + Diffs
-                    </button>
-                    <button
-                      className="ghost-button"
-                      disabled={!activeTranscript?.lastAssistantMarkdown}
-                      onClick={() => void handleCopyLastMessage()}
-                      type="button"
-                    >
-                      Copy Last Message
-                    </button>
+                    <div className="output-format-menu" ref={outputFormatMenuRef}>
+                      <button
+                        aria-expanded={isOutputFormatMenuOpen}
+                        aria-haspopup="menu"
+                        aria-label={`Output format: ${selectedOutputFormatOption.label}`}
+                        className="ghost-button output-format-button"
+                        onClick={() => {
+                          setIsCopyMenuOpen(false)
+                          setIsOutputFormatMenuOpen(current => !current)
+                        }}
+                        title={`Output format: ${selectedOutputFormatOption.label}`}
+                        type="button"
+                      >
+                        <OutputFormatIcon
+                          className="output-format-icon"
+                          format={selectedOutputFormatOption.key}
+                        />
+                      </button>
+
+                      {isOutputFormatMenuOpen ? (
+                        <div
+                          aria-label="Output format options"
+                          className="output-format-dropdown"
+                          role="menu"
+                        >
+                          {OUTPUT_FORMAT_OPTIONS.map(option => (
+                            <button
+                              aria-checked={selectedOutputFormat === option.key}
+                              className={`output-format-option ${
+                                selectedOutputFormat === option.key ? "is-selected" : ""
+                              }`}
+                              key={option.key}
+                              onClick={() => {
+                                setSelectedOutputFormat(option.key)
+                                setIsOutputFormatMenuOpen(false)
+                              }}
+                              role="menuitemradio"
+                              type="button"
+                            >
+                              <OutputFormatIcon
+                                className="output-format-icon"
+                                format={option.key}
+                              />
+                              <span>{option.label}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="copy-split-group" ref={copyMenuRef}>
+                      <button
+                        className="accent-button copy-split-main"
+                        disabled={selectedCopyActionOption.disabled}
+                        onClick={() => void selectedCopyActionOption.run()}
+                        type="button"
+                      >
+                        <OutputFormatIcon
+                          className="output-format-icon"
+                          format={selectedOutputFormatOption.key}
+                        />
+                        <span>{selectedCopyActionOption.label}</span>
+                      </button>
+                      <button
+                        aria-expanded={isCopyMenuOpen}
+                        aria-haspopup="menu"
+                        aria-label="Open copy options"
+                        className="accent-button copy-split-toggle"
+                        onClick={() => {
+                          setIsOutputFormatMenuOpen(false)
+                          setIsCopyMenuOpen(current => !current)
+                        }}
+                        type="button"
+                      >
+                        <CopyChevronIcon isOpen={isCopyMenuOpen} />
+                      </button>
+
+                      {isCopyMenuOpen ? (
+                        <div
+                          aria-label="Copy options"
+                          className="copy-split-menu"
+                          role="menu"
+                        >
+                          {alternateCopyActions.map(action => (
+                            <button
+                              className="copy-split-option"
+                              disabled={action.disabled}
+                              key={action.key}
+                              onClick={() => {
+                                setSelectedCopyAction(action.key)
+                                setIsCopyMenuOpen(false)
+                                void action.run()
+                              }}
+                              role="menuitem"
+                              type="button"
+                            >
+                              {action.label}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
               </div>

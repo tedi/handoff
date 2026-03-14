@@ -315,7 +315,7 @@ describe("Handoff App", () => {
     )
   })
 
-  it("copies the expected markdown variants", async () => {
+  it("copies the expected markdown variants through the split copy button", async () => {
     const { api } = createMockApi({
       sessions: [
         {
@@ -398,19 +398,41 @@ describe("Handoff App", () => {
 
     await screen.findByText("Final answer")
 
-    await userEvent.click(screen.getByRole("button", { name: "Copy Chat" }))
     await userEvent.click(screen.getByRole("button", { name: "Copy Chat + Diffs" }))
-    await userEvent.click(screen.getByRole("button", { name: "Copy Last Message" }))
+    expect(await screen.findByText("Copied chat + diffs as Markdown")).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole("button", { name: "Open copy options" }))
+    await userEvent.click(screen.getByRole("menuitem", { name: "Copy Chat" }))
+    expect(await screen.findByText("Copied chat as Markdown")).toBeInTheDocument()
+
+    expect(screen.getByRole("button", { name: "Copy Chat" })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole("button", { name: "Copy Chat" }))
+
+    await userEvent.click(screen.getByRole("button", { name: "Output format: Markdown" }))
+    expect(screen.getByRole("menuitemradio", { name: /Structured/i })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole("menuitemradio", { name: /JSON/i }))
+    expect(screen.getByRole("button", { name: "Output format: JSON" })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole("button", { name: "Open copy options" }))
+    await userEvent.click(screen.getByRole("menuitem", { name: "Copy Last Message" }))
+    expect(await screen.findByText("Copied last message as JSON")).toBeInTheDocument()
 
     expect(api.clipboard.writeText).toHaveBeenNthCalledWith(
       1,
-      "# Transcript\n\n## User\nHello\n\n## Assistant\nFinal answer\n"
+      "## User\n\nHello\n\n## Assistant\n\nFinal answer\n\n### Diffs\n\n#### Patch 1\n\nFiles: /tmp/demo.ts\n\n```diff\n*** Begin Patch\n*** Update File: /tmp/demo.ts\n@@ -1,1 +1,1 @@\n-const value = 1\n+const value = 2\n*** End Patch\n```\n"
     )
     expect(api.clipboard.writeText).toHaveBeenNthCalledWith(
       2,
-      "# Transcript\n\n## User\nHello\n\n## Assistant\nFinal answer\n\n### Diffs\n\n#### Patch 1\nFiles: /tmp/demo.ts\n\n```diff\n+test\n```\n"
+      "## User\n\nHello\n\n## Assistant\n\nFinal answer\n"
     )
-    expect(api.clipboard.writeText).toHaveBeenNthCalledWith(3, "Final answer")
+    expect(api.clipboard.writeText).toHaveBeenNthCalledWith(
+      3,
+      "## User\n\nHello\n\n## Assistant\n\nFinal answer\n"
+    )
+    expect(api.clipboard.writeText).toHaveBeenNthCalledWith(
+      4,
+      '{\n  "type": "assistant_message",\n  "threadName": "Copy session",\n  "provider": "claude",\n  "archived": false,\n  "updatedAt": "2026-03-14T01:00:00.000Z",\n  "projectPath": "/tmp/project",\n  "message": {\n    "role": "assistant",\n    "timestamp": "2026-03-14T01:00:03.000Z",\n    "markdown": "Final answer"\n  }\n}\n'
+    )
   })
 
   it("shows a missing-session state when no file path is available", async () => {
@@ -585,16 +607,20 @@ describe("Handoff App", () => {
 
     expect(await screen.findByRole("dialog", { name: /Session filters/i })).toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole("button", { name: "Archived: All" }))
+    await userEvent.click(screen.getByRole("button", { name: /Archived/i }))
+    await userEvent.click(screen.getByRole("button", { name: "All" }))
     expect(await screen.findByRole("button", { name: /Archived recent/i })).toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole("button", { name: "Provider: Claude" }))
+    await userEvent.click(screen.getByRole("button", { name: /Provider/i }))
+    await userEvent.click(screen.getByRole("button", { name: "Claude" }))
     expect(screen.queryByRole("button", { name: /Client recent/i })).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /Archived recent/i })).not.toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole("button", { name: "Date: All dates" }))
+    await userEvent.click(screen.getByRole("button", { name: /Date/i }))
+    await userEvent.click(screen.getByRole("button", { name: "All dates" }))
     expect(await screen.findByRole("button", { name: /Old research/i })).toBeInTheDocument()
 
+    await userEvent.click(screen.getByRole("button", { name: /Project/i }))
     await userEvent.click(screen.getByLabelText(/handoff/i))
     expect(screen.getByRole("button", { name: /Handoff recent/i })).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /Old research/i })).not.toBeInTheDocument()
@@ -748,6 +774,20 @@ describe("Handoff App", () => {
     expect(searchInput).toHaveFocus()
 
     await userEvent.type(searchInput, "gesture")
+
+    await waitFor(() => {
+      expect(api.search.query).toHaveBeenCalledWith(
+        expect.objectContaining({
+          query: "gesture",
+          filters: expect.objectContaining({
+            archived: "not-archived",
+            dateRange: "30d",
+            provider: "all",
+            projectPaths: []
+          })
+        })
+      )
+    })
 
     const searchResultSnippet = await screen.findByText(
       "The gesture handler upgrade broke the carousel swipe."
