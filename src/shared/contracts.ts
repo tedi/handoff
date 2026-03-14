@@ -73,6 +73,7 @@ export interface AppStateInfo {
   indexPath: string
   sessionsRoot: string
   outputDir: string | null
+  codexIconDataUrl?: string | null
 }
 
 export type HandoffStateChangeReason =
@@ -94,6 +95,7 @@ export interface HandoffApi {
   app: {
     getStateInfo(): Promise<AppStateInfo>
     refresh(): Promise<HandoffStateChangeEvent>
+    openCodexThread(sessionId: string): Promise<void>
     onStateChanged(listener: (event: HandoffStateChangeEvent) => void): () => void
   }
   sessions: {

@@ -43,6 +43,13 @@ export function createHandoffBridge(
         >
       },
 
+      openCodexThread(sessionId: string) {
+        return ipcRenderer.invoke(
+          IPC_CHANNELS.app.openCodexThread,
+          sessionId
+        ) as Promise<void>
+      },
+
       onStateChanged(listener) {
         const wrappedListener = (
           _event: IpcRendererEvent | Event,

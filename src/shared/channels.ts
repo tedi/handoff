@@ -1,7 +1,8 @@
 export const IPC_CHANNELS = {
   app: {
     getStateInfo: "handoff:get-state-info",
-    refresh: "handoff:refresh"
+    refresh: "handoff:refresh",
+    openCodexThread: "handoff:open-codex-thread"
   },
   sessions: {
     list: "handoff:sessions:list",

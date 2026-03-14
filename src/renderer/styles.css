@@ -736,13 +736,18 @@ pre {
 /* ── Copy bar ─────────────────────────────────────────── */
 
 .copy-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
   padding: 8px 20px 12px;
   border-top: 1px solid var(--pane-border);
   flex-shrink: 0;
+}
+
+.copy-bar-inner {
+  width: 100%;
+  max-width: 820px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .copy-status {
@@ -751,10 +756,46 @@ pre {
   color: var(--muted);
 }
 
+.copy-bar-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
 .copy-actions {
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-left: auto;
+}
+
+.codex-thread-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.codex-thread-icon,
+.codex-thread-fallback {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.codex-thread-icon {
+  border-radius: 4px;
+}
+
+.codex-thread-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink);
+  font-size: 0.72rem;
+  font-weight: 700;
 }
 
 /* ── Buttons ──────────────────────────────────────────── */
@@ -810,7 +851,16 @@ pre {
   }
 
   .copy-bar {
+    padding-bottom: 14px;
+  }
+
+  .copy-bar-row {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .copy-actions {
+    margin-left: 0;
+    flex-wrap: wrap;
   }
 }

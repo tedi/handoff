@@ -481,6 +481,30 @@ export default function App() {
     await copyMarkdown(activeTranscript.lastAssistantMarkdown, "Copied last message")
   }, [activeTranscript, copyMarkdown])
 
+  const handleOpenInCodex = useCallback(async () => {
+    if (!activeSession?.id) {
+      return
+    }
+
+    const api = getHandoffApi()
+    if (!api) {
+      setCopyStatus("Preload bridge unavailable")
+      return
+    }
+
+    try {
+      await api.app.openCodexThread(activeSession.id)
+      setCopyStatus("Opened in Codex")
+      window.setTimeout(() => {
+        setCopyStatus(current => (current === "Opened in Codex" ? null : current))
+      }, 2400)
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to open Codex"
+      setCopyStatus(message)
+    }
+  }, [activeSession])
+
   const toggleThoughtChainEntry = useCallback((entryId: string) => {
     setExpandedThoughtChainIds(current => {
       const next = new Set(current)
@@ -694,32 +718,57 @@ export default function App() {
           </div>
 
           <div className="copy-bar">
-            <div className="copy-status">{copyStatus ?? " "}</div>
-            <div className="copy-actions">
-              <button
-                className="ghost-button"
-                disabled={!activeSession?.sessionPath}
-                onClick={() => void handleCopyChat()}
-                type="button"
-              >
-                Copy Chat
-              </button>
-              <button
-                className="accent-button"
-                disabled={!activeTranscript?.markdown}
-                onClick={() => void handleCopyChatWithDiffs()}
-                type="button"
-              >
-                Copy Chat + Diffs
-              </button>
-              <button
-                className="ghost-button"
-                disabled={!activeTranscript?.lastAssistantMarkdown}
-                onClick={() => void handleCopyLastMessage()}
-                type="button"
-              >
-                Copy Last Message
-              </button>
+            <div className="copy-bar-inner">
+              <div className="copy-status">{copyStatus ?? " "}</div>
+              <div className="copy-bar-row">
+                <button
+                  className="ghost-button codex-thread-button"
+                  disabled={!activeSession?.id}
+                  onClick={() => void handleOpenInCodex()}
+                  type="button"
+                >
+                  {stateInfo?.codexIconDataUrl ? (
+                    <img
+                      alt=""
+                      aria-hidden="true"
+                      className="codex-thread-icon"
+                      src={stateInfo.codexIconDataUrl}
+                    />
+                  ) : (
+                    <span aria-hidden="true" className="codex-thread-fallback">
+                      C
+                    </span>
+                  )}
+                  <span>Open in Codex</span>
+                </button>
+
+                <div className="copy-actions">
+                  <button
+                    className="ghost-button"
+                    disabled={!activeSession?.sessionPath}
+                    onClick={() => void handleCopyChat()}
+                    type="button"
+                  >
+                    Copy Chat
+                  </button>
+                  <button
+                    className="accent-button"
+                    disabled={!activeTranscript?.markdown}
+                    onClick={() => void handleCopyChatWithDiffs()}
+                    type="button"
+                  >
+                    Copy Chat + Diffs
+                  </button>
+                  <button
+                    className="ghost-button"
+                    disabled={!activeTranscript?.lastAssistantMarkdown}
+                    onClick={() => void handleCopyLastMessage()}
+                    type="button"
+                  >
+                    Copy Last Message
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </section>

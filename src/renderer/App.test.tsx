@@ -25,7 +25,8 @@ function createMockApi({
   const stateInfo: AppStateInfo = {
     indexPath: "/Users/tedikonda/.codex/session_index.jsonl",
     sessionsRoot: "/Users/tedikonda/.codex/sessions",
-    outputDir: "/Users/tedikonda/ai/handoff/output"
+    outputDir: "/Users/tedikonda/ai/handoff/output",
+    codexIconDataUrl: "data:image/png;base64,ZmFrZQ=="
   }
   const listeners = new Set<(event: HandoffStateChangeEvent) => void>()
 
@@ -37,6 +38,7 @@ function createMockApi({
         reason: "manual-refresh",
         changedPath: null
       }),
+      openCodexThread: vi.fn().mockResolvedValue(undefined),
       onStateChanged(listener) {
         listeners.add(listener)
 
@@ -229,6 +231,10 @@ describe("Handoff App", () => {
         element?.textContent === "const value = 2"
       )
     ).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole("button", { name: /Open in Codex/i }))
+
+    expect(api.app.openCodexThread).toHaveBeenCalledWith("session-2")
 
     await userEvent.click(screen.getByRole("button", { name: /Older session/i }))
 

@@ -3,7 +3,8 @@ const { contextBridge, ipcRenderer } = require("electron")
 const IPC_CHANNELS = {
   app: {
     getStateInfo: "handoff:get-state-info",
-    refresh: "handoff:refresh"
+    refresh: "handoff:refresh",
+    openCodexThread: "handoff:open-codex-thread"
   },
   sessions: {
     list: "handoff:sessions:list",
@@ -22,6 +23,9 @@ contextBridge.exposeInMainWorld("handoffApp", {
     },
     refresh() {
       return ipcRenderer.invoke(IPC_CHANNELS.app.refresh)
+    },
+    openCodexThread(sessionId) {
+      return ipcRenderer.invoke(IPC_CHANNELS.app.openCodexThread, sessionId)
     },
     onStateChanged(listener) {
       const wrappedListener = (_event, payload) => {
