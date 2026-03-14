@@ -13,11 +13,48 @@ export interface TranscriptOptions {
   includeCommentary: boolean
 }
 
+export interface ConversationPatch {
+  id: string
+  patch: string
+  files: string[]
+}
+
+interface BaseConversationEntry {
+  id: string
+  role: "user" | "assistant"
+  timestamp: string
+  bodyMarkdown: string
+}
+
+export interface UserConversationEntry extends BaseConversationEntry {
+  kind: "message"
+  role: "user"
+}
+
+export interface AssistantMessageEntry extends BaseConversationEntry {
+  kind: "message"
+  role: "assistant"
+  patches: ConversationPatch[]
+}
+
+export interface AssistantCommentaryEntry extends BaseConversationEntry {
+  kind: "commentary"
+  role: "assistant"
+  collapsedByDefault: true
+  previewText: string
+}
+
+export type ConversationEntry =
+  | UserConversationEntry
+  | AssistantMessageEntry
+  | AssistantCommentaryEntry
+
 export interface ConversationTranscript {
   id: string
   threadName: string
   updatedAt: string
   sessionPath: string | null
+  entries: ConversationEntry[]
   markdown: string
   lastAssistantMarkdown: string | null
   hasDiffs: boolean

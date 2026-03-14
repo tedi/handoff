@@ -1,4 +1,8 @@
 import type {
+  AssistantCommentaryEntry,
+  AssistantMessageEntry,
+  ConversationEntry,
+  ConversationPatch,
   ConversationTranscript,
   SessionIndexEntry,
   TranscriptOptions
@@ -11,6 +15,7 @@ const SCAFFOLD_USER_PREFIXES = [
 ]
 
 interface MessageRecord {
+  id: string
   role: "user" | "assistant"
   text: string
   timestamp: string
@@ -37,17 +42,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isScaffoldUserMessage(text: string) {
   const stripped = text.trimStart()
   return SCAFFOLD_USER_PREFIXES.some(prefix => stripped.startsWith(prefix))
-}
-
-function shouldIncludeAssistantPhase(
-  phase: string | null,
-  includeCommentary: boolean
-) {
-  if (includeCommentary) {
-    return true
-  }
-
-  return phase !== "commentary"
 }
 
 function extractMessageText(payload: Record<string, unknown>) {
@@ -85,6 +79,15 @@ function extractMessageText(payload: Record<string, unknown>) {
 
 function extractPatchFiles(patch: string) {
   return Array.from(patch.matchAll(PATCH_FILE_PATTERN), match => match[1] ?? "")
+}
+
+function extractPreviewText(text: string) {
+  const preview = text.replace(/\s+/g, " ").trim()
+  if (preview.length <= 96) {
+    return preview
+  }
+
+  return `${preview.slice(0, 93).trimEnd()}…`
 }
 
 function findLastIndex<T>(values: T[], predicate: (value: T) => boolean) {
@@ -138,33 +141,32 @@ function attachPatchesToMessages(messages: MessageRecord[], patches: PatchRecord
 }
 
 function renderMarkdown(
-  messages: MessageRecord[],
-  patches: PatchRecord[],
-  includeDiffs: boolean
+  entries: ConversationEntry[],
+  includeDiffs: boolean,
+  includeCommentary: boolean
 ) {
   const parts: string[] = ["# Transcript"]
-  const attachments = includeDiffs
-    ? attachPatchesToMessages(messages, patches)
-    : new Map<number, PatchRecord[]>()
 
-  messages.forEach((message, index) => {
-    parts.push(`\n## ${message.role === "assistant" ? "Assistant" : "User"}`)
-    parts.push(message.text)
-
-    if (!includeDiffs) {
+  entries.forEach(entry => {
+    if (!includeCommentary && entry.kind === "commentary") {
       return
     }
 
-    const attached = attachments.get(index) ?? []
-    if (attached.length === 0) {
+    parts.push(`\n## ${entry.role === "assistant" ? "Assistant" : "User"}`)
+    parts.push(entry.bodyMarkdown)
+
+    if (!includeDiffs || entry.kind !== "message" || entry.role !== "assistant") {
+      return
+    }
+
+    if (entry.patches.length === 0) {
       return
     }
 
     parts.push("\n### Diffs")
-    attached.forEach((patch, patchIndex) => {
-      const files = extractPatchFiles(patch.patch)
+    entry.patches.forEach((patch, patchIndex) => {
       parts.push(`\n#### Patch ${patchIndex + 1}`)
-      parts.push(`Files: ${files.length > 0 ? files.join(", ") : "unknown files"}`)
+      parts.push(`Files: ${patch.files.length > 0 ? patch.files.join(", ") : "unknown files"}`)
       parts.push(`\n\`\`\`diff\n${patch.patch}\n\`\`\``)
     })
   })
@@ -244,14 +246,9 @@ export function buildConversationTranscript(params: {
       }
 
       const phase = typeof payload.phase === "string" ? payload.phase : null
-      if (
-        role === "assistant" &&
-        !shouldIncludeAssistantPhase(phase, options.includeCommentary)
-      ) {
-        continue
-      }
 
       messages.push({
+        id: `message-${messages.length + 1}`,
         role,
         text,
         timestamp,
@@ -284,12 +281,59 @@ export function buildConversationTranscript(params: {
     }
   }
 
+  const attachments = attachPatchesToMessages(messages, patches)
+  const entries: ConversationEntry[] = messages.map((message, index) => {
+    if (message.role === "user") {
+      return {
+        id: message.id,
+        kind: "message",
+        role: "user",
+        timestamp: message.timestamp,
+        bodyMarkdown: message.text
+      }
+    }
+
+    if (message.phase === "commentary") {
+      const commentaryEntry: AssistantCommentaryEntry = {
+        id: message.id,
+        kind: "commentary",
+        role: "assistant",
+        timestamp: message.timestamp,
+        bodyMarkdown: message.text,
+        collapsedByDefault: true,
+        previewText: extractPreviewText(message.text)
+      }
+
+      return commentaryEntry
+    }
+
+    const patchEntries: ConversationPatch[] = (attachments.get(index) ?? []).map(
+      (patch, patchIndex) => ({
+        id: `${message.id}-patch-${patchIndex + 1}`,
+        patch: patch.patch,
+        files: extractPatchFiles(patch.patch)
+      })
+    )
+
+    const assistantEntry: AssistantMessageEntry = {
+      id: message.id,
+      kind: "message",
+      role: "assistant",
+      timestamp: message.timestamp,
+      bodyMarkdown: message.text,
+      patches: patchEntries
+    }
+
+    return assistantEntry
+  })
+
   return {
     id: session.id,
     threadName: session.threadName,
     updatedAt: session.updatedAt,
     sessionPath,
-    markdown: renderMarkdown(messages, patches, options.includeDiffs),
+    entries,
+    markdown: renderMarkdown(entries, options.includeDiffs, options.includeCommentary),
     lastAssistantMarkdown: findLastAssistantMarkdown(messages),
     hasDiffs: patches.length > 0
   }

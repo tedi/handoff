@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url"
 
 import { describe, expect, it } from "vitest"
 
+import type { AssistantMessageEntry } from "./contracts"
 import { buildConversationTranscript } from "./parser"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -13,7 +14,7 @@ async function loadFixture(name: string) {
 }
 
 describe("buildConversationTranscript", () => {
-  it("excludes commentary and scaffold prompts by default", async () => {
+  it("preserves commentary entries while excluding them from markdown by default", async () => {
     const transcript = buildConversationTranscript({
       sessionContent: await loadFixture("sample-session.jsonl"),
       session: {
@@ -32,6 +33,13 @@ describe("buildConversationTranscript", () => {
     expect(transcript.markdown).not.toContain("AGENTS.md instructions")
     expect(transcript.markdown).not.toContain("I’m tracing the swipe flow first.")
     expect(transcript.markdown).toContain("### Diffs")
+    expect(transcript.entries.map(entry => entry.kind)).toEqual([
+      "message",
+      "commentary",
+      "message",
+      "message",
+      "message"
+    ])
   })
 
   it("includes commentary when requested", async () => {
@@ -53,6 +61,31 @@ describe("buildConversationTranscript", () => {
     expect(transcript.markdown).not.toContain("### Diffs")
   })
 
+  it("attaches diffs to the matching assistant message entry", async () => {
+    const transcript = buildConversationTranscript({
+      sessionContent: await loadFixture("sample-session.jsonl"),
+      session: {
+        id: "session-1",
+        threadName: "Highlights regression",
+        updatedAt: "2026-03-14T00:18:45.474Z"
+      },
+      sessionPath: "/tmp/session.jsonl",
+      options: {
+        includeCommentary: false,
+        includeDiffs: true
+      }
+    })
+
+    const assistantEntries = transcript.entries.filter(
+      (entry): entry is AssistantMessageEntry =>
+        entry.role === "assistant" && entry.kind === "message"
+    )
+
+    expect(assistantEntries[0]?.patches).toHaveLength(1)
+    expect(assistantEntries[0]?.patches[0]?.files).toEqual(["/tmp/project/highlights.tsx"])
+    expect(assistantEntries[1]?.patches).toHaveLength(0)
+  })
+
   it("returns the final assistant reply as lastAssistantMarkdown", async () => {
     const transcript = buildConversationTranscript({
       sessionContent: await loadFixture("sample-session.jsonl"),
@@ -72,6 +105,12 @@ describe("buildConversationTranscript", () => {
       "I found two issues in the same carousel and patched both."
     )
     expect(transcript.hasDiffs).toBe(true)
+    expect(
+      transcript.entries.find(entry => entry.kind === "commentary")
+    ).toMatchObject({
+      collapsedByDefault: true,
+      previewText: "I’m tracing the swipe flow first."
+    })
   })
 
   it("throws on malformed JSON lines", () => {

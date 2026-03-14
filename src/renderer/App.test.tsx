@@ -104,6 +104,23 @@ describe("Handoff App", () => {
           threadName: "Older session",
           updatedAt: "2026-03-14T01:00:00.000Z",
           sessionPath: "/tmp/session-1.jsonl",
+          entries: [
+            {
+              id: "session-1-user",
+              kind: "message",
+              role: "user",
+              timestamp: "2026-03-14T01:00:01.000Z",
+              bodyMarkdown: "Older user"
+            },
+            {
+              id: "session-1-assistant",
+              kind: "message",
+              role: "assistant",
+              timestamp: "2026-03-14T01:00:02.000Z",
+              bodyMarkdown: "Older answer",
+              patches: []
+            }
+          ],
           markdown: "# Transcript\n\n## User\nOlder user\n\n## Assistant\nOlder answer\n",
           lastAssistantMarkdown: "Older answer",
           hasDiffs: false
@@ -113,6 +130,38 @@ describe("Handoff App", () => {
           threadName: "Newest session",
           updatedAt: "2026-03-14T02:00:00.000Z",
           sessionPath: "/tmp/session-2.jsonl",
+          entries: [
+            {
+              id: "session-2-user",
+              kind: "message",
+              role: "user",
+              timestamp: "2026-03-14T02:00:01.000Z",
+              bodyMarkdown: "Hello"
+            },
+            {
+              id: "session-2-commentary",
+              kind: "commentary",
+              role: "assistant",
+              timestamp: "2026-03-14T02:00:02.000Z",
+              bodyMarkdown: "Tracing swipe path in highlights.tsx.\n\nChecking gesture ownership.",
+              collapsedByDefault: true,
+              previewText: "Tracing swipe path in highlights.tsx."
+            },
+            {
+              id: "session-2-assistant",
+              kind: "message",
+              role: "assistant",
+              timestamp: "2026-03-14T02:00:03.000Z",
+              bodyMarkdown: "Newest answer",
+              patches: [
+                {
+                  id: "session-2-patch-1",
+                  files: ["/tmp/demo.ts"],
+                  patch: "+test"
+                }
+              ]
+            }
+          ],
           markdown:
             "# Transcript\n\n## User\nHello\n\n## Assistant\nNewest answer\n\n### Diffs\n\n#### Patch 1\nFiles: /tmp/demo.ts\n\n```diff\n+test\n```\n",
           lastAssistantMarkdown: "Newest answer",
@@ -126,7 +175,20 @@ describe("Handoff App", () => {
 
     await screen.findByRole("button", { name: /Newest session/i })
     expect(await screen.findByText("Newest answer")).toBeInTheDocument()
-    expect(screen.getByText("Patch 1")).toBeInTheDocument()
+    expect(screen.getByText("Tracing swipe path in highlights.tsx.")).toBeInTheDocument()
+    expect(screen.queryByText("Checking gesture ownership.")).not.toBeInTheDocument()
+    expect(screen.getByText("/tmp/demo.ts")).toBeInTheDocument()
+    expect(screen.queryByText("Transcript")).not.toBeInTheDocument()
+    expect(screen.queryByText(/^User$/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/^Assistant$/)).not.toBeInTheDocument()
+    expect(screen.getByText("Hello").closest(".user-bubble")).not.toBeNull()
+    expect(screen.getByText("Newest answer").closest(".assistant-entry")).not.toBeNull()
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /Tracing swipe path in highlights\.tsx\./i })
+    )
+
+    expect(await screen.findByText("Checking gesture ownership.")).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole("button", { name: /Older session/i }))
 
@@ -151,6 +213,38 @@ describe("Handoff App", () => {
           threadName: "Copy session",
           updatedAt: "2026-03-14T01:00:00.000Z",
           sessionPath: "/tmp/session-1.jsonl",
+          entries: [
+            {
+              id: "copy-user",
+              kind: "message",
+              role: "user",
+              timestamp: "2026-03-14T01:00:01.000Z",
+              bodyMarkdown: "Hello"
+            },
+            {
+              id: "copy-commentary",
+              kind: "commentary",
+              role: "assistant",
+              timestamp: "2026-03-14T01:00:02.000Z",
+              bodyMarkdown: "Tracing",
+              collapsedByDefault: true,
+              previewText: "Tracing"
+            },
+            {
+              id: "copy-assistant",
+              kind: "message",
+              role: "assistant",
+              timestamp: "2026-03-14T01:00:03.000Z",
+              bodyMarkdown: "Final answer",
+              patches: [
+                {
+                  id: "copy-patch-1",
+                  files: ["/tmp/demo.ts"],
+                  patch: "+test"
+                }
+              ]
+            }
+          ],
           markdown:
             "# Transcript\n\n## User\nHello\n\n## Assistant\nFinal answer\n\n### Diffs\n\n#### Patch 1\nFiles: /tmp/demo.ts\n\n```diff\n+test\n```\n",
           lastAssistantMarkdown: "Final answer",
@@ -214,6 +308,7 @@ describe("Handoff App", () => {
           threadName: "Broken session",
           updatedAt: "2026-03-14T01:00:00.000Z",
           sessionPath: "/tmp/session-1.jsonl",
+          entries: [],
           markdown: "",
           lastAssistantMarkdown: null,
           hasDiffs: false

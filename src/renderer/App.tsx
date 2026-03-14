@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
 import type {
   AppStateInfo,
+  AssistantCommentaryEntry,
+  AssistantMessageEntry,
+  ConversationPatch,
   ConversationTranscript,
   HandoffApi,
   HandoffStateChangeEvent,
@@ -18,6 +21,30 @@ function formatTimestamp(value: string) {
     hour: "numeric",
     minute: "2-digit"
   }).format(new Date(value))
+}
+
+const markdownComponents = {
+  a({
+    href,
+    children
+  }: {
+    href?: string
+    children?: ReactNode
+  }) {
+    if (!href) {
+      return <span>{children}</span>
+    }
+
+    if (/^https?:\/\//.test(href)) {
+      return (
+        <a href={href} rel="noreferrer" target="_blank">
+          {children}
+        </a>
+      )
+    }
+
+    return <span className="file-link">{children}</span>
+  }
 }
 
 function SessionMeta({
@@ -50,6 +77,91 @@ function EmptyState({
   )
 }
 
+function MarkdownBlock({
+  markdown,
+  className
+}: {
+  markdown: string
+  className: string
+}) {
+  return (
+    <div className={className}>
+      <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm]}>
+        {markdown}
+      </ReactMarkdown>
+    </div>
+  )
+}
+
+function PatchList({ patches }: { patches: ConversationPatch[] }) {
+  if (patches.length === 0) {
+    return null
+  }
+
+  return (
+    <div className="patch-panel">
+      <div className="patch-panel-header">
+        <span>{patches.length === 1 ? "1 patch" : `${patches.length} patches`}</span>
+      </div>
+
+      {patches.map(patch => (
+        <div className="patch-card" key={patch.id}>
+          <div className="patch-files">
+            {patch.files.length > 0 ? patch.files.join(", ") : "Unknown files"}
+          </div>
+          <pre>
+            <code className="language-diff">{patch.patch}</code>
+          </pre>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function CommentaryStep({
+  entry,
+  expanded,
+  onToggle
+}: {
+  entry: AssistantCommentaryEntry
+  expanded: boolean
+  onToggle: () => void
+}) {
+  return (
+    <div className="conversation-entry commentary-entry">
+      <button
+        aria-expanded={expanded}
+        className="commentary-toggle"
+        onClick={onToggle}
+        type="button"
+      >
+        <span className={`commentary-chevron ${expanded ? "is-open" : ""}`}>›</span>
+        <span className="commentary-preview">{entry.previewText}</span>
+        <span className="commentary-time">{formatTimestamp(entry.timestamp)}</span>
+      </button>
+
+      {expanded ? (
+        <MarkdownBlock
+          className="message-markdown commentary-markdown"
+          markdown={entry.bodyMarkdown}
+        />
+      ) : null}
+    </div>
+  )
+}
+
+function AssistantMessage({ entry }: { entry: AssistantMessageEntry }) {
+  return (
+    <div className="conversation-entry assistant-entry">
+      <MarkdownBlock
+        className="message-markdown assistant-markdown"
+        markdown={entry.bodyMarkdown}
+      />
+      <PatchList patches={entry.patches} />
+    </div>
+  )
+}
+
 function getHandoffApi(): HandoffApi | null {
   return typeof window !== "undefined" ? window.handoffApp ?? null : null
 }
@@ -61,11 +173,14 @@ export default function App() {
   const [activeTranscript, setActiveTranscript] =
     useState<ConversationTranscript | null>(null)
   const [isLoadingSessions, setIsLoadingSessions] = useState(true)
-  const [isLoadingTranscript, setIsLoadingTranscript] = useState(false)
+  const [isLoadingConversation, setIsLoadingConversation] = useState(false)
   const [listError, setListError] = useState<string | null>(null)
-  const [transcriptError, setTranscriptError] = useState<string | null>(null)
+  const [conversationError, setConversationError] = useState<string | null>(null)
   const [copyStatus, setCopyStatus] = useState<string | null>(null)
   const [lastEvent, setLastEvent] = useState<HandoffStateChangeEvent | null>(null)
+  const [expandedCommentaryIds, setExpandedCommentaryIds] = useState<Set<string>>(
+    () => new Set()
+  )
 
   const activeSession = useMemo(
     () => sessions.find(session => session.id === activeSessionId) ?? null,
@@ -110,26 +225,26 @@ export default function App() {
     []
   )
 
-  const loadTranscript = useCallback(async (session: SessionListItem | null) => {
+  const loadConversation = useCallback(async (session: SessionListItem | null) => {
     if (!session) {
       setActiveTranscript(null)
-      setTranscriptError(null)
+      setConversationError(null)
       return
     }
 
     if (!session.sessionPath) {
       setActiveTranscript(null)
-      setTranscriptError(null)
+      setConversationError(null)
       return
     }
 
-    setIsLoadingTranscript(true)
+    setIsLoadingConversation(true)
     const api = getHandoffApi()
 
     if (!api) {
       setActiveTranscript(null)
-      setTranscriptError("The preload bridge did not load. Restart the app.")
-      setIsLoadingTranscript(false)
+      setConversationError("The preload bridge did not load. Restart the app.")
+      setIsLoadingConversation(false)
       return
     }
 
@@ -139,14 +254,14 @@ export default function App() {
         includeDiffs: true
       })
       setActiveTranscript(transcript)
-      setTranscriptError(null)
+      setConversationError(null)
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : "Unable to load transcript."
+        error instanceof Error ? error.message : "Unable to load conversation."
       setActiveTranscript(null)
-      setTranscriptError(message)
+      setConversationError(message)
     } finally {
-      setIsLoadingTranscript(false)
+      setIsLoadingConversation(false)
     }
   }, [])
 
@@ -160,9 +275,7 @@ export default function App() {
     await api.clipboard.writeText(text)
     setCopyStatus(successLabel)
     window.setTimeout(() => {
-      setCopyStatus(current =>
-        current === successLabel ? null : current
-      )
+      setCopyStatus(current => (current === successLabel ? null : current))
     }, 2400)
   }, [])
 
@@ -200,6 +313,19 @@ export default function App() {
     await copyMarkdown(activeTranscript.lastAssistantMarkdown, "Copied last message")
   }, [activeTranscript, copyMarkdown])
 
+  const toggleCommentaryEntry = useCallback((entryId: string) => {
+    setExpandedCommentaryIds(current => {
+      const next = new Set(current)
+      if (next.has(entryId)) {
+        next.delete(entryId)
+      } else {
+        next.add(entryId)
+      }
+
+      return next
+    })
+  }, [])
+
   useEffect(() => {
     let isMounted = true
 
@@ -231,8 +357,12 @@ export default function App() {
   }, [loadSessions])
 
   useEffect(() => {
-    void loadTranscript(activeSession)
-  }, [activeSession, loadTranscript])
+    void loadConversation(activeSession)
+  }, [activeSession, loadConversation])
+
+  useEffect(() => {
+    setExpandedCommentaryIds(new Set())
+  }, [activeTranscript?.id, activeTranscript?.updatedAt])
 
   useEffect(() => {
     const api = getHandoffApi()
@@ -244,14 +374,15 @@ export default function App() {
       setLastEvent(event)
 
       if (event.reason === "selected-session-changed") {
-        const selectedSession = sessions.find(session => session.id === activeSessionId) ?? null
-        void loadTranscript(selectedSession)
+        const selectedSession =
+          sessions.find(session => session.id === activeSessionId) ?? null
+        void loadConversation(selectedSession)
         return
       }
 
       void loadSessions(activeSessionId)
     })
-  }, [activeSessionId, loadSessions, loadTranscript, sessions])
+  }, [activeSessionId, loadConversation, loadSessions, sessions])
 
   return (
     <div className="app-shell">
@@ -262,8 +393,8 @@ export default function App() {
             <p className="eyebrow">Codex Sessions</p>
             <h1>Handoff</h1>
             <p className="status-line">
-              Browse Codex conversations from `session_index.jsonl` and inspect their
-              parsed transcript with inline diffs.
+              Browse Codex conversations from `session_index.jsonl` and inspect each
+              parsed conversation with inline diffs.
             </p>
           </div>
         </div>
@@ -378,51 +509,56 @@ export default function App() {
             {!activeSession ? (
               <EmptyState
                 title="No conversation selected"
-                detail="Pick a conversation from the left sidebar to inspect its parsed transcript."
+                detail="Pick a conversation from the left sidebar to inspect it."
               />
             ) : !activeSession.sessionPath ? (
               <EmptyState
                 title="Session file missing"
                 detail="This thread still exists in the index, but no matching session JSONL file could be resolved from `~/.codex/sessions`."
               />
-            ) : transcriptError ? (
+            ) : conversationError ? (
               <EmptyState
                 title="Unable to parse conversation"
-                detail={transcriptError}
+                detail={conversationError}
               />
-            ) : isLoadingTranscript && !activeTranscript ? (
+            ) : isLoadingConversation && !activeTranscript ? (
               <EmptyState
-                title="Loading transcript"
+                title="Loading conversation"
                 detail="Reading and parsing the selected session file."
               />
             ) : activeTranscript ? (
-              <div className="markdown-shell">
-                <ReactMarkdown
-                  components={{
-                    a({ href, children }) {
-                      if (!href) {
-                        return <span>{children}</span>
-                      }
+              <div className="conversation-list">
+                {activeTranscript.entries.map(entry => {
+                  if (entry.kind === "commentary") {
+                    return (
+                      <CommentaryStep
+                        entry={entry}
+                        expanded={expandedCommentaryIds.has(entry.id)}
+                        key={entry.id}
+                        onToggle={() => toggleCommentaryEntry(entry.id)}
+                      />
+                    )
+                  }
 
-                      if (/^https?:\/\//.test(href)) {
-                        return (
-                          <a href={href} rel="noreferrer" target="_blank">
-                            {children}
-                          </a>
-                        )
-                      }
+                  if (entry.role === "user") {
+                    return (
+                      <div className="conversation-entry user-entry" key={entry.id}>
+                        <div className="user-bubble">
+                          <MarkdownBlock
+                            className="message-markdown user-markdown"
+                            markdown={entry.bodyMarkdown}
+                          />
+                        </div>
+                      </div>
+                    )
+                  }
 
-                      return <span className="file-link">{children}</span>
-                    }
-                  }}
-                  remarkPlugins={[remarkGfm]}
-                >
-                  {activeTranscript.markdown}
-                </ReactMarkdown>
+                  return <AssistantMessage entry={entry} key={entry.id} />
+                })}
               </div>
             ) : (
               <EmptyState
-                title="Transcript unavailable"
+                title="Conversation unavailable"
                 detail="The selected conversation could not be rendered."
               />
             )}
