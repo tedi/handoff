@@ -4,7 +4,8 @@ const IPC_CHANNELS = {
   app: {
     getStateInfo: "handoff:get-state-info",
     refresh: "handoff:refresh",
-    openCodexThread: "handoff:open-codex-thread"
+    openCodexThread: "handoff:open-codex-thread",
+    openProjectPath: "handoff:open-project-path"
   },
   sessions: {
     list: "handoff:sessions:list",
@@ -30,6 +31,13 @@ contextBridge.exposeInMainWorld("handoffApp", {
         sessionId,
         sessionClient,
         sessionCwd
+      )
+    },
+    openProjectPath(target, projectPath) {
+      return ipcRenderer.invoke(
+        IPC_CHANNELS.app.openProjectPath,
+        target,
+        projectPath
       )
     },
     onStateChanged(listener) {

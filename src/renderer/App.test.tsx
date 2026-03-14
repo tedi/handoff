@@ -39,6 +39,7 @@ function createMockApi({
         changedPath: null
       }),
       openCodexThread: vi.fn().mockResolvedValue(undefined),
+      openProjectPath: vi.fn().mockResolvedValue(undefined),
       onStateChanged(listener) {
         listeners.add(listener)
 
@@ -220,6 +221,16 @@ describe("Handoff App", () => {
     expect(screen.queryByText(/^Assistant$/)).not.toBeInTheDocument()
     expect(screen.getByText("Hello").closest(".user-bubble")).not.toBeNull()
     expect(screen.getByText("Newest answer").closest(".assistant-entry")).not.toBeNull()
+    expect(screen.getByText("/tmp/session-2")).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: "Finder" })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: "Terminal" })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: "Editor" })
+    ).toBeInTheDocument()
 
     await userEvent.click(
       screen.getByRole("button", { name: /Thought chain \(2\)/i })
@@ -243,6 +254,10 @@ describe("Handoff App", () => {
       "desktop",
       "/tmp/session-2"
     )
+
+    await userEvent.click(screen.getByRole("button", { name: "Editor" }))
+
+    expect(api.app.openProjectPath).toHaveBeenCalledWith("editor", "/tmp/session-2")
 
     await userEvent.click(screen.getByRole("button", { name: /Older session/i }))
 

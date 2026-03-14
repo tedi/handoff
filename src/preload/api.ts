@@ -4,6 +4,7 @@ import { IPC_CHANNELS } from "../shared/channels"
 import type {
   ClipboardWriteResult,
   HandoffApi,
+  ProjectLocationTarget,
   SessionClient,
   HandoffStateChangeEvent,
   TranscriptOptions
@@ -54,6 +55,14 @@ export function createHandoffBridge(
           sessionId,
           sessionClient,
           sessionCwd
+        ) as Promise<void>
+      },
+
+      openProjectPath(target: ProjectLocationTarget, projectPath: string) {
+        return ipcRenderer.invoke(
+          IPC_CHANNELS.app.openProjectPath,
+          target,
+          projectPath
         ) as Promise<void>
       },
 

@@ -21,6 +21,7 @@ import type {
   ConversationTranscript,
   HandoffApi,
   HandoffStateChangeEvent,
+  ProjectLocationTarget,
   SessionListItem
 } from "../shared/contracts"
 import {
@@ -76,6 +77,18 @@ function formatAdditionCount(value: number) {
 
 function formatDeletionCount(value: number) {
   return `-${Math.max(value, 0)}`
+}
+
+function formatProjectLocationLabel(target: ProjectLocationTarget) {
+  if (target === "finder") {
+    return "Finder"
+  }
+
+  if (target === "terminal") {
+    return "Terminal"
+  }
+
+  return "Editor"
 }
 
 function highlightCodeHtml(content: string, language: string) {
@@ -354,6 +367,10 @@ export default function App() {
     () => sessions.find(session => session.id === activeSessionId) ?? null,
     [activeSessionId, sessions]
   )
+  const activeProjectPath =
+    activeTranscript && activeTranscript.id === activeSession?.id
+      ? activeTranscript.sessionCwd ?? null
+      : null
 
   const loadSessions = useCallback(
     async (preferredSessionId?: string | null) => {
@@ -508,6 +525,37 @@ export default function App() {
       setCopyStatus(message)
     }
   }, [activeSession, activeTranscript])
+
+  const handleOpenProjectPath = useCallback(
+    async (target: ProjectLocationTarget) => {
+      if (!activeProjectPath) {
+        return
+      }
+
+      const api = getHandoffApi()
+      if (!api) {
+        setCopyStatus("Preload bridge unavailable")
+        return
+      }
+
+      const targetLabel = formatProjectLocationLabel(target)
+
+      try {
+        await api.app.openProjectPath(target, activeProjectPath)
+        setCopyStatus(`Opened in ${targetLabel}`)
+        window.setTimeout(() => {
+          setCopyStatus(current =>
+            current === `Opened in ${targetLabel}` ? null : current
+          )
+        }, 2400)
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : `Unable to open ${targetLabel}`
+        setCopyStatus(message)
+      }
+    },
+    [activeProjectPath]
+  )
 
   const toggleThoughtChainEntry = useCallback((entryId: string) => {
     setExpandedThoughtChainIds(current => {
@@ -684,34 +732,71 @@ export default function App() {
                 detail="Reading and parsing the selected session file."
               />
             ) : activeTranscript ? (
-              <div className="conversation-list">
-                {activeTranscript.entries.map(entry => {
-                  if (entry.kind === "thought_chain") {
-                    return (
-                      <ThoughtChain
-                        entry={entry}
-                        expanded={expandedThoughtChainIds.has(entry.id)}
-                        key={entry.id}
-                        onToggle={() => toggleThoughtChainEntry(entry.id)}
-                      />
-                    )
-                  }
+              <div className="conversation-layout">
+                {activeProjectPath ? (
+                  <div className="project-toolbar">
+                    <div className="project-toolbar-path-group">
+                      <span className="project-toolbar-label">Project</span>
+                      <span className="project-toolbar-path" title={activeProjectPath}>
+                        {activeProjectPath}
+                      </span>
+                    </div>
 
-                  if (entry.role === "user") {
-                    return (
-                      <div className="conversation-entry user-entry" key={entry.id}>
-                        <div className="user-bubble">
-                          <MarkdownBlock
-                            className="message-markdown user-markdown"
-                            markdown={entry.bodyMarkdown}
-                          />
+                    <div className="project-toolbar-actions">
+                      <button
+                        className="project-toolbar-button"
+                        onClick={() => void handleOpenProjectPath("finder")}
+                        type="button"
+                      >
+                        Finder
+                      </button>
+                      <button
+                        className="project-toolbar-button"
+                        onClick={() => void handleOpenProjectPath("terminal")}
+                        type="button"
+                      >
+                        Terminal
+                      </button>
+                      <button
+                        className="project-toolbar-button"
+                        onClick={() => void handleOpenProjectPath("editor")}
+                        type="button"
+                      >
+                        Editor
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="conversation-list">
+                  {activeTranscript.entries.map(entry => {
+                    if (entry.kind === "thought_chain") {
+                      return (
+                        <ThoughtChain
+                          entry={entry}
+                          expanded={expandedThoughtChainIds.has(entry.id)}
+                          key={entry.id}
+                          onToggle={() => toggleThoughtChainEntry(entry.id)}
+                        />
+                      )
+                    }
+
+                    if (entry.role === "user") {
+                      return (
+                        <div className="conversation-entry user-entry" key={entry.id}>
+                          <div className="user-bubble">
+                            <MarkdownBlock
+                              className="message-markdown user-markdown"
+                              markdown={entry.bodyMarkdown}
+                            />
+                          </div>
                         </div>
-                      </div>
-                    )
-                  }
+                      )
+                    }
 
-                  return <AssistantMessage entry={entry} key={entry.id} />
-                })}
+                    return <AssistantMessage entry={entry} key={entry.id} />
+                  })}
+                </div>
               </div>
             ) : (
               <EmptyState

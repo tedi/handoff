@@ -19,6 +19,7 @@ describe("createHandoffBridge", () => {
       includeCommentary: false,
       includeDiffs: true
     })
+    await bridge.app.openProjectPath("editor", "/tmp/project")
     await bridge.clipboard.writeText("copied")
 
     expect(invoke).toHaveBeenNthCalledWith(1, IPC_CHANNELS.sessions.list)
@@ -33,6 +34,12 @@ describe("createHandoffBridge", () => {
     )
     expect(invoke).toHaveBeenNthCalledWith(
       3,
+      IPC_CHANNELS.app.openProjectPath,
+      "editor",
+      "/tmp/project"
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      4,
       IPC_CHANNELS.clipboard.writeText,
       "copied"
     )

@@ -9,6 +9,7 @@ export interface SessionListItem extends SessionIndexEntry {
 }
 
 export type SessionClient = "desktop" | "cli" | "unknown"
+export type ProjectLocationTarget = "finder" | "terminal" | "editor"
 
 export interface TranscriptOptions {
   includeDiffs: boolean
@@ -103,6 +104,10 @@ export interface HandoffApi {
       sessionId: string,
       sessionClient?: SessionClient,
       sessionCwd?: string | null
+    ): Promise<void>
+    openProjectPath(
+      target: ProjectLocationTarget,
+      projectPath: string
     ): Promise<void>
     onStateChanged(listener: (event: HandoffStateChangeEvent) => void): () => void
   }
