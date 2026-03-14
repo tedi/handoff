@@ -896,6 +896,7 @@ export function buildConversationTranscript(params: {
     id: session.id,
     sourceSessionId: session.sourceSessionId,
     provider: session.provider,
+    archived: session.archived,
     threadName: session.threadName,
     updatedAt: session.updatedAt,
     sessionPath,

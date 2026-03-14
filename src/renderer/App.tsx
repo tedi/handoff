@@ -695,6 +695,11 @@ export default function App() {
         <div className="topbar-left">
           {activeSession ? (
             <>
+              {activeSession.archived ? (
+                <span className="archived-indicator" title="Archived">
+                  A
+                </span>
+              ) : null}
               <span className="topbar-thread">{activeSession.threadName}</span>
               <div className="topbar-session-meta">
                 <ProviderIcon provider={activeSession.provider} stateInfo={stateInfo} />
@@ -758,7 +763,14 @@ export default function App() {
                   type="button"
                   >
                     <div className="session-row-main">
-                      <span className="session-title">{session.threadName}</span>
+                      <div className="session-title-group">
+                        {session.archived ? (
+                          <span className="archived-indicator" title="Archived">
+                            A
+                          </span>
+                        ) : null}
+                        <span className="session-title">{session.threadName}</span>
+                      </div>
                       <div className="session-row-meta">
                         <ProviderIcon provider={session.provider} stateInfo={stateInfo} />
                         <span className="session-time">

@@ -55,6 +55,11 @@ interface CacheState {
   pathById: Map<string, string>
 }
 
+interface SessionLocation {
+  path: string
+  archived: boolean
+}
+
 interface ClaudeSessionFileMetadata {
   sourceSessionId: string | null
   firstUserText: string | null
@@ -141,21 +146,48 @@ async function walkSessionFiles(rootDir: string): Promise<string[]> {
   return result
 }
 
-async function buildCodexSessionPathMap(sessionsRoot: string) {
-  const files = await walkSessionFiles(sessionsRoot)
-  const pathById = new Map<string, string>()
+async function buildCodexSessionLocationMap(params: {
+  sessionsRoot: string
+  archivedSessionsRoot: string
+}) {
+  const [activeFiles, archivedFiles] = await Promise.all([
+    walkSessionFiles(params.sessionsRoot),
+    walkSessionFiles(params.archivedSessionsRoot)
+  ])
+  const locationsById = new Map<string, SessionLocation>()
 
-  for (const filePath of files) {
+  for (const filePath of activeFiles) {
     const match = filePath.match(SESSION_FILENAME_PATTERN)
     const sessionId = match?.[1]
     if (!sessionId) {
       continue
     }
 
-    pathById.set(createSessionKey("codex", sessionId), filePath)
+    locationsById.set(createSessionKey("codex", sessionId), {
+      path: filePath,
+      archived: false
+    })
   }
 
-  return pathById
+  for (const filePath of archivedFiles) {
+    const match = filePath.match(SESSION_FILENAME_PATTERN)
+    const sessionId = match?.[1]
+    if (!sessionId) {
+      continue
+    }
+
+    const key = createSessionKey("codex", sessionId)
+    if (locationsById.has(key)) {
+      continue
+    }
+
+    locationsById.set(key, {
+      path: filePath,
+      archived: true
+    })
+  }
+
+  return locationsById
 }
 
 function parseCodexIndexLine(line: string, lineNumber: number): SessionIndexEntry {
@@ -183,6 +215,7 @@ function parseCodexIndexLine(line: string, lineNumber: number): SessionIndexEntr
     id: createSessionKey("codex", sourceSessionId),
     sourceSessionId,
     provider: "codex",
+    archived: false,
     threadName: (parsed as { thread_name: string }).thread_name,
     updatedAt: (parsed as { updated_at: string }).updated_at,
     projectPath: null
@@ -387,17 +420,29 @@ function resolveClaudeThreadName(params: {
 async function loadCodexEntries(params: {
   indexPath: string
   sessionsRoot: string
+  archivedSessionsRoot: string
 }) {
   const indexText = await fs.readFile(params.indexPath, "utf8")
+  const locationsById = await buildCodexSessionLocationMap({
+    sessionsRoot: params.sessionsRoot,
+    archivedSessionsRoot: params.archivedSessionsRoot
+  })
   const rawEntries = indexText
     .split(/\r?\n/)
     .map(line => line.trim())
     .filter(Boolean)
     .map((line, index) => parseCodexIndexLine(line, index + 1))
+    .filter(entry => locationsById.has(entry.id))
+    .map(entry => ({
+      ...entry,
+      archived: locationsById.get(entry.id)?.archived ?? false
+    }))
 
   return {
     entries: dedupeSessionEntries(rawEntries),
-    pathById: await buildCodexSessionPathMap(params.sessionsRoot)
+    pathById: new Map(
+      [...locationsById.entries()].map(([key, location]) => [key, location.path])
+    )
   }
 }
 
@@ -460,6 +505,7 @@ async function loadClaudeIndexEntries(projectDir: string, indexPath: string) {
       id: sessionId,
       sourceSessionId,
       provider: "claude",
+      archived: false,
       threadName: resolveClaudeThreadName({
         summary: rawEntry.summary,
         firstPrompt: rawEntry.firstPrompt,
@@ -502,6 +548,7 @@ async function loadClaudeFallbackEntries(projectDir: string) {
       id,
       sourceSessionId,
       provider: "claude",
+      archived: false,
       threadName: resolveClaudeThreadName({ fileMetadata: metadata }),
       updatedAt: metadata.updatedAt ?? stat.mtime.toISOString(),
       projectPath: metadata.projectPath
@@ -547,10 +594,12 @@ export function createHandoffService(
   const claudeHome = options.claudeHome ?? path.join(os.homedir(), ".claude")
   const indexPath = path.join(codexHome, "session_index.jsonl")
   const sessionsRoot = path.join(codexHome, "sessions")
+  const archivedSessionsRoot = path.join(codexHome, "archived_sessions")
   const claudeProjectsRoot = path.join(claudeHome, "projects")
   const outputDir = path.join(appDir, "output")
   const events = new EventEmitter()
   const normalizedIndexPath = indexPath.replaceAll("\\", "/")
+  const normalizedArchivedSessionsRoot = archivedSessionsRoot.replaceAll("\\", "/")
   const normalizedClaudeProjectsRoot = claudeProjectsRoot.replaceAll("\\", "/")
 
   let cache: CacheState | null = null
@@ -612,7 +661,7 @@ export function createHandoffService(
   async function loadCache() {
     const [{ entries: codexEntries, pathById: codexPathById }, { entries: claudeEntries, pathById: claudePathById }] =
       await Promise.all([
-        loadCodexEntries({ indexPath, sessionsRoot }),
+        loadCodexEntries({ indexPath, sessionsRoot, archivedSessionsRoot }),
         loadClaudeEntries(claudeProjectsRoot).catch(error => {
           if (
             error &&
@@ -732,7 +781,7 @@ export function createHandoffService(
 
       await loadCache()
 
-      listWatcher = chokidar.watch([indexPath, claudeProjectsRoot], {
+      listWatcher = chokidar.watch([indexPath, claudeProjectsRoot, archivedSessionsRoot], {
         ignoreInitial: true,
         awaitWriteFinish: {
           stabilityThreshold: 100,
@@ -743,6 +792,7 @@ export function createHandoffService(
 
           if (
             normalizedPath === normalizedIndexPath ||
+            normalizedPath === normalizedArchivedSessionsRoot ||
             normalizedPath === normalizedClaudeProjectsRoot
           ) {
             return false

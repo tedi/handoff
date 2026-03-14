@@ -94,6 +94,7 @@ describe("Handoff App", () => {
           id: "claude:session-2",
           sourceSessionId: "session-2",
           provider: "claude",
+          archived: false,
           threadName: "Claude newest session",
           updatedAt: "2026-03-14T02:00:00.000Z",
           projectPath: "/tmp/claude-project",
@@ -103,6 +104,7 @@ describe("Handoff App", () => {
           id: "codex:session-1",
           sourceSessionId: "session-1",
           provider: "codex",
+          archived: true,
           threadName: "Codex older session",
           updatedAt: "2026-03-14T01:00:00.000Z",
           projectPath: null,
@@ -114,6 +116,7 @@ describe("Handoff App", () => {
           id: "codex:session-1",
           sourceSessionId: "session-1",
           provider: "codex",
+          archived: true,
           threadName: "Codex older session",
           updatedAt: "2026-03-14T01:00:00.000Z",
           projectPath: "/tmp/codex-project",
@@ -145,6 +148,7 @@ describe("Handoff App", () => {
           id: "claude:session-2",
           sourceSessionId: "session-2",
           provider: "claude",
+          archived: false,
           threadName: "Claude newest session",
           updatedAt: "2026-03-14T02:00:00.000Z",
           projectPath: "/tmp/claude-project",
@@ -223,6 +227,7 @@ describe("Handoff App", () => {
     await screen.findByRole("button", { name: /Claude newest session/i })
     expect(await screen.findByText("Newest answer")).toBeInTheDocument()
     expect(screen.getAllByTitle("Claude").length).toBeGreaterThan(0)
+    expect(screen.getAllByTitle("Archived").length).toBe(1)
     expect(screen.getByText("Thought chain (2)")).toBeInTheDocument()
     expect(screen.getByText("2 files changed")).toBeInTheDocument()
     expect(screen.getByText("Hello").closest(".user-bubble")).not.toBeNull()
@@ -263,6 +268,7 @@ describe("Handoff App", () => {
     await waitFor(() => {
       expect(screen.getByText("Older answer")).toBeInTheDocument()
     })
+    expect(screen.getAllByTitle("Archived").length).toBe(2)
 
     await userEvent.click(screen.getByRole("button", { name: /Open in Codex/i }))
 
@@ -281,6 +287,7 @@ describe("Handoff App", () => {
           id: "claude:session-1",
           sourceSessionId: "session-1",
           provider: "claude",
+          archived: false,
           threadName: "Copy session",
           updatedAt: "2026-03-14T01:00:00.000Z",
           projectPath: "/tmp/project",
@@ -292,6 +299,7 @@ describe("Handoff App", () => {
           id: "claude:session-1",
           sourceSessionId: "session-1",
           provider: "claude",
+          archived: false,
           threadName: "Copy session",
           updatedAt: "2026-03-14T01:00:00.000Z",
           projectPath: "/tmp/project",
@@ -377,6 +385,7 @@ describe("Handoff App", () => {
           id: "claude:session-1",
           sourceSessionId: "session-1",
           provider: "claude",
+          archived: false,
           threadName: "Missing session",
           updatedAt: "2026-03-14T01:00:00.000Z",
           projectPath: "/tmp/project",
@@ -399,6 +408,7 @@ describe("Handoff App", () => {
           id: "codex:session-1",
           sourceSessionId: "session-1",
           provider: "codex",
+          archived: false,
           threadName: "Broken session",
           updatedAt: "2026-03-14T01:00:00.000Z",
           projectPath: null,
@@ -410,6 +420,7 @@ describe("Handoff App", () => {
           id: "codex:session-1",
           sourceSessionId: "session-1",
           provider: "codex",
+          archived: false,
           threadName: "Broken session",
           updatedAt: "2026-03-14T01:00:00.000Z",
           projectPath: null,

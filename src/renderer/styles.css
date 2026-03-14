@@ -104,6 +104,20 @@ pre {
   text-overflow: ellipsis;
 }
 
+.archived-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--muted);
+  font-size: 0.63rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
 .topbar-updated {
   color: var(--muted);
   font-size: 0.72rem;
@@ -282,6 +296,13 @@ pre {
   justify-content: space-between;
   gap: 12px;
   align-items: center;
+}
+
+.session-title-group {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .session-title {

@@ -21,6 +21,7 @@ function createSession(overrides: Partial<SessionIndexEntry> = {}): SessionIndex
     id: overrides.id ?? `${provider}:${sourceSessionId}`,
     sourceSessionId,
     provider,
+    archived: overrides.archived ?? false,
     threadName: overrides.threadName ?? "Highlights regression",
     updatedAt: overrides.updatedAt ?? "2026-03-14T00:18:45.474Z",
     projectPath: overrides.projectPath ?? null

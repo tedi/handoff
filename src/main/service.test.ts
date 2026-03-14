@@ -15,8 +15,10 @@ interface TestEnvironment {
   codexHome: string
   claudeHome: string
   codexExistingId: string
-  codexMissingId: string
+  codexArchivedId: string
+  codexFilteredId: string
   codexSessionFilePath: string
+  codexArchivedSessionFilePath: string
   claudeIndexedId: string
   claudeIndexedSessionPath: string
   claudeFallbackId: string
@@ -142,6 +144,7 @@ async function createTestEnvironment(): Promise<TestEnvironment> {
   const codexHome = path.join(baseDir, ".codex")
   const claudeHome = path.join(baseDir, ".claude")
   const sessionsDir = path.join(codexHome, "sessions", "2026", "03", "14")
+  const archivedSessionsDir = path.join(codexHome, "archived_sessions")
   const claudeIndexedProjectDir = path.join(
     claudeHome,
     "projects",
@@ -154,13 +157,18 @@ async function createTestEnvironment(): Promise<TestEnvironment> {
   )
 
   const codexExistingId = "019ce9aa-04f8-7860-883a-1ceb41b9ac31"
-  const codexMissingId = "019ce9aa-04f8-7860-883a-1ceb41b9ac32"
+  const codexArchivedId = "019ce9aa-04f8-7860-883a-1ceb41b9ac32"
+  const codexFilteredId = "019ce9aa-04f8-7860-883a-1ceb41b9ac33"
   const claudeIndexedId = "9a728c6c-c2df-4570-871e-217aac26a29c"
   const claudeFallbackId = "7f5d8b1d-4b9b-45c2-93d8-87323df5d4ea"
 
   const codexSessionFilePath = path.join(
     sessionsDir,
     `rollout-2026-03-13T17-05-59-${codexExistingId}.jsonl`
+  )
+  const codexArchivedSessionFilePath = path.join(
+    archivedSessionsDir,
+    `rollout-2026-03-13T17-06-59-${codexArchivedId}.jsonl`
   )
   const claudeIndexedSessionPath = path.join(
     claudeIndexedProjectDir,
@@ -178,6 +186,7 @@ async function createTestEnvironment(): Promise<TestEnvironment> {
 
   await fs.mkdir(appDir, { recursive: true })
   await fs.mkdir(sessionsDir, { recursive: true })
+  await fs.mkdir(archivedSessionsDir, { recursive: true })
   await fs.mkdir(claudeIndexedProjectDir, { recursive: true })
   await fs.mkdir(path.join(claudeFallbackProjectDir, "subagents"), { recursive: true })
   await fs.writeFile(
@@ -189,9 +198,14 @@ async function createTestEnvironment(): Promise<TestEnvironment> {
         updated_at: "2026-03-14T00:17:45.474Z"
       }),
       JSON.stringify({
-        id: codexMissingId,
-        thread_name: "Missing Codex session",
+        id: codexArchivedId,
+        thread_name: "Archived Codex session",
         updated_at: "2026-03-14T00:19:45.474Z"
+      }),
+      JSON.stringify({
+        id: codexFilteredId,
+        thread_name: "Filtered missing Codex session",
+        updated_at: "2026-03-14T00:19:15.474Z"
       }),
       JSON.stringify({
         id: codexExistingId,
@@ -210,6 +224,23 @@ async function createTestEnvironment(): Promise<TestEnvironment> {
           id: codexExistingId,
           timestamp: "2026-03-14T00:05:59.676Z",
           cwd: "/Users/tedikonda/topchallenger/apps/client",
+          originator: "Codex Desktop",
+          source: "vscode"
+        }
+      }),
+      await loadFixture("sample-session.jsonl")
+    ].join("\n")
+  )
+  await fs.writeFile(
+    codexArchivedSessionFilePath,
+    [
+      JSON.stringify({
+        timestamp: "2026-03-14T00:09:49.033Z",
+        type: "session_meta",
+        payload: {
+          id: codexArchivedId,
+          timestamp: "2026-03-14T00:06:59.676Z",
+          cwd: "/Users/tedikonda/topchallenger/apps",
           originator: "Codex Desktop",
           source: "vscode"
         }
@@ -322,8 +353,10 @@ async function createTestEnvironment(): Promise<TestEnvironment> {
     codexHome,
     claudeHome,
     codexExistingId,
-    codexMissingId,
+    codexArchivedId,
+    codexFilteredId,
     codexSessionFilePath,
+    codexArchivedSessionFilePath,
     claudeIndexedId,
     claudeIndexedSessionPath,
     claudeFallbackId,
@@ -378,17 +411,20 @@ describe("handoff service", () => {
     expect(sessions.map(session => session.id)).toEqual([
       `claude:${env.claudeIndexedId}`,
       `claude:${env.claudeFallbackId}`,
-      `codex:${env.codexMissingId}`,
+      `codex:${env.codexArchivedId}`,
       `codex:${env.codexExistingId}`
     ])
     expect(sessions.map(session => session.threadName)).toEqual([
       "Claude indexed session",
       "Fallback Claude session",
-      "Missing Codex session",
+      "Archived Codex session",
       "Highlights regression"
     ])
     expect(
       sessions.some(session => session.id === "claude:mistake-session")
+    ).toBe(false)
+    expect(
+      sessions.some(session => session.id === `codex:${env.codexFilteredId}`)
     ).toBe(false)
     expect(sessions[0]).toMatchObject({
       provider: "claude",
@@ -400,7 +436,11 @@ describe("handoff service", () => {
       projectPath: "/Users/tedikonda/ai/handoff",
       sessionPath: env.claudeFallbackSessionPath
     })
-    expect(sessions[2]?.sessionPath).toBeNull()
+    expect(sessions[2]).toMatchObject({
+      provider: "codex",
+      archived: true,
+      sessionPath: env.codexArchivedSessionFilePath
+    })
   })
 
   it("returns a parsed transcript for a Claude session using the shared transcript model", async () => {
@@ -422,12 +462,26 @@ describe("handoff service", () => {
     ])
   })
 
+  it("loads archived Codex sessions through the normal transcript path", async () => {
+    const transcript = await service.sessions.getTranscript(`codex:${env.codexArchivedId}`, {
+      includeCommentary: false,
+      includeDiffs: true
+    })
+
+    expect(transcript.provider).toBe("codex")
+    expect(transcript.archived).toBe(true)
+    expect(transcript.sessionPath).toBe(env.codexArchivedSessionFilePath)
+    expect(transcript.threadName).toBe("Archived Codex session")
+    expect(transcript.markdown).toContain("### Diffs")
+  })
+
   it("emits a selected-session-changed event when the watched Claude session file changes", async () => {
     await service.startWatching()
     await service.sessions.getTranscript(`claude:${env.claudeIndexedId}`, {
       includeCommentary: false,
       includeDiffs: true
     })
+    await new Promise(resolve => setTimeout(resolve, 150))
 
     const eventPromise = waitForStateChange(service, "selected-session-changed")
     await fs.appendFile(env.claudeIndexedSessionPath, "\n")

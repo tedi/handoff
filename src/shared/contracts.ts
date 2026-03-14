@@ -4,6 +4,7 @@ export interface SessionIndexEntry {
   id: string
   sourceSessionId: string
   provider: SessionProvider
+  archived: boolean
   threadName: string
   updatedAt: string
   projectPath: string | null
@@ -70,6 +71,7 @@ export interface ConversationTranscript {
   id: string
   sourceSessionId: string
   provider: SessionProvider
+  archived: boolean
   threadName: string
   updatedAt: string
   sessionPath: string | null
