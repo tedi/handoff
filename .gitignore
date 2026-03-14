@@ -1,2 +1,8 @@
 __pycache__/
 output/
+node_modules/
+out/
+release/
+*.tsbuildinfo
+output/
+build/icon.iconset/

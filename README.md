@@ -1,78 +1,75 @@
 # Handoff
 
-`handoff.py` extracts a clean transcript from a Codex session JSONL file and can optionally attach the recorded `apply_patch` diffs inline under the assistant reply they belong to.
+Handoff is a local-only Electron app for browsing Codex sessions from `~/.codex/session_index.jsonl` and viewing their parsed transcript with inline diffs. The original `handoff.py` CLI remains in the repo as a reference/companion utility.
 
-## Usage
+## Requirements
 
-Run it with:
+- macOS
+- Node 20+
+- npm
 
-```bash
-python3 /Users/tedikonda/ai/handoff/handoff.py <session.jsonl>
-```
-
-By default this writes a generated Markdown file into:
+## Install
 
 ```bash
-/Users/tedikonda/ai/handoff/output
+cd /Users/tedikonda/ai/handoff
+npm install
 ```
 
-Example:
+## Run In Dev
 
 ```bash
-python3 /Users/tedikonda/ai/handoff/handoff.py \
-  /Users/tedikonda/.codex/sessions/2026/03/13/rollout-2026-03-13T17-05-59-019ce9aa-04f8-7860-883a-1ceb41b9ac31.jsonl
+cd /Users/tedikonda/ai/handoff
+npm run dev
 ```
 
-Write output to a specific file:
+The app reads:
+
+- `~/.codex/session_index.jsonl`
+- `~/.codex/sessions`
+
+The sidebar shows `thread_name` sorted by most recent `updated_at`, and the detail pane renders the full transcript with inline diffs.
+
+## Build
 
 ```bash
-python3 /Users/tedikonda/ai/handoff/handoff.py <session.jsonl> --output /tmp/handoff.md
+cd /Users/tedikonda/ai/handoff
+npm run build
 ```
 
-Write output into a different folder:
+## Package
 
 ```bash
-python3 /Users/tedikonda/ai/handoff/handoff.py <session.jsonl> --output-dir /tmp/handoff-exports
+cd /Users/tedikonda/ai/handoff
+npm run package
 ```
 
-Write to stdout instead of a file:
+Release artifacts are written to:
+
+```text
+./release/
+```
+
+## Tests
+
+```bash
+npm run test
+npm run typecheck
+```
+
+## UI behavior
+
+- Left sidebar lists conversations from `session_index.jsonl` in descending chronological order.
+- Right pane renders the parsed transcript as markdown with inline diff blocks.
+- Copy actions:
+  - `Copy Chat`
+  - `Copy Chat + Diffs`
+  - `Copy Last Message`
+- The app auto-refreshes when `session_index.jsonl` or the currently selected session file changes.
+
+## CLI Companion
+
+The existing Python CLI is still available:
 
 ```bash
 python3 /Users/tedikonda/ai/handoff/handoff.py <session.jsonl> --stdout
 ```
-
-Include diffs:
-
-```bash
-python3 /Users/tedikonda/ai/handoff/handoff.py <session.jsonl> --include-diffs
-```
-
-When `--include-diffs` is set, diffs are attached inline under the matching assistant message instead of being collected in one block at the end.
-
-Include assistant commentary/progress updates:
-
-```bash
-python3 /Users/tedikonda/ai/handoff/handoff.py <session.jsonl> --include-commentary
-```
-
-Export only the last user/assistant pair:
-
-```bash
-python3 /Users/tedikonda/ai/handoff/handoff.py <session.jsonl> --mode final-pair
-```
-
-Export only the last completed turn:
-
-```bash
-python3 /Users/tedikonda/ai/handoff/handoff.py <session.jsonl> --mode last-turn
-```
-
-## Default behavior
-
-- Includes user messages.
-- Includes final assistant replies.
-- Excludes assistant commentary/progress updates unless `--include-commentary` is set.
-- Writes a generated Markdown file into `/Users/tedikonda/ai/handoff/output` unless `--output`, `--output-dir`, or `--stdout` is used.
-- Excludes diffs unless `--include-diffs` is set.
-- Attaches diffs inline to the assistant reply for that turn when `--include-diffs` is set.
-- Skips injected scaffold messages such as AGENTS/context prompts.
