@@ -30,6 +30,15 @@ describe("createHandoffBridge", () => {
       },
       limit: 10
     })
+    await bridge.settings.get()
+    await bridge.settings.update({
+      providers: {
+        codex: {
+          binaryPath: "/custom/codex"
+        }
+      }
+    })
+    await bridge.settings.resetProvider("claude")
     await bridge.app.openSourceSession("claude", "session-1", "cli", "/tmp/project")
     await bridge.app.openProjectPath("editor", "/tmp/project")
     await bridge.clipboard.writeText("copied")
@@ -61,6 +70,26 @@ describe("createHandoffBridge", () => {
     )
     expect(invoke).toHaveBeenNthCalledWith(
       5,
+      IPC_CHANNELS.settings.get
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      6,
+      IPC_CHANNELS.settings.update,
+      {
+        providers: {
+          codex: {
+            binaryPath: "/custom/codex"
+          }
+        }
+      }
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      7,
+      IPC_CHANNELS.settings.resetProvider,
+      "claude"
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      8,
       IPC_CHANNELS.app.openSourceSession,
       "claude",
       "session-1",
@@ -68,13 +97,13 @@ describe("createHandoffBridge", () => {
       "/tmp/project"
     )
     expect(invoke).toHaveBeenNthCalledWith(
-      6,
+      9,
       IPC_CHANNELS.app.openProjectPath,
       "editor",
       "/tmp/project"
     )
     expect(invoke).toHaveBeenNthCalledWith(
-      7,
+      10,
       IPC_CHANNELS.clipboard.writeText,
       "copied"
     )

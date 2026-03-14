@@ -2,6 +2,7 @@ export type SessionProvider = "codex" | "claude"
 export type ArchivedFilterValue = "all" | "not-archived" | "archived"
 export type ProviderFilterValue = "all" | SessionProvider
 export type DateRangeFilterValue = "24h" | "3d" | "7d" | "30d" | "all"
+export type TerminalAppId = "terminal" | "ghostty" | "warp"
 
 export interface SessionIndexEntry {
   id: string
@@ -111,6 +112,10 @@ export interface ClipboardWriteResult {
   copied: true
 }
 
+export interface OpenActionResult {
+  fallbackMessage?: string | null
+}
+
 export interface SearchFilters {
   archived: ArchivedFilterValue
   provider: ProviderFilterValue
@@ -130,6 +135,54 @@ export interface SearchStatus {
   documentCount: number
 }
 
+export interface ProviderLaunchOverrides {
+  binaryPath: string
+  homePath: string
+}
+
+export interface TerminalPreferences {
+  enabledTerminalIds: TerminalAppId[]
+  defaultTerminalId: TerminalAppId
+}
+
+export interface HandoffSettings {
+  providers: Record<SessionProvider, ProviderLaunchOverrides>
+  terminals: TerminalPreferences
+}
+
+export interface HandoffSettingsPatch {
+  providers?: Partial<Record<SessionProvider, Partial<ProviderLaunchOverrides>>>
+  terminals?: Partial<TerminalPreferences>
+}
+
+export interface TerminalOption {
+  id: TerminalAppId
+  label: string
+  installed: boolean
+}
+
+export interface ProviderSettingsInfo {
+  provider: SessionProvider
+  binarySource: "default" | "override"
+  effectiveBinaryPath: string
+  homeSource: "default" | "override"
+  effectiveHomePath: string
+  configPath: string
+  configExists: boolean
+  model: string | null
+  reasoningEffort: string | null
+  serviceTier: string | null
+  effortLevel: string | null
+  alwaysThinkingEnabled: boolean | null
+  observedModel: string | null
+}
+
+export interface HandoffSettingsSnapshot {
+  settings: HandoffSettings
+  providerInfo: Record<SessionProvider, ProviderSettingsInfo>
+  terminalOptions: TerminalOption[]
+}
+
 export interface HandoffApi {
   app: {
     getStateInfo(): Promise<AppStateInfo>
@@ -139,12 +192,17 @@ export interface HandoffApi {
       sessionId: string,
       sessionClient?: SessionClient,
       workingDirectory?: string | null
-    ): Promise<void>
+    ): Promise<OpenActionResult>
     openProjectPath(
       target: ProjectLocationTarget,
       projectPath: string
-    ): Promise<void>
+    ): Promise<OpenActionResult>
     onStateChanged(listener: (event: HandoffStateChangeEvent) => void): () => void
+  }
+  settings: {
+    get(): Promise<HandoffSettingsSnapshot>
+    update(patch: HandoffSettingsPatch): Promise<HandoffSettingsSnapshot>
+    resetProvider(provider: SessionProvider): Promise<HandoffSettingsSnapshot>
   }
   sessions: {
     list(): Promise<SessionListItem[]>

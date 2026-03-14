@@ -31,13 +31,19 @@ import type {
   ConversationTranscript,
   DateRangeFilterValue,
   HandoffApi,
+  HandoffSettingsPatch,
+  HandoffSettingsSnapshot,
   ProjectLocationTarget,
+  ProviderLaunchOverrides,
+  ProviderSettingsInfo,
   ProviderFilterValue,
   SearchFilters,
   SearchResult,
   SearchStatus,
   SessionListItem,
-  SessionProvider
+  SessionProvider,
+  TerminalAppId,
+  TerminalOption
 } from "../shared/contracts"
 import {
   detectCodeLanguage,
@@ -108,6 +114,18 @@ function formatProjectLocationLabel(target: ProjectLocationTarget) {
 
 function formatProviderLabel(provider: SessionProvider) {
   return provider === "claude" ? "Claude" : "Codex"
+}
+
+function formatTerminalLabel(terminalId: TerminalAppId) {
+  if (terminalId === "ghostty") {
+    return "Ghostty"
+  }
+
+  if (terminalId === "warp") {
+    return "Warp"
+  }
+
+  return "Terminal"
 }
 
 function getProviderIconDataUrl(
@@ -220,6 +238,31 @@ const OUTPUT_FORMAT_OPTIONS: Array<{
   { key: "json", label: "JSON" },
   { key: "structured", label: "Structured" }
 ]
+
+function applySettingsPatchToSnapshot(
+  snapshot: HandoffSettingsSnapshot,
+  patch: HandoffSettingsPatch
+) {
+  return {
+    ...snapshot,
+    settings: {
+      providers: {
+        codex: {
+          ...snapshot.settings.providers.codex,
+          ...(patch.providers?.codex ?? {})
+        },
+        claude: {
+          ...snapshot.settings.providers.claude,
+          ...(patch.providers?.claude ?? {})
+        }
+      },
+      terminals: {
+        ...snapshot.settings.terminals,
+        ...(patch.terminals ?? {})
+      }
+    }
+  }
+}
 
 function clampSidebarWidth(value: number, viewportWidth: number) {
   const maxWidth = Math.max(COLLAPSED_SIDEBAR_WIDTH, Math.floor(viewportWidth * 0.4))
@@ -561,6 +604,44 @@ function SearchIcon() {
         d="M10.3 10.3 13.5 13.5"
         stroke="currentColor"
         strokeLinecap="round"
+        strokeWidth="1.2"
+      />
+    </svg>
+  )
+}
+
+function SettingsIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="sidebar-filter-icon"
+      fill="none"
+      viewBox="0 0 16 16"
+    >
+      <path
+        d="M6.45 2.35h3.1l.35 1.55a4.45 4.45 0 0 1 1.06.61l1.47-.63 1.55 2.68-1.12 1.12c.07.39.07.79 0 1.18l1.12 1.12-1.55 2.68-1.47-.63c-.33.24-.69.44-1.06.61l-.35 1.55h-3.1l-.35-1.55a4.45 4.45 0 0 1-1.06-.61l-1.47.63-1.55-2.68 1.12-1.12a3.94 3.94 0 0 1 0-1.18L2.85 6.56 4.4 3.88l1.47.63c.33-.24.69-.44 1.06-.61l.35-1.55Z"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.05"
+      />
+      <circle cx="8" cy="8" r="1.85" stroke="currentColor" strokeWidth="1.05" />
+    </svg>
+  )
+}
+
+function BackArrowIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="sidebar-filter-icon"
+      fill="none"
+      viewBox="0 0 16 16"
+    >
+      <path
+        d="M6.25 3.5 2.75 8l3.5 4.5M3.25 8h10"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
         strokeWidth="1.2"
       />
     </svg>
@@ -1328,15 +1409,298 @@ function SearchResultsPane({
   )
 }
 
+function SettingsValue({
+  value,
+  monospace = false
+}: {
+  value: ReactNode
+  monospace?: boolean
+}) {
+  if (value === null || value === undefined || value === "") {
+    return <span className="settings-meta-value settings-meta-muted">Unavailable</span>
+  }
+
+  return (
+    <span className={`settings-meta-value ${monospace ? "is-monospace" : ""}`}>
+      {value}
+    </span>
+  )
+}
+
+function ProviderSettingsCard({
+  title,
+  description,
+  info,
+  overrides,
+  onOverrideChange,
+  onReset
+}: {
+  title: string
+  description: string
+  info: ProviderSettingsInfo
+  overrides: ProviderLaunchOverrides
+  onOverrideChange(patch: Partial<ProviderLaunchOverrides>): void
+  onReset(): void
+}) {
+  const isCodex = info.provider === "codex"
+
+  return (
+    <section className="settings-card">
+      <div className="settings-card-header">
+        <div className="settings-card-copy">
+          <h2>{title}</h2>
+          <p>{description}</p>
+        </div>
+        <button className="ghost-button settings-reset-button" onClick={onReset} type="button">
+          Reset overrides
+        </button>
+      </div>
+
+      <div className="settings-field-list">
+        <label className="settings-field">
+          <span className="settings-field-label">
+            {isCodex ? "Codex binary path" : "Claude binary path"}
+          </span>
+          <input
+            className="settings-input"
+            onChange={event => onOverrideChange({ binaryPath: event.target.value })}
+            placeholder={isCodex ? "codex" : "claude"}
+            type="text"
+            value={overrides.binaryPath}
+          />
+          <span className="settings-field-help">
+            Leave blank to use {isCodex ? "`codex`" : "`claude`"} from your PATH.
+          </span>
+        </label>
+
+        <label className="settings-field">
+          <span className="settings-field-label">
+            {isCodex ? "CODEX_HOME path" : "Claude home path"}
+          </span>
+          <input
+            className="settings-input"
+            onChange={event => onOverrideChange({ homePath: event.target.value })}
+            placeholder={isCodex ? "~/.codex" : "~/.claude"}
+            type="text"
+            value={overrides.homePath}
+          />
+          <span className="settings-field-help">
+            Leave blank to use the default {isCodex ? "Codex" : "Claude"} home path.
+          </span>
+        </label>
+      </div>
+
+      <div className="settings-meta-grid">
+        <div className="settings-meta-item">
+          <span className="settings-meta-label">
+            {isCodex ? "Current model" : "Observed model"}
+          </span>
+          <SettingsValue value={isCodex ? info.model : info.observedModel} />
+        </div>
+        <div className="settings-meta-item">
+          <span className="settings-meta-label">
+            {isCodex ? "Reasoning effort" : "Effort level"}
+          </span>
+          <SettingsValue value={isCodex ? info.reasoningEffort : info.effortLevel} />
+        </div>
+        <div className="settings-meta-item">
+          <span className="settings-meta-label">
+            {isCodex ? "Service tier" : "Always thinking"}
+          </span>
+          <SettingsValue
+            value={
+              isCodex
+                ? info.serviceTier
+                : info.alwaysThinkingEnabled === null
+                  ? null
+                  : info.alwaysThinkingEnabled
+                    ? "Enabled"
+                    : "Disabled"
+            }
+          />
+        </div>
+        <div className="settings-meta-item settings-meta-item-wide">
+          <span className="settings-meta-label">Config path</span>
+          <SettingsValue monospace value={info.configPath} />
+        </div>
+        <div className="settings-meta-item settings-meta-item-wide">
+          <span className="settings-meta-label">Binary source</span>
+          <SettingsValue
+            monospace
+            value={
+              info.binarySource === "override"
+                ? `Override · ${info.effectiveBinaryPath}`
+                : `PATH · ${info.effectiveBinaryPath}`
+            }
+          />
+        </div>
+        <div className="settings-meta-item settings-meta-item-wide">
+          <span className="settings-meta-label">Home source</span>
+          <SettingsValue
+            monospace
+            value={
+              info.homeSource === "override"
+                ? `Override · ${info.effectiveHomePath}`
+                : `Default · ${info.effectiveHomePath}`
+            }
+          />
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function TerminalSettingsCard({
+  terminalOptions,
+  enabledTerminalIds,
+  defaultTerminalId,
+  onToggle,
+  onSelectDefault
+}: {
+  terminalOptions: TerminalOption[]
+  enabledTerminalIds: TerminalAppId[]
+  defaultTerminalId: TerminalAppId
+  onToggle(terminalId: TerminalAppId): void
+  onSelectDefault(terminalId: TerminalAppId): void
+}) {
+  return (
+    <section className="settings-card">
+      <div className="settings-card-copy">
+        <h2>Terminals</h2>
+        <p>
+          Select which terminals Handoff may use. The default terminal is used for
+          project opens and CLI session resumes.
+        </p>
+      </div>
+
+      <div className="terminal-settings-list">
+        {terminalOptions.map(option => {
+          const isEnabled = enabledTerminalIds.includes(option.id)
+          const isDefault = defaultTerminalId === option.id
+          const isLastEnabled = enabledTerminalIds.length === 1 && isEnabled
+
+          return (
+            <div className="terminal-settings-row" key={option.id}>
+              <label className="terminal-settings-toggle">
+                <input
+                  checked={isEnabled}
+                  disabled={isLastEnabled}
+                  onChange={() => onToggle(option.id)}
+                  type="checkbox"
+                />
+                <span className="terminal-settings-copy">
+                  <span className="terminal-settings-name">{option.label}</span>
+                  <span
+                    className={`terminal-settings-status ${
+                      option.installed ? "is-installed" : "is-unavailable"
+                    }`}
+                  >
+                    {option.installed ? "Installed" : "Unavailable"}
+                  </span>
+                </span>
+              </label>
+
+              <button
+                className={`terminal-default-button ${isDefault ? "is-default" : ""}`}
+                disabled={!isEnabled}
+                onClick={() => onSelectDefault(option.id)}
+                type="button"
+              >
+                {isDefault ? "Default" : "Make default"}
+              </button>
+            </div>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+function SettingsPane({
+  settingsSnapshot,
+  settingsError,
+  onProviderOverrideChange,
+  onProviderReset,
+  onTerminalToggle,
+  onDefaultTerminalSelect
+}: {
+  settingsSnapshot: HandoffSettingsSnapshot | null
+  settingsError: string | null
+  onProviderOverrideChange(
+    provider: SessionProvider,
+    patch: Partial<ProviderLaunchOverrides>
+  ): void
+  onProviderReset(provider: SessionProvider): void
+  onTerminalToggle(terminalId: TerminalAppId): void
+  onDefaultTerminalSelect(terminalId: TerminalAppId): void
+}) {
+  if (settingsError) {
+    return (
+      <EmptyState
+        title="Unable to load settings"
+        detail={settingsError}
+      />
+    )
+  }
+
+  if (!settingsSnapshot) {
+    return (
+      <EmptyState
+        title="Loading settings"
+        detail="Reading Handoff settings and provider configuration info."
+      />
+    )
+  }
+
+  return (
+    <div className="settings-layout">
+      <ProviderSettingsCard
+        description="These overrides apply to terminal-based Codex launches from Handoff."
+        info={settingsSnapshot.providerInfo.codex}
+        onOverrideChange={patch => onProviderOverrideChange("codex", patch)}
+        onReset={() => onProviderReset("codex")}
+        overrides={settingsSnapshot.settings.providers.codex}
+        title="Codex model info"
+      />
+
+      <ProviderSettingsCard
+        description="These overrides apply to terminal-based Claude launches from Handoff."
+        info={settingsSnapshot.providerInfo.claude}
+        onOverrideChange={patch => onProviderOverrideChange("claude", patch)}
+        onReset={() => onProviderReset("claude")}
+        overrides={settingsSnapshot.settings.providers.claude}
+        title="Claude model info"
+      />
+
+      <TerminalSettingsCard
+        defaultTerminalId={settingsSnapshot.settings.terminals.defaultTerminalId}
+        enabledTerminalIds={settingsSnapshot.settings.terminals.enabledTerminalIds}
+        onSelectDefault={onDefaultTerminalSelect}
+        onToggle={onTerminalToggle}
+        terminalOptions={settingsSnapshot.terminalOptions}
+      />
+    </div>
+  )
+}
+
 function getHandoffApi(): HandoffApi | null {
   return typeof window !== "undefined" ? window.handoffApp ?? null : null
 }
 
 export default function App() {
-  const [rightPaneMode, setRightPaneMode] = useState<"conversation" | "search">(
+  const [rightPaneMode, setRightPaneMode] = useState<
+    "conversation" | "search" | "settings"
+  >(
+    "conversation"
+  )
+  const [previousPaneMode, setPreviousPaneMode] = useState<"conversation" | "search">(
     "conversation"
   )
   const [stateInfo, setStateInfo] = useState<AppStateInfo | null>(null)
+  const [settingsSnapshot, setSettingsSnapshot] = useState<HandoffSettingsSnapshot | null>(
+    null
+  )
+  const [settingsError, setSettingsError] = useState<string | null>(null)
   const [sessions, setSessions] = useState<SessionListItem[]>([])
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [activeTranscript, setActiveTranscript] =
@@ -1389,6 +1753,7 @@ export default function App() {
   const copyMenuRef = useRef<HTMLDivElement | null>(null)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const searchRequestIdRef = useRef(0)
+  const settingsMutationQueueRef = useRef(Promise.resolve())
   const toastSequenceRef = useRef(0)
   const toastHideTimerRef = useRef<number | null>(null)
   const toastClearTimerRef = useRef<number | null>(null)
@@ -1560,6 +1925,26 @@ export default function App() {
     },
     []
   )
+
+  const loadSettingsSnapshot = useCallback(async () => {
+    const api = getHandoffApi()
+    if (!api) {
+      setSettingsSnapshot(null)
+      setSettingsError("The preload bridge did not load. Restart the app.")
+      return
+    }
+
+    try {
+      const nextSettingsSnapshot = await api.settings.get()
+      setSettingsSnapshot(nextSettingsSnapshot)
+      setSettingsError(null)
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to load settings."
+      setSettingsSnapshot(null)
+      setSettingsError(message)
+    }
+  }, [])
 
   const loadSessions = useCallback(
     async (preferredSessionId?: string | null) => {
@@ -1772,13 +2157,13 @@ export default function App() {
     try {
       const providerLabel = formatProviderLabel(activeTranscript.provider)
 
-      await api.app.openSourceSession(
+      const result = await api.app.openSourceSession(
         activeTranscript.provider,
         activeTranscript.sourceSessionId,
         activeTranscript.sessionClient,
         activeTranscript.projectPath ?? activeTranscript.sessionCwd
       )
-      showToast(`Opened in ${providerLabel}`)
+      showToast(result.fallbackMessage ?? `Opened in ${providerLabel}`)
     } catch (error) {
       const message =
         error instanceof Error
@@ -1803,8 +2188,8 @@ export default function App() {
       const targetLabel = formatProjectLocationLabel(target)
 
       try {
-        await api.app.openProjectPath(target, activeProjectPath)
-        showToast(`Opened in ${targetLabel}`)
+        const result = await api.app.openProjectPath(target, activeProjectPath)
+        showToast(result.fallbackMessage ?? `Opened in ${targetLabel}`)
       } catch (error) {
         const message =
           error instanceof Error ? error.message : `Unable to open ${targetLabel}`
@@ -1812,6 +2197,104 @@ export default function App() {
       }
     },
     [activeProjectPath, showToast]
+  )
+
+  const handleSettingsPatch = useCallback(
+    (patch: HandoffSettingsPatch) => {
+      const api = getHandoffApi()
+      if (!api) {
+        showToast("Preload bridge unavailable", "error")
+        return
+      }
+
+      setSettingsSnapshot(current =>
+        current ? applySettingsPatchToSnapshot(current, patch) : current
+      )
+
+      settingsMutationQueueRef.current = settingsMutationQueueRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          const nextSettingsSnapshot = await api.settings.update(patch)
+          setSettingsSnapshot(nextSettingsSnapshot)
+          setSettingsError(null)
+        })
+        .catch(async error => {
+          showToast(
+            error instanceof Error ? error.message : "Unable to update settings.",
+            "error"
+          )
+          await loadSettingsSnapshot()
+        })
+    },
+    [loadSettingsSnapshot, showToast]
+  )
+
+  const handleProviderOverrideChange = useCallback(
+    (provider: SessionProvider, patch: Partial<ProviderLaunchOverrides>) => {
+      handleSettingsPatch({
+        providers: {
+          [provider]: patch
+        }
+      })
+    },
+    [handleSettingsPatch]
+  )
+
+  const handleProviderReset = useCallback(
+    (provider: SessionProvider) => {
+      const api = getHandoffApi()
+      if (!api) {
+        showToast("Preload bridge unavailable", "error")
+        return
+      }
+
+      settingsMutationQueueRef.current = settingsMutationQueueRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          const nextSettingsSnapshot = await api.settings.resetProvider(provider)
+          setSettingsSnapshot(nextSettingsSnapshot)
+          setSettingsError(null)
+        })
+        .catch(async error => {
+          showToast(
+            error instanceof Error ? error.message : "Unable to reset settings.",
+            "error"
+          )
+          await loadSettingsSnapshot()
+        })
+    },
+    [loadSettingsSnapshot, showToast]
+  )
+
+  const handleTerminalToggle = useCallback(
+    (terminalId: TerminalAppId) => {
+      const currentSettings = settingsSnapshot?.settings.terminals
+      if (!currentSettings) {
+        return
+      }
+
+      const enabledTerminalIds = currentSettings.enabledTerminalIds.includes(terminalId)
+        ? currentSettings.enabledTerminalIds.filter(id => id !== terminalId)
+        : [...currentSettings.enabledTerminalIds, terminalId]
+
+      handleSettingsPatch({
+        terminals: {
+          enabledTerminalIds
+        }
+      })
+    },
+    [handleSettingsPatch, settingsSnapshot]
+  )
+
+  const handleDefaultTerminalSelect = useCallback(
+    (terminalId: TerminalAppId) => {
+      handleSettingsPatch({
+        terminals: {
+          defaultTerminalId: terminalId
+        }
+      })
+    },
+    [handleSettingsPatch]
   )
 
   const toggleThoughtChainEntry = useCallback((entryId: string) => {
@@ -1842,6 +2325,24 @@ export default function App() {
       }
 
       setStateInfo(info)
+      try {
+        const nextSettingsSnapshot = await api.settings.get()
+        if (!isMounted) {
+          return
+        }
+
+        setSettingsSnapshot(nextSettingsSnapshot)
+        setSettingsError(null)
+      } catch (error) {
+        if (!isMounted) {
+          return
+        }
+
+        setSettingsSnapshot(null)
+        setSettingsError(
+          error instanceof Error ? error.message : "Unable to load settings."
+        )
+      }
       try {
         const nextSearchStatus = await api.search.getStatus()
         if (!isMounted) {
@@ -2235,6 +2736,17 @@ export default function App() {
     setRightPaneMode("search")
   }, [])
 
+  const handleOpenSettings = useCallback(() => {
+    if (rightPaneMode !== "settings") {
+      setPreviousPaneMode(rightPaneMode)
+    }
+    setRightPaneMode("settings")
+  }, [rightPaneMode])
+
+  const handleCloseSettings = useCallback(() => {
+    setRightPaneMode(previousPaneMode)
+  }, [previousPaneMode])
+
   const handleReturnToSearch = useCallback(() => {
     setRightPaneMode("search")
   }, [])
@@ -2418,6 +2930,25 @@ export default function App() {
             <div className="sidebar-collapsed-spacer" />
           )}
 
+          <div className="sidebar-footer">
+            <button
+              aria-label={rightPaneMode === "settings" ? "Back from settings" : "Open settings"}
+              className={`sidebar-footer-button ${
+                rightPaneMode === "settings" ? "is-active" : ""
+              }`}
+              onClick={rightPaneMode === "settings" ? handleCloseSettings : handleOpenSettings}
+              title={rightPaneMode === "settings" ? "Back" : "Settings"}
+              type="button"
+            >
+              {rightPaneMode === "settings" ? <BackArrowIcon /> : <SettingsIcon />}
+              {!isSidebarCollapsed ? (
+                <span className="sidebar-footer-button-label">
+                  {rightPaneMode === "settings" ? "Back" : "Settings"}
+                </span>
+              ) : null}
+            </button>
+          </div>
+
           {!isSidebarCollapsed ? (
             <div
               aria-hidden="true"
@@ -2442,7 +2973,9 @@ export default function App() {
 
           <header className="topbar">
             <div className="topbar-left">
-              {rightPaneMode === "search" ? (
+              {rightPaneMode === "settings" ? (
+                <span className="topbar-thread">Settings</span>
+              ) : rightPaneMode === "search" ? (
                 <span className="topbar-thread">Search</span>
               ) : activeSession ? (
                 <>
@@ -2477,21 +3010,23 @@ export default function App() {
                   Back to results
                 </button>
               ) : null}
-              <button
-                className="topbar-button"
-                onClick={() => {
-                  const api = getHandoffApi()
-                  if (!api) {
-                    setListError("The preload bridge did not load. Restart the app.")
-                    return
-                  }
+              {rightPaneMode !== "settings" ? (
+                <button
+                  className="topbar-button"
+                  onClick={() => {
+                    const api = getHandoffApi()
+                    if (!api) {
+                      setListError("The preload bridge did not load. Restart the app.")
+                      return
+                    }
 
-                  void api.app.refresh()
-                }}
-                type="button"
-              >
-                Refresh
-              </button>
+                    void api.app.refresh()
+                  }}
+                  type="button"
+                >
+                  Refresh
+                </button>
+              ) : null}
             </div>
           </header>
 
@@ -2500,8 +3035,17 @@ export default function App() {
           ) : null}
 
           <section className="detail-pane">
-          <div className="transcript-surface">
-            {rightPaneMode === "search" ? (
+              <div className="transcript-surface">
+            {rightPaneMode === "settings" ? (
+              <SettingsPane
+                onDefaultTerminalSelect={handleDefaultTerminalSelect}
+                onProviderOverrideChange={handleProviderOverrideChange}
+                onProviderReset={handleProviderReset}
+                onTerminalToggle={handleTerminalToggle}
+                settingsError={settingsError}
+                settingsSnapshot={settingsSnapshot}
+              />
+            ) : rightPaneMode === "search" ? (
               <div className="search-layout">
                 <div className="search-input-row">
                   <label className="search-input-shell">

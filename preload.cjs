@@ -7,6 +7,11 @@ const IPC_CHANNELS = {
     openSourceSession: "handoff:open-source-session",
     openProjectPath: "handoff:open-project-path"
   },
+  settings: {
+    get: "handoff:settings:get",
+    update: "handoff:settings:update",
+    resetProvider: "handoff:settings:reset-provider"
+  },
   sessions: {
     list: "handoff:sessions:list",
     getTranscript: "handoff:sessions:get-transcript"
@@ -56,6 +61,17 @@ contextBridge.exposeInMainWorld("handoffApp", {
       return () => {
         ipcRenderer.removeListener(IPC_CHANNELS.stateChanged, wrappedListener)
       }
+    }
+  },
+  settings: {
+    get() {
+      return ipcRenderer.invoke(IPC_CHANNELS.settings.get)
+    },
+    update(patch) {
+      return ipcRenderer.invoke(IPC_CHANNELS.settings.update, patch)
+    },
+    resetProvider(provider) {
+      return ipcRenderer.invoke(IPC_CHANNELS.settings.resetProvider, provider)
     }
   },
   sessions: {

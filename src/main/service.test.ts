@@ -64,6 +64,7 @@ function buildClaudeSession(params: {
         sessionId: params.sessionId,
         isSidechain: false,
         message: {
+          model: "claude-opus-4-6",
           role: "assistant",
           content: [{ type: "text", text: params.interimText }],
           stop_reason: null
@@ -81,6 +82,7 @@ function buildClaudeSession(params: {
         sessionId: params.sessionId,
         isSidechain: false,
         message: {
+          model: "claude-opus-4-6",
           role: "assistant",
           content: [
             {
@@ -126,13 +128,14 @@ function buildClaudeSession(params: {
       timestamp: "2026-03-14T00:20:04.000Z",
       cwd: params.cwd,
       sessionId: params.sessionId,
-      isSidechain: false,
-      message: {
-        role: "assistant",
-        content: [{ type: "text", text: params.finalText }],
-        stop_reason: "end_turn"
-      }
-    })
+        isSidechain: false,
+        message: {
+          model: "claude-opus-4-6",
+          role: "assistant",
+          content: [{ type: "text", text: params.finalText }],
+          stop_reason: "end_turn"
+        }
+      })
   )
 
   return records.join("\n")
@@ -189,6 +192,23 @@ async function createTestEnvironment(): Promise<TestEnvironment> {
   await fs.mkdir(archivedSessionsDir, { recursive: true })
   await fs.mkdir(claudeIndexedProjectDir, { recursive: true })
   await fs.mkdir(path.join(claudeFallbackProjectDir, "subagents"), { recursive: true })
+  await fs.writeFile(
+    path.join(codexHome, "config.toml"),
+    ['model = "gpt-5.4"', 'model_reasoning_effort = "xhigh"', 'service_tier = "fast"'].join(
+      "\n"
+    )
+  )
+  await fs.writeFile(
+    path.join(claudeHome, "settings.json"),
+    JSON.stringify(
+      {
+        effortLevel: "high",
+        alwaysThinkingEnabled: true
+      },
+      null,
+      2
+    )
+  )
   await fs.writeFile(
     path.join(codexHome, "session_index.jsonl"),
     [
@@ -514,6 +534,103 @@ describe("handoff service", () => {
   it("emits a manual-refresh event through the app api", async () => {
     await expect(service.app.refresh()).resolves.toMatchObject({
       reason: "manual-refresh"
+    })
+  })
+
+  it("reads provider config info and terminal defaults from local settings", async () => {
+    const snapshot = await service.settings.get()
+
+    expect(snapshot.settings.providers.codex).toEqual({
+      binaryPath: "",
+      homePath: ""
+    })
+    expect(snapshot.providerInfo.codex).toMatchObject({
+      effectiveBinaryPath: "codex",
+      effectiveHomePath: env.codexHome,
+      model: "gpt-5.4",
+      reasoningEffort: "xhigh",
+      serviceTier: "fast"
+    })
+    expect(snapshot.providerInfo.claude).toMatchObject({
+      effectiveBinaryPath: "claude",
+      effectiveHomePath: env.claudeHome,
+      effortLevel: "high",
+      alwaysThinkingEnabled: true,
+      observedModel: "claude-opus-4-6"
+    })
+    expect(snapshot.terminalOptions.map(option => option.id)).toEqual([
+      "terminal",
+      "ghostty",
+      "warp"
+    ])
+    expect(snapshot.settings.terminals.enabledTerminalIds).toContain("terminal")
+  })
+
+  it("persists settings overrides and resetProvider clears only the selected provider", async () => {
+    const customCodexHome = path.join(env.baseDir, "custom-codex")
+    const customClaudeHome = path.join(env.baseDir, "custom-claude")
+    await fs.mkdir(customCodexHome, { recursive: true })
+    await fs.mkdir(customClaudeHome, { recursive: true })
+    await fs.writeFile(
+      path.join(customCodexHome, "config.toml"),
+      ['model = "gpt-5.5"', 'model_reasoning_effort = "high"', 'service_tier = "priority"'].join(
+        "\n"
+      )
+    )
+    await fs.writeFile(
+      path.join(customClaudeHome, "settings.json"),
+      JSON.stringify(
+        {
+          effortLevel: "max",
+          alwaysThinkingEnabled: false
+        },
+        null,
+        2
+      )
+    )
+
+    const updated = await service.settings.update({
+      providers: {
+        codex: {
+          binaryPath: "/custom/bin/codex",
+          homePath: customCodexHome
+        },
+        claude: {
+          binaryPath: "/custom/bin/claude",
+          homePath: customClaudeHome
+        }
+      },
+      terminals: {
+        enabledTerminalIds: ["terminal", "ghostty"],
+        defaultTerminalId: "ghostty"
+      }
+    })
+
+    expect(updated.providerInfo.codex).toMatchObject({
+      effectiveBinaryPath: "/custom/bin/codex",
+      effectiveHomePath: customCodexHome,
+      model: "gpt-5.5"
+    })
+    expect(updated.providerInfo.claude).toMatchObject({
+      effectiveBinaryPath: "/custom/bin/claude",
+      effectiveHomePath: customClaudeHome,
+      effortLevel: "max",
+      alwaysThinkingEnabled: false
+    })
+    expect(updated.settings.terminals).toEqual({
+      enabledTerminalIds: ["terminal", "ghostty"],
+      defaultTerminalId: "ghostty"
+    })
+
+    const reset = await service.settings.resetProvider("claude")
+
+    expect(reset.settings.providers.codex).toEqual({
+      binaryPath: "/custom/bin/codex",
+      homePath: customCodexHome
+    })
+    expect(reset.settings.providers.claude).toEqual({
+      binaryPath: "",
+      homePath: ""
     })
   })
 })

@@ -523,6 +523,40 @@ pre {
   flex: 1;
 }
 
+.sidebar-footer {
+  padding: 8px 6px 10px;
+  border-top: 1px solid var(--pane-border);
+}
+
+.sidebar-footer-button {
+  width: 100%;
+  height: 32px;
+  border: none;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.sidebar-footer-button:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink);
+}
+
+.sidebar-footer-button.is-active {
+  color: var(--accent-strong);
+  background: rgba(168, 85, 247, 0.12);
+}
+
+.sidebar-footer-button-label {
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
 .sidebar-pane.is-collapsed .sidebar-filter-popover {
   left: 12px;
 }
@@ -1060,6 +1094,202 @@ pre {
 .project-toolbar-button:hover {
   background: rgba(255, 255, 255, 0.08);
   border-color: rgba(255, 255, 255, 0.12);
+}
+
+.settings-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.settings-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.settings-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settings-card-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-card-copy h2 {
+  margin: 0;
+  font-size: 0.96rem;
+  letter-spacing: -0.03em;
+}
+
+.settings-card-copy p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.settings-reset-button {
+  flex-shrink: 0;
+}
+
+.settings-field-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-field-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.settings-input {
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--ink);
+  outline: none;
+}
+
+.settings-input:focus {
+  border-color: rgba(168, 85, 247, 0.38);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.settings-field-help {
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.settings-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+}
+
+.settings-meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.settings-meta-item-wide {
+  grid-column: 1 / -1;
+}
+
+.settings-meta-label {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.settings-meta-value {
+  color: var(--ink);
+  font-size: 0.76rem;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.settings-meta-value.is-monospace {
+  font-family: "SFMono-Regular", "JetBrains Mono", "Menlo", monospace;
+}
+
+.settings-meta-muted {
+  color: var(--muted);
+}
+
+.terminal-settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.terminal-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.terminal-settings-toggle {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.terminal-settings-toggle input {
+  margin: 0;
+}
+
+.terminal-settings-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.terminal-settings-name {
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.terminal-settings-status {
+  font-size: 0.66rem;
+}
+
+.terminal-settings-status.is-installed {
+  color: #8ff0a8;
+}
+
+.terminal-settings-status.is-unavailable {
+  color: var(--muted);
+}
+
+.terminal-default-button {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--ink);
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 0.7rem;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.terminal-default-button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.terminal-default-button.is-default {
+  color: var(--accent-strong);
+  border-color: rgba(168, 85, 247, 0.28);
+  background: rgba(168, 85, 247, 0.12);
 }
 
 /* ── Conversation entries ─────────────────────────────── */
@@ -1737,6 +1967,16 @@ pre {
 
   .project-toolbar-actions {
     flex-wrap: wrap;
+  }
+
+  .settings-card-header,
+  .terminal-settings-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .settings-meta-grid {
+    grid-template-columns: 1fr;
   }
 }
 

@@ -9,6 +9,8 @@ import { buildConversationTranscript } from "../shared/parser"
 import type {
   AppStateInfo,
   ConversationTranscript,
+  HandoffSettingsPatch,
+  HandoffSettingsSnapshot,
   HandoffStateChangeEvent,
   HandoffStateChangeReason,
   SearchFilters,
@@ -23,6 +25,7 @@ import {
   createHandoffSearchService,
   type HandoffSearchService
 } from "./search"
+import { createHandoffSettingsStore } from "./settings"
 
 const SESSION_FILENAME_PATTERN =
   /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i
@@ -46,6 +49,11 @@ export interface HandoffService {
   app: {
     getStateInfo(): Promise<AppStateInfo>
     refresh(): Promise<HandoffStateChangeEvent>
+  }
+  settings: {
+    get(): Promise<HandoffSettingsSnapshot>
+    update(patch: HandoffSettingsPatch): Promise<HandoffSettingsSnapshot>
+    resetProvider(provider: SessionProvider): Promise<HandoffSettingsSnapshot>
   }
   sessions: {
     list(): Promise<SessionListItem[]>
@@ -679,6 +687,11 @@ export function createHandoffService(
           dataDir
         })
       : null)
+  const settingsStore = createHandoffSettingsStore({
+    dataDir,
+    codexHome,
+    claudeHome
+  })
   const normalizedIndexPath = indexPath.replaceAll("\\", "/")
   const normalizedArchivedSessionsRoot = archivedSessionsRoot.replaceAll("\\", "/")
   const normalizedClaudeProjectsRoot = claudeProjectsRoot.replaceAll("\\", "/")
@@ -789,6 +802,14 @@ export function createHandoffService(
     return cache ?? loadCache()
   }
 
+  async function getResolvedSessionsFromCache() {
+    const nextCache = await getCache()
+    return nextCache.entries.map(entry => ({
+      ...entry,
+      sessionPath: nextCache.pathById.get(entry.id) ?? null
+    }))
+  }
+
   async function watchSelectedSession(nextPath: string | null) {
     if (selectedSessionPath === nextPath) {
       return
@@ -829,13 +850,23 @@ export function createHandoffService(
       }
     },
 
+    settings: {
+      async get() {
+        return settingsStore.getSnapshot(await getResolvedSessionsFromCache())
+      },
+
+      async update(patch) {
+        return settingsStore.update(patch, await getResolvedSessionsFromCache())
+      },
+
+      async resetProvider(provider) {
+        return settingsStore.resetProvider(provider, await getResolvedSessionsFromCache())
+      }
+    },
+
     sessions: {
       async list() {
-        const nextCache = await loadCache()
-        return nextCache.entries.map(entry => ({
-          ...entry,
-          sessionPath: nextCache.pathById.get(entry.id) ?? null
-        }))
+        return getResolvedSessionsFromCache()
       },
 
       async getTranscript(id, options) {

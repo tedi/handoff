@@ -3,7 +3,10 @@ import type { IpcRendererEvent } from "electron"
 import { IPC_CHANNELS } from "../shared/channels"
 import type {
   ClipboardWriteResult,
+  HandoffSettingsPatch,
+  HandoffSettingsSnapshot,
   HandoffApi,
+  OpenActionResult,
   ProjectLocationTarget,
   SearchFilters,
   SearchStatus,
@@ -60,7 +63,7 @@ export function createHandoffBridge(
           sessionId,
           sessionClient,
           workingDirectory
-        ) as Promise<void>
+        ) as Promise<OpenActionResult>
       },
 
       openProjectPath(target: ProjectLocationTarget, projectPath: string) {
@@ -68,7 +71,7 @@ export function createHandoffBridge(
           IPC_CHANNELS.app.openProjectPath,
           target,
           projectPath
-        ) as Promise<void>
+        ) as Promise<OpenActionResult>
       },
 
       onStateChanged(listener) {
@@ -81,6 +84,26 @@ export function createHandoffBridge(
         return () => {
           ipcRenderer.removeListener(IPC_CHANNELS.stateChanged, wrappedListener)
         }
+      }
+    },
+
+    settings: {
+      get() {
+        return ipcRenderer.invoke(IPC_CHANNELS.settings.get) as Promise<HandoffSettingsSnapshot>
+      },
+
+      update(patch: HandoffSettingsPatch) {
+        return ipcRenderer.invoke(
+          IPC_CHANNELS.settings.update,
+          patch
+        ) as Promise<HandoffSettingsSnapshot>
+      },
+
+      resetProvider(provider: SessionProvider) {
+        return ipcRenderer.invoke(
+          IPC_CHANNELS.settings.resetProvider,
+          provider
+        ) as Promise<HandoffSettingsSnapshot>
       }
     },
 

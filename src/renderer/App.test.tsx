@@ -8,6 +8,7 @@ import type {
   AppStateInfo,
   ConversationTranscript,
   HandoffApi,
+  HandoffSettingsSnapshot,
   HandoffStateChangeEvent,
   SearchResult,
   SearchStatus,
@@ -40,6 +41,61 @@ function createMockApi({
     codexIconDataUrl: "data:image/png;base64,ZmFrZQ==",
     claudeIconDataUrl: "data:image/png;base64,Y2xhdWRl"
   }
+  const settingsSnapshot: HandoffSettingsSnapshot = {
+    settings: {
+      providers: {
+        codex: {
+          binaryPath: "",
+          homePath: ""
+        },
+        claude: {
+          binaryPath: "",
+          homePath: ""
+        }
+      },
+      terminals: {
+        enabledTerminalIds: ["terminal", "ghostty", "warp"],
+        defaultTerminalId: "terminal"
+      }
+    },
+    providerInfo: {
+      codex: {
+        provider: "codex",
+        binarySource: "default",
+        effectiveBinaryPath: "codex",
+        homeSource: "default",
+        effectiveHomePath: "/Users/tedikonda/.codex",
+        configPath: "/Users/tedikonda/.codex/config.toml",
+        configExists: true,
+        model: "gpt-5.4",
+        reasoningEffort: "xhigh",
+        serviceTier: "fast",
+        effortLevel: null,
+        alwaysThinkingEnabled: null,
+        observedModel: null
+      },
+      claude: {
+        provider: "claude",
+        binarySource: "default",
+        effectiveBinaryPath: "claude",
+        homeSource: "default",
+        effectiveHomePath: "/Users/tedikonda/.claude",
+        configPath: "/Users/tedikonda/.claude/settings.json",
+        configExists: true,
+        model: null,
+        reasoningEffort: null,
+        serviceTier: null,
+        effortLevel: "high",
+        alwaysThinkingEnabled: true,
+        observedModel: "claude-opus-4-6"
+      }
+    },
+    terminalOptions: [
+      { id: "terminal", label: "Terminal", installed: true },
+      { id: "ghostty", label: "Ghostty", installed: true },
+      { id: "warp", label: "Warp", installed: true }
+    ]
+  }
   const listeners = new Set<(event: HandoffStateChangeEvent) => void>()
   const searchStatusListeners = new Set<
     (status: import("../shared/contracts").SearchStatus) => void
@@ -53,8 +109,8 @@ function createMockApi({
         reason: "manual-refresh",
         changedPath: null
       }),
-      openSourceSession: vi.fn().mockResolvedValue(undefined),
-      openProjectPath: vi.fn().mockResolvedValue(undefined),
+      openSourceSession: vi.fn().mockResolvedValue({ fallbackMessage: null }),
+      openProjectPath: vi.fn().mockResolvedValue({ fallbackMessage: null }),
       onStateChanged(listener) {
         listeners.add(listener)
 
@@ -62,6 +118,30 @@ function createMockApi({
           listeners.delete(listener)
         }
       }
+    },
+    settings: {
+      get: vi.fn().mockResolvedValue(settingsSnapshot),
+      update: vi.fn().mockImplementation(async patch => ({
+        ...settingsSnapshot,
+        settings: {
+          ...settingsSnapshot.settings,
+          providers: {
+            codex: {
+              ...settingsSnapshot.settings.providers.codex,
+              ...(patch.providers?.codex ?? {})
+            },
+            claude: {
+              ...settingsSnapshot.settings.providers.claude,
+              ...(patch.providers?.claude ?? {})
+            }
+          },
+          terminals: {
+            ...settingsSnapshot.settings.terminals,
+            ...(patch.terminals ?? {})
+          }
+        }
+      })),
+      resetProvider: vi.fn().mockResolvedValue(settingsSnapshot)
     },
     sessions: {
       list: vi.fn().mockResolvedValue(sessions),
@@ -801,6 +881,97 @@ describe("Handoff App", () => {
     expect(screen.getByRole("button", { name: /Back to results/i })).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole("button", { name: /Back to results/i }))
+
+    expect(await screen.findByDisplayValue("gesture")).toBeInTheDocument()
+    expect(
+      await screen.findByText("The gesture handler upgrade broke the carousel swipe.")
+    ).toBeInTheDocument()
+  })
+
+  it("opens settings and returns to the previous search results state", async () => {
+    const { api } = createMockApi({
+      sessions: [
+        {
+          id: "codex:session-1",
+          sourceSessionId: "session-1",
+          provider: "codex",
+          archived: false,
+          threadName: "Gesture regression",
+          updatedAt: "2026-03-14T01:00:00.000Z",
+          projectPath: "/tmp/project",
+          sessionPath: "/tmp/session-1.jsonl"
+        }
+      ],
+      transcriptById: {
+        "codex:session-1": {
+          id: "codex:session-1",
+          sourceSessionId: "session-1",
+          provider: "codex",
+          archived: false,
+          threadName: "Gesture regression",
+          updatedAt: "2026-03-14T01:00:00.000Z",
+          projectPath: "/tmp/project",
+          sessionPath: "/tmp/session-1.jsonl",
+          sessionClient: "desktop",
+          sessionCwd: "/tmp/project",
+          entries: [
+            {
+              id: "search-user",
+              kind: "message",
+              role: "user",
+              timestamp: "2026-03-14T01:00:01.000Z",
+              bodyMarkdown: "The gesture handler upgrade broke the carousel swipe."
+            },
+            {
+              id: "search-assistant",
+              kind: "message",
+              role: "assistant",
+              timestamp: "2026-03-14T01:00:02.000Z",
+              bodyMarkdown: "I found the regression in highlights.tsx.",
+              patches: []
+            }
+          ],
+          markdown: "## User\nGesture issue\n\n## Assistant\nFound it\n",
+          lastAssistantMarkdown: "I found the regression in highlights.tsx.",
+          hasDiffs: false
+        }
+      },
+      searchQuery: ({ query }) =>
+        query.trim()
+          ? [
+              {
+                id: "codex:session-1",
+                sourceSessionId: "session-1",
+                provider: "codex",
+                archived: false,
+                threadName: "Gesture regression",
+                updatedAt: "2026-03-14T01:00:00.000Z",
+                projectPath: "/tmp/project",
+                sessionPath: "/tmp/session-1.jsonl",
+                snippet: "The gesture handler upgrade broke the carousel swipe.",
+                score: 0.92
+              }
+            ]
+          : []
+    })
+
+    window.handoffApp = api
+    render(<App />)
+
+    await userEvent.click(screen.getByRole("button", { name: /Open search/i }))
+    const searchInput = await screen.findByPlaceholderText("Search conversations")
+    await userEvent.type(searchInput, "gesture")
+
+    expect(
+      await screen.findByText("The gesture handler upgrade broke the carousel swipe.")
+    ).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole("button", { name: /Open settings/i }))
+
+    expect(await screen.findByText("Codex model info")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /Back from settings/i })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole("button", { name: /Back from settings/i }))
 
     expect(await screen.findByDisplayValue("gesture")).toBeInTheDocument()
     expect(
