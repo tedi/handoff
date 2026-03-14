@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode
+} from "react"
 import Prism from "prismjs"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -20,7 +28,6 @@ import type {
   ConversationPatch,
   ConversationTranscript,
   HandoffApi,
-  HandoffStateChangeEvent,
   ProjectLocationTarget,
   SessionListItem,
   SessionProvider
@@ -138,6 +145,52 @@ function ProviderIcon({
       )}
     </span>
   )
+}
+
+const DEFAULT_SIDEBAR_WIDTH = 280
+const MIN_SIDEBAR_WIDTH = 220
+const COLLAPSED_SIDEBAR_WIDTH = 128
+const SIDEBAR_WIDTH_STORAGE_KEY = "handoff.sidebar-width"
+const SIDEBAR_COLLAPSED_STORAGE_KEY = "handoff.sidebar-collapsed"
+
+function clampSidebarWidth(value: number, viewportWidth: number) {
+  const maxWidth = Math.max(COLLAPSED_SIDEBAR_WIDTH, Math.floor(viewportWidth * 0.4))
+  const minWidth = Math.min(MIN_SIDEBAR_WIDTH, maxWidth)
+  return Math.min(Math.max(Math.round(value), minWidth), maxWidth)
+}
+
+function readStoredSidebarWidth() {
+  if (typeof window === "undefined") {
+    return DEFAULT_SIDEBAR_WIDTH
+  }
+
+  try {
+    const rawValue = window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)
+    if (!rawValue) {
+      return DEFAULT_SIDEBAR_WIDTH
+    }
+
+    const parsedValue = Number.parseInt(rawValue, 10)
+    if (!Number.isFinite(parsedValue)) {
+      return DEFAULT_SIDEBAR_WIDTH
+    }
+
+    return clampSidebarWidth(parsedValue, window.innerWidth)
+  } catch {
+    return DEFAULT_SIDEBAR_WIDTH
+  }
+}
+
+function readStoredSidebarCollapsed() {
+  if (typeof window === "undefined") {
+    return false
+  }
+
+  try {
+    return window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "true"
+  } catch {
+    return false
+  }
 }
 
 function highlightCodeHtml(content: string, language: string) {
@@ -407,9 +460,29 @@ export default function App() {
   const [listError, setListError] = useState<string | null>(null)
   const [conversationError, setConversationError] = useState<string | null>(null)
   const [copyStatus, setCopyStatus] = useState<string | null>(null)
-  const [lastEvent, setLastEvent] = useState<HandoffStateChangeEvent | null>(null)
+  const [viewportWidth, setViewportWidth] = useState(() =>
+    typeof window === "undefined" ? 1440 : window.innerWidth
+  )
+  const [sidebarWidth, setSidebarWidth] = useState(() => readStoredSidebarWidth())
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() =>
+    readStoredSidebarCollapsed()
+  )
+  const [sidebarDragState, setSidebarDragState] = useState<{
+    startX: number
+    startWidth: number
+  } | null>(null)
   const [expandedThoughtChainIds, setExpandedThoughtChainIds] = useState<Set<string>>(
     () => new Set()
+  )
+  const resolvedSidebarWidth = isSidebarCollapsed
+    ? COLLAPSED_SIDEBAR_WIDTH
+    : clampSidebarWidth(sidebarWidth, viewportWidth)
+  const workspaceStyle = useMemo(
+    () =>
+      ({
+        "--sidebar-width": `${resolvedSidebarWidth}px`
+      }) as CSSProperties,
+    [resolvedSidebarWidth]
   )
 
   const activeSession = useMemo(
@@ -670,14 +743,73 @@ export default function App() {
   }, [activeTranscript?.id, activeTranscript?.updatedAt])
 
   useEffect(() => {
+    function handleResize() {
+      setViewportWidth(window.innerWidth)
+    }
+
+    window.addEventListener("resize", handleResize)
+    return () => {
+      window.removeEventListener("resize", handleResize)
+    }
+  }, [])
+
+  useEffect(() => {
+    setSidebarWidth(currentWidth => clampSidebarWidth(currentWidth, viewportWidth))
+  }, [viewportWidth])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        SIDEBAR_WIDTH_STORAGE_KEY,
+        String(clampSidebarWidth(sidebarWidth, viewportWidth))
+      )
+      window.localStorage.setItem(
+        SIDEBAR_COLLAPSED_STORAGE_KEY,
+        isSidebarCollapsed ? "true" : "false"
+      )
+    } catch {
+      return
+    }
+  }, [isSidebarCollapsed, sidebarWidth, viewportWidth])
+
+  useEffect(() => {
+    if (!sidebarDragState) {
+      return () => undefined
+    }
+
+    const dragState = sidebarDragState
+
+    function handlePointerMove(event: PointerEvent) {
+      setSidebarWidth(
+        clampSidebarWidth(
+          dragState.startWidth + (event.clientX - dragState.startX),
+          window.innerWidth
+        )
+      )
+    }
+
+    function handlePointerUp() {
+      setSidebarDragState(null)
+    }
+
+    document.body.classList.add("is-resizing-sidebar")
+    window.addEventListener("pointermove", handlePointerMove)
+    window.addEventListener("pointerup", handlePointerUp)
+
+    return () => {
+      document.body.classList.remove("is-resizing-sidebar")
+      window.removeEventListener("pointermove", handlePointerMove)
+      window.removeEventListener("pointerup", handlePointerUp)
+    }
+  }, [sidebarDragState])
+
+  useEffect(() => {
     const api = getHandoffApi()
     if (!api) {
       return () => undefined
     }
 
     return api.app.onStateChanged(event => {
-      setLastEvent(event)
-
       if (event.reason === "selected-session-changed") {
         const selectedSession =
           sessions.find(session => session.id === activeSessionId) ?? null
@@ -689,105 +821,161 @@ export default function App() {
     })
   }, [activeSessionId, loadConversation, loadSessions, sessions])
 
+  const handleSidebarToggle = useCallback(() => {
+    setIsSidebarCollapsed(current => !current)
+  }, [])
+
+  const handleSidebarResizeStart = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (isSidebarCollapsed) {
+        return
+      }
+
+      event.preventDefault()
+      setSidebarDragState({
+        startX: event.clientX,
+        startWidth: resolvedSidebarWidth
+      })
+    },
+    [isSidebarCollapsed, resolvedSidebarWidth]
+  )
+
   return (
     <div className="app-shell">
-      <header className="topbar">
-        <div className="topbar-left">
-          {activeSession ? (
-            <>
-              {activeSession.archived ? (
-                <span className="archived-indicator" title="Archived">
-                  A
-                </span>
-              ) : null}
-              <span className="topbar-thread">{activeSession.threadName}</span>
-              <div className="topbar-session-meta">
-                <ProviderIcon provider={activeSession.provider} stateInfo={stateInfo} />
-                <span className="topbar-updated">
-                  {formatTimestamp(activeSession.updatedAt)}
-                </span>
-                {activeTranscript?.hasDiffs ? (
-                  <span className="topbar-badge">Diffs</span>
-                ) : null}
-              </div>
-            </>
-          ) : (
-            <span className="topbar-thread">Handoff</span>
-          )}
-        </div>
-
-        <div className="toolbar">
-          <button
-            className="topbar-button"
-            onClick={() => {
-              const api = getHandoffApi()
-              if (!api) {
-                setListError("The preload bridge did not load. Restart the app.")
-                return
-              }
-
-              void api.app.refresh()
-            }}
-            type="button"
-          >
-            Refresh
-          </button>
-        </div>
-      </header>
-
-      {listError ? (
-        <div className="banner banner-error">{listError}</div>
-      ) : null}
-
-      <div className="workspace">
-        <section className="sidebar-pane">
-          <div className="session-list" role="list">
-            {isLoadingSessions && sessions.length === 0 ? (
-                <EmptyState
-                  title="Loading sessions"
-                  detail="Reading Codex and Claude session indexes and resolving available conversation files."
-                />
-              ) : sessions.length === 0 ? (
-                <EmptyState
-                  title="No sessions found"
-                  detail="No conversation entries were available from Codex or Claude."
-                />
-              ) : (
-              sessions.map(session => (
-                <button
-                  key={`${session.id}:${session.updatedAt}:${session.threadName}`}
-                  className={`session-row ${
-                    session.id === activeSessionId ? "is-active" : ""
-                  }`}
-                  onClick={() => setActiveSessionId(session.id)}
-                  type="button"
-                  >
-                    <div className="session-row-main">
-                      <div className="session-title-group">
-                        {session.archived ? (
-                          <span className="archived-indicator" title="Archived">
-                            A
-                          </span>
-                        ) : null}
-                        <span className="session-title">{session.threadName}</span>
-                      </div>
-                      <div className="session-row-meta">
-                        <ProviderIcon provider={session.provider} stateInfo={stateInfo} />
-                        <span className="session-time">
-                          {formatRelativeTimestamp(session.updatedAt)}
-                        </span>
-                      </div>
-                    </div>
-                  {!session.sessionPath ? (
-                    <span className="session-subtitle">Missing session file</span>
-                  ) : null}
-                </button>
-              ))
-            )}
+      <div
+        className={`workspace ${sidebarDragState ? "is-resizing" : ""}`}
+        style={workspaceStyle}
+      >
+        <section
+          className={`sidebar-pane ${isSidebarCollapsed ? "is-collapsed" : ""}`}
+        >
+          <div className="sidebar-header">
+            <button
+              aria-label={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              className="sidebar-toggle-button"
+              onClick={handleSidebarToggle}
+              type="button"
+            >
+              <span
+                aria-hidden="true"
+                className={`sidebar-toggle-icon ${
+                  isSidebarCollapsed ? "is-collapsed" : ""
+                }`}
+              >
+                <span className="sidebar-toggle-frame" />
+                <span className="sidebar-toggle-divider" />
+              </span>
+            </button>
           </div>
+
+          {!isSidebarCollapsed ? (
+            <div className="session-list" role="list">
+              {isLoadingSessions && sessions.length === 0 ? (
+                  <EmptyState
+                    title="Loading sessions"
+                    detail="Reading Codex and Claude session indexes and resolving available conversation files."
+                  />
+                ) : sessions.length === 0 ? (
+                  <EmptyState
+                    title="No sessions found"
+                    detail="No conversation entries were available from Codex or Claude."
+                  />
+                ) : (
+                sessions.map(session => (
+                  <button
+                    key={`${session.id}:${session.updatedAt}:${session.threadName}`}
+                    className={`session-row ${
+                      session.id === activeSessionId ? "is-active" : ""
+                    }`}
+                    onClick={() => setActiveSessionId(session.id)}
+                    type="button"
+                    >
+                      <div className="session-row-main">
+                        <div className="session-title-group">
+                          {session.archived ? (
+                            <span className="archived-indicator" title="Archived">
+                              A
+                            </span>
+                          ) : null}
+                          <span className="session-title">{session.threadName}</span>
+                        </div>
+                        <div className="session-row-meta">
+                          <ProviderIcon provider={session.provider} stateInfo={stateInfo} />
+                          <span className="session-time">
+                            {formatRelativeTimestamp(session.updatedAt)}
+                          </span>
+                        </div>
+                      </div>
+                    {!session.sessionPath ? (
+                      <span className="session-subtitle">Missing session file</span>
+                    ) : null}
+                  </button>
+                ))
+              )}
+            </div>
+          ) : (
+            <div className="sidebar-collapsed-spacer" />
+          )}
+
+          {!isSidebarCollapsed ? (
+            <div
+              aria-hidden="true"
+              className="sidebar-resizer"
+              onPointerDown={handleSidebarResizeStart}
+            />
+          ) : null}
         </section>
 
-        <section className="detail-pane">
+        <section className="main-pane">
+          <header className="topbar">
+            <div className="topbar-left">
+              {activeSession ? (
+                <>
+                  {activeSession.archived ? (
+                    <span className="archived-indicator" title="Archived">
+                      A
+                    </span>
+                  ) : null}
+                  <span className="topbar-thread">{activeSession.threadName}</span>
+                  <div className="topbar-session-meta">
+                    <ProviderIcon provider={activeSession.provider} stateInfo={stateInfo} />
+                    <span className="topbar-updated">
+                      {formatTimestamp(activeSession.updatedAt)}
+                    </span>
+                    {activeTranscript?.hasDiffs ? (
+                      <span className="topbar-badge">Diffs</span>
+                    ) : null}
+                  </div>
+                </>
+              ) : (
+                <span className="topbar-thread">Handoff</span>
+              )}
+            </div>
+
+            <div className="toolbar">
+              <button
+                className="topbar-button"
+                onClick={() => {
+                  const api = getHandoffApi()
+                  if (!api) {
+                    setListError("The preload bridge did not load. Restart the app.")
+                    return
+                  }
+
+                  void api.app.refresh()
+                }}
+                type="button"
+              >
+                Refresh
+              </button>
+            </div>
+          </header>
+
+          {listError ? (
+            <div className="banner banner-error">{listError}</div>
+          ) : null}
+
+          <section className="detail-pane">
           <div className="transcript-surface">
             {!activeSession ? (
               <EmptyState
@@ -938,6 +1126,7 @@ export default function App() {
               </div>
             </div>
           </div>
+        </section>
         </section>
       </div>
     </div>

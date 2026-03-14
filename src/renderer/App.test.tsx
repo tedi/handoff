@@ -85,6 +85,7 @@ function createMockApi({
 describe("Handoff App", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+    window.localStorage.clear()
   })
 
   it("renders a mixed-source sidebar and switches source-aware actions with the selected transcript", async () => {
@@ -399,6 +400,68 @@ describe("Handoff App", () => {
     render(<App />)
 
     expect(await screen.findByText("Session file missing")).toBeInTheDocument()
+  })
+
+  it("collapses and expands the sidebar session list", async () => {
+    const { api } = createMockApi({
+      sessions: [
+        {
+          id: "claude:session-1",
+          sourceSessionId: "session-1",
+          provider: "claude",
+          archived: false,
+          threadName: "Sidebar session",
+          updatedAt: "2026-03-14T01:00:00.000Z",
+          projectPath: "/tmp/project",
+          sessionPath: "/tmp/session-1.jsonl"
+        }
+      ],
+      transcriptById: {
+        "claude:session-1": {
+          id: "claude:session-1",
+          sourceSessionId: "session-1",
+          provider: "claude",
+          archived: false,
+          threadName: "Sidebar session",
+          updatedAt: "2026-03-14T01:00:00.000Z",
+          projectPath: "/tmp/project",
+          sessionPath: "/tmp/session-1.jsonl",
+          sessionClient: "cli",
+          sessionCwd: "/tmp/project",
+          entries: [
+            {
+              id: "sidebar-user",
+              kind: "message",
+              role: "user",
+              timestamp: "2026-03-14T01:00:01.000Z",
+              bodyMarkdown: "Hello"
+            },
+            {
+              id: "sidebar-assistant",
+              kind: "message",
+              role: "assistant",
+              timestamp: "2026-03-14T01:00:02.000Z",
+              bodyMarkdown: "Answer",
+              patches: []
+            }
+          ],
+          markdown: "# Transcript\n\n## User\nHello\n\n## Assistant\nAnswer\n",
+          lastAssistantMarkdown: "Answer",
+          hasDiffs: false
+        }
+      }
+    })
+
+    window.handoffApp = api
+    render(<App />)
+
+    expect(await screen.findByRole("button", { name: /Sidebar session/i })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole("button", { name: /Collapse sidebar/i }))
+    expect(screen.queryByRole("button", { name: /Sidebar session/i })).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole("button", { name: /Expand sidebar/i }))
+    expect(await screen.findByRole("button", { name: /Sidebar session/i })).toBeInTheDocument()
   })
 
   it("shows a parse error state when transcript loading fails", async () => {

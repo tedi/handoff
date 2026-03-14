@@ -76,7 +76,7 @@ pre {
 .topbar {
   height: 38px;
   min-height: 38px;
-  padding: 0 12px 0 78px; /* 78px left for macOS traffic lights */
+  padding: 0 16px 0 20px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -225,11 +225,17 @@ pre {
 /* ── Workspace ────────────────────────────────────────── */
 
 .workspace {
+  --sidebar-width: 280px;
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  transition: grid-template-columns 180ms ease;
+}
+
+.workspace.is-resizing {
+  transition: none;
 }
 
 /* ── Sidebar ──────────────────────────────────────────── */
@@ -241,7 +247,108 @@ pre {
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
-  padding: 6px;
+  position: relative;
+}
+
+.sidebar-header {
+  height: 38px;
+  min-height: 38px;
+  padding: 0 12px 0 78px;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--pane-border);
+  -webkit-app-region: drag;
+}
+
+.sidebar-toggle-button {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+  transition: background-color 120ms ease, color 120ms ease;
+  -webkit-app-region: no-drag;
+}
+
+.sidebar-toggle-button:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink);
+}
+
+.sidebar-toggle-icon {
+  width: 14px;
+  height: 14px;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sidebar-toggle-frame,
+.sidebar-toggle-divider {
+  position: absolute;
+  inset: 0;
+}
+
+.sidebar-toggle-frame {
+  border: 1.5px solid currentColor;
+  border-radius: 4px;
+  opacity: 0.92;
+}
+
+.sidebar-toggle-divider {
+  top: 2px;
+  bottom: 2px;
+  left: 4px;
+  width: 1.5px;
+  background: currentColor;
+  border-radius: 999px;
+  transition: transform 180ms ease;
+}
+
+.sidebar-toggle-icon.is-collapsed .sidebar-toggle-divider {
+  transform: translateX(4px);
+}
+
+.sidebar-collapsed-spacer {
+  flex: 1;
+}
+
+.sidebar-resizer {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 4;
+}
+
+.sidebar-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 3px;
+  width: 1px;
+  height: 100%;
+  background: transparent;
+  transition: background-color 120ms ease;
+}
+
+.sidebar-pane:hover .sidebar-resizer::after,
+.workspace.is-resizing .sidebar-resizer::after {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.main-pane {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 /* ── Session list ─────────────────────────────────────── */
@@ -253,6 +360,7 @@ pre {
   display: flex;
   flex-direction: column;
   gap: 1px;
+  padding: 6px;
 }
 
 .session-list::-webkit-scrollbar {
@@ -1009,4 +1117,9 @@ pre {
   .project-toolbar-actions {
     flex-wrap: wrap;
   }
+}
+
+body.is-resizing-sidebar {
+  cursor: col-resize;
+  user-select: none;
 }
