@@ -10,6 +10,7 @@ from typing import Any, Callable
 
 
 PATCH_FILE_PATTERN = re.compile(r"^\*\*\* (?:Update|Add|Delete) File: (.+)$", re.MULTILINE)
+DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent / "output"
 SCAFFOLD_USER_PREFIXES = (
     "# AGENTS.md instructions for ",
     "<environment_context>",
@@ -69,7 +70,19 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output",
-        help="Optional path to write the extracted transcript to instead of stdout",
+        help="Optional file path to write the extracted transcript to",
+    )
+    parser.add_argument(
+        "--output-dir",
+        help=(
+            "Optional directory for generated transcript files. Defaults to "
+            f"{DEFAULT_OUTPUT_DIR}"
+        ),
+    )
+    parser.add_argument(
+        "--stdout",
+        action="store_true",
+        help="Write the transcript to stdout instead of a file",
     )
     return parser.parse_args()
 
@@ -330,12 +343,30 @@ def find_patch_owner(messages: list[MessageRecord], patch: PatchRecord) -> int |
     return same_turn_assistants[-1][0]
 
 
+def build_generated_output_path(args: argparse.Namespace, session_path: Path) -> Path:
+    output_dir = Path(args.output_dir).expanduser() if args.output_dir else DEFAULT_OUTPUT_DIR
+    suffixes = [args.mode]
+
+    if args.include_commentary:
+        suffixes.append("commentary")
+
+    if args.include_diffs:
+        suffixes.append("diffs")
+
+    filename = f"{session_path.stem}__{'-'.join(suffixes)}.md"
+    return output_dir / filename
+
+
 def main() -> int:
     args = parse_args()
     session_path = Path(args.session_path).expanduser()
 
     if not session_path.is_file():
         print(f"Session file not found: {session_path}", file=sys.stderr)
+        return 1
+
+    if args.stdout and (args.output or args.output_dir):
+        print("Use either --stdout or a file output option, not both.", file=sys.stderr)
         return 1
 
     try:
@@ -354,11 +385,14 @@ def main() -> int:
         include_diffs=args.include_diffs,
     )
 
-    if args.output:
-        output_path = Path(args.output).expanduser()
-        output_path.write_text(output, encoding="utf-8")
-    else:
+    if args.stdout:
         sys.stdout.write(output)
+        return 0
+
+    output_path = Path(args.output).expanduser() if args.output else build_generated_output_path(args, session_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(output, encoding="utf-8")
+    sys.stdout.write(f"Wrote {output_path}\n")
 
     return 0
 
