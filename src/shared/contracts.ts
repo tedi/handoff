@@ -8,6 +8,8 @@ export interface SessionListItem extends SessionIndexEntry {
   sessionPath: string | null
 }
 
+export type SessionClient = "desktop" | "cli" | "unknown"
+
 export interface TranscriptOptions {
   includeDiffs: boolean
   includeCommentary: boolean
@@ -63,6 +65,8 @@ export interface ConversationTranscript {
   threadName: string
   updatedAt: string
   sessionPath: string | null
+  sessionClient?: SessionClient
+  sessionCwd?: string | null
   entries: ConversationEntry[]
   markdown: string
   lastAssistantMarkdown: string | null
@@ -95,7 +99,11 @@ export interface HandoffApi {
   app: {
     getStateInfo(): Promise<AppStateInfo>
     refresh(): Promise<HandoffStateChangeEvent>
-    openCodexThread(sessionId: string): Promise<void>
+    openCodexThread(
+      sessionId: string,
+      sessionClient?: SessionClient,
+      sessionCwd?: string | null
+    ): Promise<void>
     onStateChanged(listener: (event: HandoffStateChangeEvent) => void): () => void
   }
   sessions: {

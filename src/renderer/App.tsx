@@ -482,7 +482,7 @@ export default function App() {
   }, [activeTranscript, copyMarkdown])
 
   const handleOpenInCodex = useCallback(async () => {
-    if (!activeSession?.id) {
+    if (!activeSession?.id || activeTranscript?.id !== activeSession.id) {
       return
     }
 
@@ -493,7 +493,11 @@ export default function App() {
     }
 
     try {
-      await api.app.openCodexThread(activeSession.id)
+      await api.app.openCodexThread(
+        activeSession.id,
+        activeTranscript.sessionClient,
+        activeTranscript.sessionCwd
+      )
       setCopyStatus("Opened in Codex")
       window.setTimeout(() => {
         setCopyStatus(current => (current === "Opened in Codex" ? null : current))
@@ -503,7 +507,7 @@ export default function App() {
         error instanceof Error ? error.message : "Unable to open Codex"
       setCopyStatus(message)
     }
-  }, [activeSession])
+  }, [activeSession, activeTranscript])
 
   const toggleThoughtChainEntry = useCallback((entryId: string) => {
     setExpandedThoughtChainIds(current => {
@@ -723,7 +727,7 @@ export default function App() {
               <div className="copy-bar-row">
                 <button
                   className="ghost-button codex-thread-button"
-                  disabled={!activeSession?.id}
+                  disabled={!activeSession?.id || activeTranscript?.id !== activeSession.id}
                   onClick={() => void handleOpenInCodex()}
                   type="button"
                 >

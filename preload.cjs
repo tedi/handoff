@@ -24,8 +24,13 @@ contextBridge.exposeInMainWorld("handoffApp", {
     refresh() {
       return ipcRenderer.invoke(IPC_CHANNELS.app.refresh)
     },
-    openCodexThread(sessionId) {
-      return ipcRenderer.invoke(IPC_CHANNELS.app.openCodexThread, sessionId)
+    openCodexThread(sessionId, sessionClient, sessionCwd) {
+      return ipcRenderer.invoke(
+        IPC_CHANNELS.app.openCodexThread,
+        sessionId,
+        sessionClient,
+        sessionCwd
+      )
     },
     onStateChanged(listener) {
       const wrappedListener = (_event, payload) => {

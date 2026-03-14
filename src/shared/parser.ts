@@ -4,6 +4,7 @@ import type {
   ConversationEntry,
   ConversationPatch,
   ConversationTranscript,
+  SessionClient,
   SessionIndexEntry,
   TranscriptOptions
 } from "./contracts"
@@ -33,6 +34,11 @@ interface JsonRecord {
   type?: string
   timestamp?: string
   payload?: Record<string, unknown>
+}
+
+interface ParsedSessionMeta {
+  client: SessionClient
+  cwd: string | null
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -184,6 +190,53 @@ function findLastAssistantMarkdown(messages: MessageRecord[]) {
   return assistantIndex !== null ? messages[assistantIndex]?.text ?? null : null
 }
 
+function parseSessionClient(payload: Record<string, unknown>): SessionClient {
+  const source = typeof payload.source === "string" ? payload.source : null
+  const originator =
+    typeof payload.originator === "string" ? payload.originator : null
+
+  if (source === "cli" || originator === "codex_cli_rs") {
+    return "cli"
+  }
+
+  if (source === "vscode" || originator === "Codex Desktop") {
+    return "desktop"
+  }
+
+  return "unknown"
+}
+
+function extractSessionMeta(lines: string[]) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex]?.trim()
+    if (!line) {
+      continue
+    }
+
+    let record: JsonRecord
+    try {
+      record = JSON.parse(line) as JsonRecord
+    } catch {
+      continue
+    }
+
+    if (record.type !== "session_meta" || !isRecord(record.payload)) {
+      continue
+    }
+
+    return {
+      client: parseSessionClient(record.payload),
+      cwd:
+        typeof record.payload.cwd === "string" ? record.payload.cwd : null
+    } satisfies ParsedSessionMeta
+  }
+
+  return {
+    client: "unknown",
+    cwd: null
+  } satisfies ParsedSessionMeta
+}
+
 export function buildConversationTranscript(params: {
   sessionContent: string
   session: SessionIndexEntry
@@ -196,6 +249,7 @@ export function buildConversationTranscript(params: {
   let currentTurnId: string | null = null
 
   const lines = sessionContent.split(/\r?\n/)
+  const sessionMeta = extractSessionMeta(lines)
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
     const line = lines[lineIndex]?.trim()
     if (!line) {
@@ -352,6 +406,8 @@ export function buildConversationTranscript(params: {
     threadName: session.threadName,
     updatedAt: session.updatedAt,
     sessionPath,
+    sessionClient: sessionMeta.client,
+    sessionCwd: sessionMeta.cwd,
     entries,
     markdown: renderMarkdown(entries, options.includeDiffs, options.includeCommentary),
     lastAssistantMarkdown: findLastAssistantMarkdown(messages),

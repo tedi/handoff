@@ -4,6 +4,7 @@ import { IPC_CHANNELS } from "../shared/channels"
 import type {
   ClipboardWriteResult,
   HandoffApi,
+  SessionClient,
   HandoffStateChangeEvent,
   TranscriptOptions
 } from "../shared/contracts"
@@ -43,10 +44,16 @@ export function createHandoffBridge(
         >
       },
 
-      openCodexThread(sessionId: string) {
+      openCodexThread(
+        sessionId: string,
+        sessionClient?: SessionClient,
+        sessionCwd?: string | null
+      ) {
         return ipcRenderer.invoke(
           IPC_CHANNELS.app.openCodexThread,
-          sessionId
+          sessionId,
+          sessionClient,
+          sessionCwd
         ) as Promise<void>
       },
 

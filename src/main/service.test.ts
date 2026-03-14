@@ -63,7 +63,23 @@ async function createTestEnvironment(): Promise<TestEnvironment> {
       })
     ].join("\n")
   )
-  await fs.writeFile(sessionFilePath, await loadFixture("sample-session.jsonl"))
+  await fs.writeFile(
+    sessionFilePath,
+    [
+      JSON.stringify({
+        timestamp: "2026-03-14T00:08:49.033Z",
+        type: "session_meta",
+        payload: {
+          id: existingSessionId,
+          timestamp: "2026-03-14T00:05:59.676Z",
+          cwd: "/Users/tedikonda/topchallenger/apps/client",
+          originator: "Codex Desktop",
+          source: "vscode"
+        }
+      }),
+      await loadFixture("sample-session.jsonl")
+    ].join("\n")
+  )
 
   return {
     appDir,
@@ -136,6 +152,8 @@ describe("handoff service", () => {
     })
 
     expect(transcript.threadName).toBe("Highlights regression")
+    expect(transcript.sessionClient).toBe("desktop")
+    expect(transcript.sessionCwd).toBe("/Users/tedikonda/topchallenger/apps/client")
     expect(transcript.markdown).toContain("### Diffs")
     expect(transcript.lastAssistantMarkdown).toBe(
       "I found two issues in the same carousel and patched both."

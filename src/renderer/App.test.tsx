@@ -106,6 +106,8 @@ describe("Handoff App", () => {
           threadName: "Older session",
           updatedAt: "2026-03-14T01:00:00.000Z",
           sessionPath: "/tmp/session-1.jsonl",
+          sessionClient: "cli",
+          sessionCwd: "/tmp/older-session",
           entries: [
             {
               id: "session-1-user",
@@ -132,6 +134,8 @@ describe("Handoff App", () => {
           threadName: "Newest session",
           updatedAt: "2026-03-14T02:00:00.000Z",
           sessionPath: "/tmp/session-2.jsonl",
+          sessionClient: "desktop",
+          sessionCwd: "/tmp/session-2",
           entries: [
             {
               id: "session-2-user",
@@ -234,7 +238,11 @@ describe("Handoff App", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /Open in Codex/i }))
 
-    expect(api.app.openCodexThread).toHaveBeenCalledWith("session-2")
+    expect(api.app.openCodexThread).toHaveBeenCalledWith(
+      "session-2",
+      "desktop",
+      "/tmp/session-2"
+    )
 
     await userEvent.click(screen.getByRole("button", { name: /Older session/i }))
 
