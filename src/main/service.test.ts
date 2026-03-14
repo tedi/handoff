@@ -47,6 +47,11 @@ async function createTestEnvironment(): Promise<TestEnvironment> {
     path.join(codexHome, "session_index.jsonl"),
     [
       JSON.stringify({
+        id: existingSessionId,
+        thread_name: "Older highlights title",
+        updated_at: "2026-03-14T00:17:45.474Z"
+      }),
+      JSON.stringify({
         id: missingSessionId,
         thread_name: "Missing session",
         updated_at: "2026-03-14T00:19:45.474Z"
@@ -109,12 +114,16 @@ describe("handoff service", () => {
     await fs.rm(env.baseDir, { recursive: true, force: true })
   })
 
-  it("lists sessions sorted newest-first and resolves paths from filenames", async () => {
+  it("lists deduped sessions sorted newest-first and resolves paths from filenames", async () => {
     const sessions = await service.sessions.list()
 
     expect(sessions.map(session => session.id)).toEqual([
       env.missingSessionId,
       env.existingSessionId
+    ])
+    expect(sessions.map(session => session.threadName)).toEqual([
+      "Missing session",
+      "Highlights regression"
     ])
     expect(sessions[0]?.sessionPath).toBeNull()
     expect(sessions[1]?.sessionPath).toBe(env.sessionFilePath)

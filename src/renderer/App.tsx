@@ -611,7 +611,7 @@ export default function App() {
             ) : (
               sessions.map(session => (
                 <button
-                  key={session.id}
+                  key={`${session.id}:${session.updatedAt}:${session.threadName}`}
                   className={`session-row ${
                     session.id === activeSessionId ? "is-active" : ""
                   }`}

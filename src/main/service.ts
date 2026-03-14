@@ -47,6 +47,21 @@ interface CacheState {
   pathById: Map<string, string>
 }
 
+function dedupeSessionEntries(entries: SessionIndexEntry[]) {
+  const latestById = new Map<string, SessionIndexEntry>()
+
+  for (const entry of entries) {
+    const current = latestById.get(entry.id)
+    if (!current || entry.updatedAt.localeCompare(current.updatedAt) > 0) {
+      latestById.set(entry.id, entry)
+    }
+  }
+
+  return [...latestById.values()].sort((left, right) =>
+    right.updatedAt.localeCompare(left.updatedAt)
+  )
+}
+
 async function walkSessionFiles(rootDir: string): Promise<string[]> {
   const queue = [rootDir]
   const result: string[] = []
@@ -195,12 +210,12 @@ export function createHandoffService(
 
   async function loadCache() {
     const indexText = await fs.readFile(indexPath, "utf8")
-    const entries = indexText
+    const rawEntries = indexText
       .split(/\r?\n/)
       .map(line => line.trim())
       .filter(Boolean)
       .map((line, index) => parseIndexLine(line, index + 1))
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    const entries = dedupeSessionEntries(rawEntries)
 
     const byId = new Map(entries.map(entry => [entry.id, entry]))
     const pathById = await buildSessionPathMap(sessionsRoot)
