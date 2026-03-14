@@ -9,6 +9,8 @@ import type {
   ConversationTranscript,
   HandoffApi,
   HandoffStateChangeEvent,
+  SearchResult,
+  SearchStatus,
   SessionListItem
 } from "../shared/contracts"
 import App from "./App"
@@ -16,11 +18,19 @@ import App from "./App"
 function createMockApi({
   sessions,
   transcriptById,
-  transcriptErrors = {}
+  transcriptErrors = {},
+  searchStatus,
+  searchQuery
 }: {
   sessions: SessionListItem[]
   transcriptById: Record<string, ConversationTranscript>
   transcriptErrors?: Record<string, Error>
+  searchStatus?: SearchStatus
+  searchQuery?: (params: {
+    query: string
+    filters: import("../shared/contracts").SearchFilters
+    limit: number
+  }) => SearchResult[] | Promise<SearchResult[]>
 }) {
   const stateInfo: AppStateInfo = {
     indexPath: "/Users/tedikonda/.codex/session_index.jsonl",
@@ -31,6 +41,9 @@ function createMockApi({
     claudeIconDataUrl: "data:image/png;base64,Y2xhdWRl"
   }
   const listeners = new Set<(event: HandoffStateChangeEvent) => void>()
+  const searchStatusListeners = new Set<
+    (status: import("../shared/contracts").SearchStatus) => void
+  >()
 
   const api: HandoffApi = {
     app: {
@@ -69,6 +82,26 @@ function createMockApi({
         return transcript
       })
     },
+    search: {
+      getStatus: vi.fn().mockResolvedValue(
+        searchStatus ?? {
+          state: "ready",
+          message: null,
+          indexedAt: "2026-03-14T00:20:00.000Z",
+          documentCount: sessions.length
+        }
+      ),
+      query: vi.fn().mockImplementation(async params =>
+        searchQuery ? searchQuery(params) : []
+      ),
+      onStatusChanged(listener) {
+        searchStatusListeners.add(listener)
+
+        return () => {
+          searchStatusListeners.delete(listener)
+        }
+      }
+    },
     clipboard: {
       writeText: vi.fn().mockResolvedValue({ copied: true })
     }
@@ -78,6 +111,9 @@ function createMockApi({
     api,
     emit(event: HandoffStateChangeEvent) {
       listeners.forEach(listener => listener(event))
+    },
+    emitSearchStatus(status: import("../shared/contracts").SearchStatus) {
+      searchStatusListeners.forEach(listener => listener(status))
     }
   }
 }
@@ -630,6 +666,106 @@ describe("Handoff App", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /Expand sidebar/i }))
     expect(await screen.findByRole("button", { name: /Sidebar session/i })).toBeInTheDocument()
+  })
+
+  it("opens search mode and restores results after returning from a selected thread", async () => {
+    const { api } = createMockApi({
+      sessions: [
+        {
+          id: "codex:session-1",
+          sourceSessionId: "session-1",
+          provider: "codex",
+          archived: false,
+          threadName: "Gesture regression",
+          updatedAt: "2026-03-14T01:00:00.000Z",
+          projectPath: "/tmp/project",
+          sessionPath: "/tmp/session-1.jsonl"
+        }
+      ],
+      transcriptById: {
+        "codex:session-1": {
+          id: "codex:session-1",
+          sourceSessionId: "session-1",
+          provider: "codex",
+          archived: false,
+          threadName: "Gesture regression",
+          updatedAt: "2026-03-14T01:00:00.000Z",
+          projectPath: "/tmp/project",
+          sessionPath: "/tmp/session-1.jsonl",
+          sessionClient: "desktop",
+          sessionCwd: "/tmp/project",
+          entries: [
+            {
+              id: "search-user",
+              kind: "message",
+              role: "user",
+              timestamp: "2026-03-14T01:00:01.000Z",
+              bodyMarkdown: "The gesture handler upgrade broke the carousel swipe."
+            },
+            {
+              id: "search-assistant",
+              kind: "message",
+              role: "assistant",
+              timestamp: "2026-03-14T01:00:02.000Z",
+              bodyMarkdown: "I found the regression in highlights.tsx.",
+              patches: []
+            }
+          ],
+          markdown: "# Transcript\n\n## User\nGesture issue\n\n## Assistant\nFound it\n",
+          lastAssistantMarkdown: "I found the regression in highlights.tsx.",
+          hasDiffs: false
+        }
+      },
+      searchQuery: ({ query }) =>
+        query.trim()
+          ? [
+              {
+                id: "codex:session-1",
+                sourceSessionId: "session-1",
+                provider: "codex",
+                archived: false,
+                threadName: "Gesture regression",
+                updatedAt: "2026-03-14T01:00:00.000Z",
+                projectPath: "/tmp/project",
+                sessionPath: "/tmp/session-1.jsonl",
+                snippet: "The gesture handler upgrade broke the carousel swipe.",
+                score: 0.92
+              }
+            ]
+          : []
+    })
+
+    window.handoffApp = api
+    render(<App />)
+
+    expect(
+      await screen.findByText("I found the regression in highlights.tsx.")
+    ).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole("button", { name: /Open search/i }))
+
+    const searchInput = await screen.findByPlaceholderText("Search conversations")
+    expect(searchInput).toHaveFocus()
+
+    await userEvent.type(searchInput, "gesture")
+
+    const searchResultSnippet = await screen.findByText(
+      "The gesture handler upgrade broke the carousel swipe."
+    )
+
+    await userEvent.click(searchResultSnippet.closest("button") as HTMLButtonElement)
+
+    expect(
+      await screen.findByText("I found the regression in highlights.tsx.")
+    ).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /Back to results/i })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole("button", { name: /Back to results/i }))
+
+    expect(await screen.findByDisplayValue("gesture")).toBeInTheDocument()
+    expect(
+      await screen.findByText("The gesture handler upgrade broke the carousel swipe.")
+    ).toBeInTheDocument()
   })
 
   it("shows a parse error state when transcript loading fails", async () => {

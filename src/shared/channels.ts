@@ -9,8 +9,13 @@ export const IPC_CHANNELS = {
     list: "handoff:sessions:list",
     getTranscript: "handoff:sessions:get-transcript"
   },
+  search: {
+    getStatus: "handoff:search:get-status",
+    query: "handoff:search:query"
+  },
   clipboard: {
     writeText: "handoff:clipboard:write-text"
   },
-  stateChanged: "handoff:state-changed"
+  stateChanged: "handoff:state-changed",
+  searchStatusChanged: "handoff:search-status-changed"
 } as const

@@ -5,6 +5,8 @@ import type {
   ClipboardWriteResult,
   HandoffApi,
   ProjectLocationTarget,
+  SearchFilters,
+  SearchStatus,
   SessionClient,
   SessionProvider,
   HandoffStateChangeEvent,
@@ -17,14 +19,14 @@ interface IpcRendererLike {
     channel: string,
     listener: (
       event: IpcRendererEvent | Event,
-      payload: HandoffStateChangeEvent
+      payload: unknown
     ) => void
   ): void
   removeListener(
     channel: string,
     listener: (
       event: IpcRendererEvent | Event,
-      payload: HandoffStateChangeEvent
+      payload: unknown
     ) => void
   ): void
 }
@@ -70,11 +72,8 @@ export function createHandoffBridge(
       },
 
       onStateChanged(listener) {
-        const wrappedListener = (
-          _event: IpcRendererEvent | Event,
-          payload: HandoffStateChangeEvent
-        ) => {
-          listener(payload)
+        const wrappedListener = (_event: IpcRendererEvent | Event, payload: unknown) => {
+          listener(payload as HandoffStateChangeEvent)
         }
 
         ipcRenderer.on(IPC_CHANNELS.stateChanged, wrappedListener)
@@ -100,6 +99,33 @@ export function createHandoffBridge(
         ) as Promise<
           Awaited<ReturnType<HandoffApi["sessions"]["getTranscript"]>>
         >
+      }
+    },
+
+    search: {
+      getStatus() {
+        return ipcRenderer.invoke(IPC_CHANNELS.search.getStatus) as Promise<SearchStatus>
+      },
+
+      query(params: { query: string; filters: SearchFilters; limit: number }) {
+        return ipcRenderer.invoke(IPC_CHANNELS.search.query, params) as Promise<
+          Awaited<ReturnType<HandoffApi["search"]["query"]>>
+        >
+      },
+
+      onStatusChanged(listener) {
+        const wrappedListener = (_event: IpcRendererEvent | Event, payload: unknown) => {
+          listener(payload as SearchStatus)
+        }
+
+        ipcRenderer.on(IPC_CHANNELS.searchStatusChanged, wrappedListener)
+
+        return () => {
+          ipcRenderer.removeListener(
+            IPC_CHANNELS.searchStatusChanged,
+            wrappedListener
+          )
+        }
       }
     },
 

@@ -1,4 +1,7 @@
 export type SessionProvider = "codex" | "claude"
+export type ArchivedFilterValue = "all" | "not-archived" | "archived"
+export type ProviderFilterValue = "all" | SessionProvider
+export type DateRangeFilterValue = "24h" | "3d" | "7d" | "30d" | "all"
 
 export interface SessionIndexEntry {
   id: string
@@ -108,6 +111,25 @@ export interface ClipboardWriteResult {
   copied: true
 }
 
+export interface SearchFilters {
+  archived: ArchivedFilterValue
+  provider: ProviderFilterValue
+  projectPaths: string[]
+  dateRange: DateRangeFilterValue
+}
+
+export interface SearchResult extends SessionListItem {
+  snippet: string
+  score: number
+}
+
+export interface SearchStatus {
+  state: "warming" | "ready" | "error"
+  message: string | null
+  indexedAt: string | null
+  documentCount: number
+}
+
 export interface HandoffApi {
   app: {
     getStateInfo(): Promise<AppStateInfo>
@@ -130,6 +152,15 @@ export interface HandoffApi {
       id: string,
       options: TranscriptOptions
     ): Promise<ConversationTranscript>
+  }
+  search: {
+    getStatus(): Promise<SearchStatus>
+    query(params: {
+      query: string
+      filters: SearchFilters
+      limit: number
+    }): Promise<SearchResult[]>
+    onStatusChanged(listener: (status: SearchStatus) => void): () => void
   }
   clipboard: {
     writeText(text: string): Promise<ClipboardWriteResult>

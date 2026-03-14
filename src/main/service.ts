@@ -11,11 +11,18 @@ import type {
   ConversationTranscript,
   HandoffStateChangeEvent,
   HandoffStateChangeReason,
+  SearchFilters,
+  SearchResult,
+  SearchStatus,
   SessionIndexEntry,
   SessionListItem,
   SessionProvider,
   TranscriptOptions
 } from "../shared/contracts"
+import {
+  createHandoffSearchService,
+  type HandoffSearchService
+} from "./search"
 
 const SESSION_FILENAME_PATTERN =
   /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i
@@ -28,8 +35,11 @@ const CLAUDE_HIDDEN_USER_PREFIXES = [
 
 export interface HandoffServiceOptions {
   appDir?: string
+  dataDir?: string
   codexHome?: string
   claudeHome?: string
+  searchEnabled?: boolean
+  searchService?: HandoffSearchService
 }
 
 export interface HandoffService {
@@ -44,8 +54,17 @@ export interface HandoffService {
       options: TranscriptOptions
     ): Promise<ConversationTranscript>
   }
+  search: {
+    getStatus(): Promise<SearchStatus>
+    query(params: {
+      query: string
+      filters: SearchFilters
+      limit: number
+    }): Promise<SearchResult[]>
+  }
   startWatching(): Promise<void>
   onStateChanged(listener: (event: HandoffStateChangeEvent) => void): () => void
+  onSearchStatusChanged(listener: (status: SearchStatus) => void): () => void
   dispose(): Promise<void>
 }
 
@@ -643,6 +662,7 @@ export function createHandoffService(
   options: HandoffServiceOptions = {}
 ): HandoffService {
   const appDir = options.appDir ?? process.cwd()
+  const dataDir = options.dataDir ?? appDir
   const codexHome = options.codexHome ?? path.join(os.homedir(), ".codex")
   const claudeHome = options.claudeHome ?? path.join(os.homedir(), ".claude")
   const indexPath = path.join(codexHome, "session_index.jsonl")
@@ -650,7 +670,15 @@ export function createHandoffService(
   const archivedSessionsRoot = path.join(codexHome, "archived_sessions")
   const claudeProjectsRoot = path.join(claudeHome, "projects")
   const outputDir = path.join(appDir, "output")
+  const searchEnabled = options.searchEnabled ?? process.env.VITEST !== "true"
   const events = new EventEmitter()
+  const searchService =
+    options.searchService ??
+    (searchEnabled
+      ? createHandoffSearchService({
+          dataDir
+        })
+      : null)
   const normalizedIndexPath = indexPath.replaceAll("\\", "/")
   const normalizedArchivedSessionsRoot = archivedSessionsRoot.replaceAll("\\", "/")
   const normalizedClaudeProjectsRoot = claudeProjectsRoot.replaceAll("\\", "/")
@@ -745,6 +773,15 @@ export function createHandoffService(
       pathById
     }
 
+    if (searchService) {
+      void searchService.syncSessions(
+        entries.map(entry => ({
+          ...entry,
+          sessionPath: pathById.get(entry.id) ?? null
+        }))
+      )
+    }
+
     return cache
   }
 
@@ -827,6 +864,30 @@ export function createHandoffService(
       }
     },
 
+    search: {
+      async getStatus() {
+        if (!searchService) {
+          return {
+            state: "error",
+            message: "Search is unavailable in this environment.",
+            indexedAt: null,
+            documentCount: 0
+          } satisfies SearchStatus
+        }
+
+        return searchService.getStatus()
+      },
+
+      async query(params) {
+        if (!searchService) {
+          return []
+        }
+
+        await getCache()
+        return searchService.query(params)
+      }
+    },
+
     async startWatching() {
       if (listWatcher) {
         return
@@ -878,6 +939,14 @@ export function createHandoffService(
       }
     },
 
+    onSearchStatusChanged(listener) {
+      if (!searchService) {
+        return () => undefined
+      }
+
+      return searchService.onStatusChanged(listener)
+    },
+
     async dispose() {
       if (emitTimer) {
         clearTimeout(emitTimer)
@@ -895,6 +964,8 @@ export function createHandoffService(
         await listWatcher.close()
         listWatcher = null
       }
+
+      await searchService?.dispose()
     }
   }
 }

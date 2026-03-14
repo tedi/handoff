@@ -23,13 +23,19 @@ import "prismjs/components/prism-tsx"
 import "prismjs/components/prism-typescript"
 
 import type {
+  ArchivedFilterValue,
   AppStateInfo,
   AssistantMessageEntry,
   AssistantThoughtChainEntry,
   ConversationPatch,
   ConversationTranscript,
+  DateRangeFilterValue,
   HandoffApi,
   ProjectLocationTarget,
+  ProviderFilterValue,
+  SearchFilters,
+  SearchResult,
+  SearchStatus,
   SessionListItem,
   SessionProvider
 } from "../shared/contracts"
@@ -153,27 +159,24 @@ const MIN_SIDEBAR_WIDTH = 220
 const COLLAPSED_SIDEBAR_WIDTH = 128
 const SIDEBAR_WIDTH_STORAGE_KEY = "handoff.sidebar-width"
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "handoff.sidebar-collapsed"
-type ArchivedFilterValue = "all" | "not-archived" | "archived"
-type ProviderFilterValue = "all" | SessionProvider
-type DateRangeFilterValue = "24h" | "3d" | "7d" | "30d" | "all"
-
-interface SidebarFilters {
-  archived: ArchivedFilterValue
-  provider: ProviderFilterValue
-  projectPaths: string[]
-  dateRange: DateRangeFilterValue
-}
 
 interface ProjectFilterOption {
   path: string
   label: string
 }
 
-const DEFAULT_SIDEBAR_FILTERS: SidebarFilters = {
+const DEFAULT_SIDEBAR_FILTERS: SearchFilters = {
   archived: "not-archived",
   provider: "all",
   projectPaths: [],
   dateRange: "30d"
+}
+
+const DEFAULT_SEARCH_FILTERS: SearchFilters = {
+  archived: "all",
+  provider: "all",
+  projectPaths: [],
+  dateRange: "all"
 }
 
 const ARCHIVED_FILTER_OPTIONS: Array<{
@@ -219,7 +222,16 @@ function formatProjectFilterLabel(projectPath: string) {
   return getPathBasename(projectPath) || projectPath
 }
 
-function isDefaultSidebarFilters(filters: SidebarFilters) {
+function isDefaultSearchFilters(filters: SearchFilters) {
+  return (
+    filters.archived === DEFAULT_SEARCH_FILTERS.archived &&
+    filters.provider === DEFAULT_SEARCH_FILTERS.provider &&
+    filters.dateRange === DEFAULT_SEARCH_FILTERS.dateRange &&
+    filters.projectPaths.length === 0
+  )
+}
+
+function isDefaultSidebarFilters(filters: SearchFilters) {
   return (
     filters.archived === DEFAULT_SIDEBAR_FILTERS.archived &&
     filters.provider === DEFAULT_SIDEBAR_FILTERS.provider &&
@@ -285,6 +297,25 @@ function FilterIcon() {
         stroke="currentColor"
         strokeLinecap="round"
         strokeLinejoin="round"
+        strokeWidth="1.2"
+      />
+    </svg>
+  )
+}
+
+function SearchIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="sidebar-filter-icon"
+      fill="none"
+      viewBox="0 0 16 16"
+    >
+      <circle cx="7" cy="7" r="4.2" stroke="currentColor" strokeWidth="1.2" />
+      <path
+        d="M10.3 10.3 13.5 13.5"
+        stroke="currentColor"
+        strokeLinecap="round"
         strokeWidth="1.2"
       />
     </svg>
@@ -577,11 +608,205 @@ function AssistantMessage({ entry }: { entry: AssistantMessageEntry }) {
   )
 }
 
+function SearchFilterBar({
+  filters,
+  projectOptions,
+  onArchivedChange,
+  onProviderChange,
+  onDateChange,
+  onProjectToggle
+}: {
+  filters: SearchFilters
+  projectOptions: ProjectFilterOption[]
+  onArchivedChange(value: ArchivedFilterValue): void
+  onProviderChange(value: ProviderFilterValue): void
+  onDateChange(value: DateRangeFilterValue): void
+  onProjectToggle(projectPath: string): void
+}) {
+  return (
+    <div className="search-filter-bar">
+      <div className="search-filter-section">
+        <span className="search-filter-label">Archived</span>
+        <div className="search-filter-option-group">
+          {ARCHIVED_FILTER_OPTIONS.map(option => (
+            <button
+              className={`search-filter-option-button ${
+                filters.archived === option.value ? "is-selected" : ""
+              }`}
+              key={`search-archived-${option.value}`}
+              onClick={() => onArchivedChange(option.value)}
+              type="button"
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="search-filter-section">
+        <span className="search-filter-label">Provider</span>
+        <div className="search-filter-option-group">
+          {PROVIDER_FILTER_OPTIONS.map(option => (
+            <button
+              className={`search-filter-option-button ${
+                filters.provider === option.value ? "is-selected" : ""
+              }`}
+              key={`search-provider-${option.value}`}
+              onClick={() => onProviderChange(option.value)}
+              type="button"
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="search-filter-section">
+        <span className="search-filter-label">Date</span>
+        <div className="search-filter-option-group">
+          {DATE_FILTER_OPTIONS.map(option => (
+            <button
+              className={`search-filter-option-button ${
+                filters.dateRange === option.value ? "is-selected" : ""
+              }`}
+              key={`search-date-${option.value}`}
+              onClick={() => onDateChange(option.value)}
+              type="button"
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="search-filter-section search-filter-projects">
+        <span className="search-filter-label">Projects</span>
+        {projectOptions.length === 0 ? (
+          <span className="search-filter-empty">No projects available.</span>
+        ) : (
+          <div className="search-project-list">
+            {projectOptions.map(option => (
+              <label
+                className="search-project-option"
+                key={`search-project-${option.path}`}
+                title={option.path}
+              >
+                <input
+                  checked={filters.projectPaths.includes(option.path)}
+                  onChange={() => onProjectToggle(option.path)}
+                  type="checkbox"
+                />
+                <span className="search-project-copy">
+                  <span className="search-project-name">{option.label}</span>
+                  <span className="search-project-path">{option.path}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function SearchResultsPane({
+  stateInfo,
+  results,
+  query,
+  searchStatus,
+  isLoading,
+  onSelect
+}: {
+  stateInfo: AppStateInfo | null
+  results: SearchResult[]
+  query: string
+  searchStatus: SearchStatus | null
+  isLoading: boolean
+  onSelect(result: SearchResult): void
+}) {
+  if (isLoading && results.length === 0) {
+    return (
+      <EmptyState
+        title="Searching"
+        detail="Updating results…"
+      />
+    )
+  }
+
+  if (results.length === 0) {
+    if (searchStatus?.state === "error") {
+      return (
+        <EmptyState
+          title="Search unavailable"
+          detail={searchStatus.message ?? "Semantic search is unavailable right now."}
+        />
+      )
+    }
+
+    if (query.trim()) {
+      return (
+        <EmptyState
+          title="No matching threads"
+          detail="No conversations matched the current search query and filters."
+        />
+      )
+    }
+
+    return (
+      <EmptyState
+        title="Search conversations"
+        detail="Start typing to search all indexed Codex and Claude threads."
+      />
+    )
+  }
+
+  return (
+    <div className="search-results-list" role="list">
+      {searchStatus?.state === "warming" && query.trim().length >= 3 ? (
+        <div className="search-status-banner">
+          {searchStatus.message ?? "Search is still preparing semantic results."}
+        </div>
+      ) : null}
+      {searchStatus?.state === "error" ? (
+        <div className="search-status-banner">{searchStatus.message ?? "Search unavailable."}</div>
+      ) : null}
+
+      {results.map(result => (
+        <button
+          className="search-result-row"
+          key={`${result.id}:${result.updatedAt}`}
+          onClick={() => onSelect(result)}
+          type="button"
+        >
+          <div className="search-result-header">
+            <div className="session-title-group">
+              {result.archived ? (
+                <span className="archived-indicator" title="Archived">
+                  A
+                </span>
+              ) : null}
+              <span className="session-title">{result.threadName}</span>
+            </div>
+            <div className="session-row-meta">
+              <ProviderIcon provider={result.provider} stateInfo={stateInfo} />
+              <span className="session-time">{formatRelativeTimestamp(result.updatedAt)}</span>
+            </div>
+          </div>
+          <span className="search-result-snippet">{result.snippet}</span>
+        </button>
+      ))}
+    </div>
+  )
+}
+
 function getHandoffApi(): HandoffApi | null {
   return typeof window !== "undefined" ? window.handoffApp ?? null : null
 }
 
 export default function App() {
+  const [rightPaneMode, setRightPaneMode] = useState<"conversation" | "search">(
+    "conversation"
+  )
   const [stateInfo, setStateInfo] = useState<AppStateInfo | null>(null)
   const [sessions, setSessions] = useState<SessionListItem[]>([])
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
@@ -599,9 +824,17 @@ export default function App() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() =>
     readStoredSidebarCollapsed()
   )
-  const [sidebarFilters, setSidebarFilters] = useState<SidebarFilters>(
+  const [sidebarFilters, setSidebarFilters] = useState<SearchFilters>(
     DEFAULT_SIDEBAR_FILTERS
   )
+  const [searchFilters, setSearchFilters] = useState<SearchFilters>(
+    DEFAULT_SEARCH_FILTERS
+  )
+  const [searchQuery, setSearchQuery] = useState("")
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([])
+  const [searchStatus, setSearchStatus] = useState<SearchStatus | null>(null)
+  const [isSearchLoading, setIsSearchLoading] = useState(false)
+  const [searchReturnActive, setSearchReturnActive] = useState(false)
   const [isFilterPopoverOpen, setIsFilterPopoverOpen] = useState(false)
   const [sidebarDragState, setSidebarDragState] = useState<{
     startX: number
@@ -612,6 +845,8 @@ export default function App() {
   )
   const filterButtonRef = useRef<HTMLButtonElement | null>(null)
   const filterPopoverRef = useRef<HTMLDivElement | null>(null)
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
+  const searchRequestIdRef = useRef(0)
   const resolvedSidebarWidth = isSidebarCollapsed
     ? COLLAPSED_SIDEBAR_WIDTH
     : clampSidebarWidth(sidebarWidth, viewportWidth)
@@ -626,6 +861,10 @@ export default function App() {
   const hasActiveSidebarFilters = useMemo(
     () => !isDefaultSidebarFilters(sidebarFilters),
     [sidebarFilters]
+  )
+  const hasActiveSearchFilters = useMemo(
+    () => !isDefaultSearchFilters(searchFilters),
+    [searchFilters]
   )
   const preProjectFilteredSessions = useMemo(() => {
     const now = Date.now()
@@ -683,9 +922,54 @@ export default function App() {
         session.projectPath !== null && selectedProjectPaths.has(session.projectPath)
     )
   }, [preProjectFilteredSessions, sidebarFilters.projectPaths])
+  const preProjectSearchSessions = useMemo(() => {
+    const now = Date.now()
+
+    return sessions.filter(
+      session =>
+        matchesDateFilter(session, searchFilters.dateRange, now) &&
+        matchesArchivedFilter(session, searchFilters.archived) &&
+        matchesProviderFilter(session, searchFilters.provider)
+    )
+  }, [
+    sessions,
+    searchFilters.archived,
+    searchFilters.dateRange,
+    searchFilters.provider
+  ])
+  const searchProjectOptions = useMemo(() => {
+    const optionsByPath = new Map<string, ProjectFilterOption>()
+
+    for (const session of preProjectSearchSessions) {
+      if (!session.projectPath) {
+        continue
+      }
+
+      optionsByPath.set(session.projectPath, {
+        path: session.projectPath,
+        label: formatProjectFilterLabel(session.projectPath)
+      })
+    }
+
+    for (const projectPath of searchFilters.projectPaths) {
+      if (optionsByPath.has(projectPath)) {
+        continue
+      }
+
+      optionsByPath.set(projectPath, {
+        path: projectPath,
+        label: formatProjectFilterLabel(projectPath)
+      })
+    }
+
+    return [...optionsByPath.values()].sort(
+      (left, right) =>
+        left.label.localeCompare(right.label) || left.path.localeCompare(right.path)
+    )
+  }, [preProjectSearchSessions, searchFilters.projectPaths])
   const activeSession = useMemo(
-    () => filteredSessions.find(session => session.id === activeSessionId) ?? null,
-    [activeSessionId, filteredSessions]
+    () => sessions.find(session => session.id === activeSessionId) ?? null,
+    [activeSessionId, sessions]
   )
   const activeProjectPath =
     activeTranscript && activeTranscript.id === activeSession?.id
@@ -917,6 +1201,25 @@ export default function App() {
       }
 
       setStateInfo(info)
+      try {
+        const nextSearchStatus = await api.search.getStatus()
+        if (!isMounted) {
+          return
+        }
+
+        setSearchStatus(nextSearchStatus)
+      } catch (error) {
+        if (!isMounted) {
+          return
+        }
+
+        setSearchStatus({
+          state: "error",
+          message: error instanceof Error ? error.message : "Search unavailable.",
+          indexedAt: null,
+          documentCount: 0
+        })
+      }
       await loadSessions()
     }
 
@@ -933,25 +1236,101 @@ export default function App() {
   }, [loadSessions])
 
   useEffect(() => {
+    const api = getHandoffApi()
+    if (!api) {
+      return () => undefined
+    }
+
+    return api.search.onStatusChanged(nextStatus => {
+      setSearchStatus(nextStatus)
+    })
+  }, [])
+
+  useEffect(() => {
     void loadConversation(activeSession)
   }, [activeSession, loadConversation])
+
+  useEffect(() => {
+    if (rightPaneMode !== "search") {
+      return
+    }
+
+    searchInputRef.current?.focus()
+    window.requestAnimationFrame(() => {
+      searchInputRef.current?.focus()
+    })
+  }, [rightPaneMode])
 
   useEffect(() => {
     setExpandedThoughtChainIds(new Set())
   }, [activeTranscript?.id, activeTranscript?.updatedAt])
 
   useEffect(() => {
-    if (filteredSessions.length === 0) {
+    if (sessions.length === 0) {
       if (activeSessionId !== null) {
         setActiveSessionId(null)
       }
       return
     }
 
-    if (!activeSessionId || !filteredSessions.some(session => session.id === activeSessionId)) {
-      setActiveSessionId(filteredSessions[0]?.id ?? null)
+    if (!activeSessionId || !sessions.some(session => session.id === activeSessionId)) {
+      setActiveSessionId(sessions[0]?.id ?? null)
     }
-  }, [activeSessionId, filteredSessions])
+  }, [activeSessionId, sessions])
+
+  useEffect(() => {
+    if (rightPaneMode !== "search") {
+      return () => undefined
+    }
+
+    const api = getHandoffApi()
+    if (!api) {
+      return () => undefined
+    }
+
+    const requestId = ++searchRequestIdRef.current
+    const debounceMs = searchQuery.trim().length >= 3 ? 140 : 40
+    setIsSearchLoading(true)
+
+    const timer = window.setTimeout(() => {
+      void api.search
+        .query({
+          query: searchQuery,
+          filters: searchFilters,
+          limit: 50
+        })
+        .then(results => {
+          if (searchRequestIdRef.current !== requestId) {
+            return
+          }
+
+          setSearchResults(results)
+        })
+        .catch(error => {
+          if (searchRequestIdRef.current !== requestId) {
+            return
+          }
+
+          setSearchResults([])
+          setSearchStatus(current => ({
+            state: "error",
+            message:
+              error instanceof Error ? error.message : "Unable to search conversations.",
+            indexedAt: current?.indexedAt ?? null,
+            documentCount: current?.documentCount ?? 0
+          }))
+        })
+        .finally(() => {
+          if (searchRequestIdRef.current === requestId) {
+            setIsSearchLoading(false)
+          }
+        })
+    }, debounceMs)
+
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [rightPaneMode, searchFilters, searchQuery, searchStatus?.indexedAt, sessions.length])
 
   useEffect(() => {
     function handleResize() {
@@ -1106,6 +1485,56 @@ export default function App() {
     }))
   }, [])
 
+  const handleSearchArchivedFilterChange = useCallback((value: ArchivedFilterValue) => {
+    setSearchFilters(current => ({
+      ...current,
+      archived: value
+    }))
+  }, [])
+
+  const handleSearchProviderFilterChange = useCallback((value: ProviderFilterValue) => {
+    setSearchFilters(current => ({
+      ...current,
+      provider: value
+    }))
+  }, [])
+
+  const handleSearchDateFilterChange = useCallback((value: DateRangeFilterValue) => {
+    setSearchFilters(current => ({
+      ...current,
+      dateRange: value
+    }))
+  }, [])
+
+  const handleSearchProjectToggle = useCallback((projectPath: string) => {
+    setSearchFilters(current => ({
+      ...current,
+      projectPaths: current.projectPaths.includes(projectPath)
+        ? current.projectPaths.filter(path => path !== projectPath)
+        : [...current.projectPaths, projectPath]
+    }))
+  }, [])
+
+  const handleOpenSearch = useCallback(() => {
+    setRightPaneMode("search")
+  }, [])
+
+  const handleReturnToSearch = useCallback(() => {
+    setRightPaneMode("search")
+  }, [])
+
+  const handleSelectSessionFromSidebar = useCallback((sessionId: string) => {
+    setActiveSessionId(sessionId)
+    setRightPaneMode("conversation")
+    setSearchReturnActive(false)
+  }, [])
+
+  const handleSelectSearchResult = useCallback((result: SearchResult) => {
+    setActiveSessionId(result.id)
+    setRightPaneMode("conversation")
+    setSearchReturnActive(true)
+  }, [])
+
   const handleSidebarResizeStart = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
       if (isSidebarCollapsed) {
@@ -1147,6 +1576,21 @@ export default function App() {
                   <span className="sidebar-toggle-frame" />
                   <span className="sidebar-toggle-divider" />
                 </span>
+              </button>
+
+              <button
+                aria-label="Open search"
+                aria-pressed={rightPaneMode === "search"}
+                className={`sidebar-filter-button ${
+                  rightPaneMode === "search" ? "is-active" : ""
+                }`}
+                onClick={handleOpenSearch}
+                type="button"
+              >
+                <SearchIcon />
+                {!isSidebarCollapsed ? (
+                  <span className="sidebar-filter-button-label">Search</span>
+                ) : null}
               </button>
 
               <button
@@ -1299,9 +1743,12 @@ export default function App() {
                   <button
                     key={`${session.id}:${session.updatedAt}:${session.threadName}`}
                     className={`session-row ${
-                      session.id === activeSessionId ? "is-active" : ""
+                      session.id === activeSessionId &&
+                      filteredSessions.some(visibleSession => visibleSession.id === activeSessionId)
+                        ? "is-active"
+                        : ""
                     }`}
-                    onClick={() => setActiveSessionId(session.id)}
+                    onClick={() => handleSelectSessionFromSidebar(session.id)}
                     type="button"
                     >
                       <div className="session-row-main">
@@ -1343,7 +1790,9 @@ export default function App() {
         <section className="main-pane">
           <header className="topbar">
             <div className="topbar-left">
-              {activeSession ? (
+              {rightPaneMode === "search" ? (
+                <span className="topbar-thread">Search</span>
+              ) : activeSession ? (
                 <>
                   {activeSession.archived ? (
                     <span className="archived-indicator" title="Archived">
@@ -1367,6 +1816,15 @@ export default function App() {
             </div>
 
             <div className="toolbar">
+              {rightPaneMode === "conversation" && searchReturnActive ? (
+                <button
+                  className="topbar-button"
+                  onClick={handleReturnToSearch}
+                  type="button"
+                >
+                  Back to results
+                </button>
+              ) : null}
               <button
                 className="topbar-button"
                 onClick={() => {
@@ -1391,7 +1849,48 @@ export default function App() {
 
           <section className="detail-pane">
           <div className="transcript-surface">
-            {!activeSession ? (
+            {rightPaneMode === "search" ? (
+              <div className="search-layout">
+                <div className="search-input-row">
+                  <label className="search-input-shell">
+                    <SearchIcon />
+                    <input
+                      className="search-input"
+                      onChange={event => setSearchQuery(event.target.value)}
+                      placeholder="Search conversations"
+                      ref={searchInputRef}
+                      type="text"
+                      value={searchQuery}
+                    />
+                  </label>
+                  <span className={`search-status-pill is-${searchStatus?.state ?? "warming"}`}>
+                    {searchStatus?.state === "ready"
+                      ? "Ready"
+                      : searchStatus?.state === "error"
+                        ? "Unavailable"
+                        : "Preparing"}
+                  </span>
+                </div>
+
+                <SearchFilterBar
+                  filters={searchFilters}
+                  onArchivedChange={handleSearchArchivedFilterChange}
+                  onDateChange={handleSearchDateFilterChange}
+                  onProjectToggle={handleSearchProjectToggle}
+                  onProviderChange={handleSearchProviderFilterChange}
+                  projectOptions={searchProjectOptions}
+                />
+
+                <SearchResultsPane
+                  isLoading={isSearchLoading}
+                  onSelect={handleSelectSearchResult}
+                  query={searchQuery}
+                  results={searchResults}
+                  searchStatus={searchStatus}
+                  stateInfo={stateInfo}
+                />
+              </div>
+            ) : !activeSession ? (
               <EmptyState
                 title="No conversation selected"
                 detail="Pick a conversation from the left sidebar to inspect it."
@@ -1486,60 +1985,62 @@ export default function App() {
             )}
           </div>
 
-          <div className="copy-bar">
-            <div className="copy-bar-inner">
-              <div className="copy-status">{copyStatus ?? " "}</div>
-              <div className="copy-bar-row">
-                <button
-                  className="ghost-button codex-thread-button"
-                  disabled={!activeSession?.id || activeTranscript?.id !== activeSession.id}
-                  onClick={() => void handleOpenInSource()}
-                  type="button"
-                >
-                  {activeProvider && getProviderIconDataUrl(activeProvider, stateInfo) ? (
-                    <img
-                      alt=""
-                      aria-hidden="true"
-                      className="codex-thread-icon"
-                      src={getProviderIconDataUrl(activeProvider, stateInfo) ?? undefined}
-                    />
-                  ) : (
-                    <span aria-hidden="true" className="codex-thread-fallback">
-                      {activeProvider === "claude" ? "Cl" : "Co"}
-                    </span>
-                  )}
-                  <span>{activeProviderLabel ? `Open in ${activeProviderLabel}` : "Open"}</span>
-                </button>
+          {rightPaneMode === "conversation" ? (
+            <div className="copy-bar">
+              <div className="copy-bar-inner">
+                <div className="copy-status">{copyStatus ?? " "}</div>
+                <div className="copy-bar-row">
+                  <button
+                    className="ghost-button codex-thread-button"
+                    disabled={!activeSession?.id || activeTranscript?.id !== activeSession.id}
+                    onClick={() => void handleOpenInSource()}
+                    type="button"
+                  >
+                    {activeProvider && getProviderIconDataUrl(activeProvider, stateInfo) ? (
+                      <img
+                        alt=""
+                        aria-hidden="true"
+                        className="codex-thread-icon"
+                        src={getProviderIconDataUrl(activeProvider, stateInfo) ?? undefined}
+                      />
+                    ) : (
+                      <span aria-hidden="true" className="codex-thread-fallback">
+                        {activeProvider === "claude" ? "Cl" : "Co"}
+                      </span>
+                    )}
+                    <span>{activeProviderLabel ? `Open in ${activeProviderLabel}` : "Open"}</span>
+                  </button>
 
-                <div className="copy-actions">
-                  <button
-                    className="ghost-button"
-                    disabled={!activeSession?.sessionPath}
-                    onClick={() => void handleCopyChat()}
-                    type="button"
-                  >
-                    Copy Chat
-                  </button>
-                  <button
-                    className="accent-button"
-                    disabled={!activeTranscript?.markdown}
-                    onClick={() => void handleCopyChatWithDiffs()}
-                    type="button"
-                  >
-                    Copy Chat + Diffs
-                  </button>
-                  <button
-                    className="ghost-button"
-                    disabled={!activeTranscript?.lastAssistantMarkdown}
-                    onClick={() => void handleCopyLastMessage()}
-                    type="button"
-                  >
-                    Copy Last Message
-                  </button>
+                  <div className="copy-actions">
+                    <button
+                      className="ghost-button"
+                      disabled={!activeSession?.sessionPath}
+                      onClick={() => void handleCopyChat()}
+                      type="button"
+                    >
+                      Copy Chat
+                    </button>
+                    <button
+                      className="accent-button"
+                      disabled={!activeTranscript?.markdown}
+                      onClick={() => void handleCopyChatWithDiffs()}
+                      type="button"
+                    >
+                      Copy Chat + Diffs
+                    </button>
+                    <button
+                      className="ghost-button"
+                      disabled={!activeTranscript?.lastAssistantMarkdown}
+                      onClick={() => void handleCopyLastMessage()}
+                      type="button"
+                    >
+                      Copy Last Message
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
+          ) : null}
         </section>
         </section>
       </div>

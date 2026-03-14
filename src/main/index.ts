@@ -9,7 +9,8 @@ import { createHandoffService } from "./service"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const service = createHandoffService({
-  appDir: app.getAppPath()
+  appDir: app.getAppPath(),
+  dataDir: app.getPath("userData")
 })
 
 let disposeIpcHandlers: (() => void) | null = null
@@ -61,6 +62,18 @@ app.whenReady().then(async () => {
       }
     })
   })
+  const disposeSearchStatusSubscription = service.onSearchStatusChanged(payload => {
+    BrowserWindow.getAllWindows().forEach(window => {
+      if (!window.isDestroyed()) {
+        window.webContents.send(IPC_CHANNELS.searchStatusChanged, payload)
+      }
+    })
+  })
+  const previousDisposeStateSubscription = disposeStateSubscription
+  disposeStateSubscription = () => {
+    previousDisposeStateSubscription?.()
+    disposeSearchStatusSubscription()
+  }
 
   await service.startWatching()
   await createMainWindow()

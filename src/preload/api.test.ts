@@ -19,6 +19,17 @@ describe("createHandoffBridge", () => {
       includeCommentary: false,
       includeDiffs: true
     })
+    await bridge.search.getStatus()
+    await bridge.search.query({
+      query: "gesture",
+      filters: {
+        archived: "all",
+        provider: "all",
+        projectPaths: [],
+        dateRange: "all"
+      },
+      limit: 10
+    })
     await bridge.app.openSourceSession("claude", "session-1", "cli", "/tmp/project")
     await bridge.app.openProjectPath("editor", "/tmp/project")
     await bridge.clipboard.writeText("copied")
@@ -33,8 +44,23 @@ describe("createHandoffBridge", () => {
         includeDiffs: true
       }
     )
+    expect(invoke).toHaveBeenNthCalledWith(3, IPC_CHANNELS.search.getStatus)
     expect(invoke).toHaveBeenNthCalledWith(
-      3,
+      4,
+      IPC_CHANNELS.search.query,
+      {
+        query: "gesture",
+        filters: {
+          archived: "all",
+          provider: "all",
+          projectPaths: [],
+          dateRange: "all"
+        },
+        limit: 10
+      }
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      5,
       IPC_CHANNELS.app.openSourceSession,
       "claude",
       "session-1",
@@ -42,13 +68,13 @@ describe("createHandoffBridge", () => {
       "/tmp/project"
     )
     expect(invoke).toHaveBeenNthCalledWith(
-      4,
+      6,
       IPC_CHANNELS.app.openProjectPath,
       "editor",
       "/tmp/project"
     )
     expect(invoke).toHaveBeenNthCalledWith(
-      5,
+      7,
       IPC_CHANNELS.clipboard.writeText,
       "copied"
     )

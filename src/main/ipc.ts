@@ -6,6 +6,7 @@ import { promisify } from "node:util"
 import { IPC_CHANNELS } from "../shared/channels"
 import type {
   ProjectLocationTarget,
+  SearchFilters,
   SessionClient,
   SessionProvider,
   TranscriptOptions
@@ -270,6 +271,12 @@ export function registerIpcHandlers(ipcMain: IpcMain, service: HandoffService) {
     (_event, id: string, options: TranscriptOptions) =>
       service.sessions.getTranscript(id, options)
   )
+  ipcMain.handle(IPC_CHANNELS.search.getStatus, () => service.search.getStatus())
+  ipcMain.handle(
+    IPC_CHANNELS.search.query,
+    (_event, params: { query: string; filters: SearchFilters; limit: number }) =>
+      service.search.query(params)
+  )
   ipcMain.handle(IPC_CHANNELS.clipboard.writeText, (_event, text: string) => {
     clipboard.writeText(text)
     return { copied: true as const }
@@ -282,6 +289,8 @@ export function registerIpcHandlers(ipcMain: IpcMain, service: HandoffService) {
     ipcMain.removeHandler(IPC_CHANNELS.app.openProjectPath)
     ipcMain.removeHandler(IPC_CHANNELS.sessions.list)
     ipcMain.removeHandler(IPC_CHANNELS.sessions.getTranscript)
+    ipcMain.removeHandler(IPC_CHANNELS.search.getStatus)
+    ipcMain.removeHandler(IPC_CHANNELS.search.query)
     ipcMain.removeHandler(IPC_CHANNELS.clipboard.writeText)
   }
 }

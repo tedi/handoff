@@ -11,10 +11,15 @@ const IPC_CHANNELS = {
     list: "handoff:sessions:list",
     getTranscript: "handoff:sessions:get-transcript"
   },
+  search: {
+    getStatus: "handoff:search:get-status",
+    query: "handoff:search:query"
+  },
   clipboard: {
     writeText: "handoff:clipboard:write-text"
   },
-  stateChanged: "handoff:state-changed"
+  stateChanged: "handoff:state-changed",
+  searchStatusChanged: "handoff:search-status-changed"
 }
 
 contextBridge.exposeInMainWorld("handoffApp", {
@@ -63,6 +68,28 @@ contextBridge.exposeInMainWorld("handoffApp", {
         id,
         options
       )
+    }
+  },
+  search: {
+    getStatus() {
+      return ipcRenderer.invoke(IPC_CHANNELS.search.getStatus)
+    },
+    query(params) {
+      return ipcRenderer.invoke(IPC_CHANNELS.search.query, params)
+    },
+    onStatusChanged(listener) {
+      const wrappedListener = (_event, payload) => {
+        listener(payload)
+      }
+
+      ipcRenderer.on(IPC_CHANNELS.searchStatusChanged, wrappedListener)
+
+      return () => {
+        ipcRenderer.removeListener(
+          IPC_CHANNELS.searchStatusChanged,
+          wrappedListener
+        )
+      }
     }
   },
   clipboard: {
