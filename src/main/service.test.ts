@@ -439,7 +439,14 @@ describe("handoff service", () => {
     expect(sessions[2]).toMatchObject({
       provider: "codex",
       archived: true,
+      projectPath: "/Users/tedikonda/topchallenger/apps",
       sessionPath: env.codexArchivedSessionFilePath
+    })
+    expect(sessions[3]).toMatchObject({
+      provider: "codex",
+      archived: false,
+      projectPath: "/Users/tedikonda/topchallenger/apps/client",
+      sessionPath: env.codexSessionFilePath
     })
   })
 

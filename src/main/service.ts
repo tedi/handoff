@@ -190,6 +190,39 @@ async function buildCodexSessionLocationMap(params: {
   return locationsById
 }
 
+async function readCodexSessionProjectPath(sessionPath: string) {
+  let content = ""
+  try {
+    content = await fs.readFile(sessionPath, "utf8")
+  } catch {
+    return null
+  }
+
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim()
+    if (!line) {
+      continue
+    }
+
+    let record: Record<string, unknown>
+    try {
+      record = JSON.parse(line) as Record<string, unknown>
+    } catch {
+      continue
+    }
+
+    if (record.type !== "session_meta" || !isRecord(record.payload)) {
+      continue
+    }
+
+    const cwd =
+      typeof record.payload.cwd === "string" ? record.payload.cwd.trim() : ""
+    return cwd || null
+  }
+
+  return null
+}
+
 function parseCodexIndexLine(line: string, lineNumber: number): SessionIndexEntry {
   let parsed: unknown
   try {
@@ -438,10 +471,30 @@ async function loadCodexEntries(params: {
       archived: locationsById.get(entry.id)?.archived ?? false
     }))
 
+  const dedupedEntries = dedupeSessionEntries(rawEntries)
+  const entries = await Promise.all(
+    dedupedEntries.map(async entry => {
+      const sessionPath = locationsById.get(entry.id)?.path
+      if (!sessionPath) {
+        return entry
+      }
+
+      return {
+        ...entry,
+        projectPath: await readCodexSessionProjectPath(sessionPath)
+      }
+    })
+  )
+
   return {
-    entries: dedupeSessionEntries(rawEntries),
+    entries,
     pathById: new Map(
-      [...locationsById.entries()].map(([key, location]) => [key, location.path])
+      entries
+        .map(entry => {
+          const sessionPath = locationsById.get(entry.id)?.path
+          return sessionPath ? ([entry.id, sessionPath] as const) : null
+        })
+        .filter((entry): entry is readonly [string, string] => entry !== null)
     )
   }
 }

@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
@@ -152,11 +153,142 @@ const MIN_SIDEBAR_WIDTH = 220
 const COLLAPSED_SIDEBAR_WIDTH = 128
 const SIDEBAR_WIDTH_STORAGE_KEY = "handoff.sidebar-width"
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "handoff.sidebar-collapsed"
+type ArchivedFilterValue = "all" | "not-archived" | "archived"
+type ProviderFilterValue = "all" | SessionProvider
+type DateRangeFilterValue = "24h" | "3d" | "7d" | "30d" | "all"
+
+interface SidebarFilters {
+  archived: ArchivedFilterValue
+  provider: ProviderFilterValue
+  projectPaths: string[]
+  dateRange: DateRangeFilterValue
+}
+
+interface ProjectFilterOption {
+  path: string
+  label: string
+}
+
+const DEFAULT_SIDEBAR_FILTERS: SidebarFilters = {
+  archived: "not-archived",
+  provider: "all",
+  projectPaths: [],
+  dateRange: "30d"
+}
+
+const ARCHIVED_FILTER_OPTIONS: Array<{
+  label: string
+  value: ArchivedFilterValue
+}> = [
+  { label: "All", value: "all" },
+  { label: "Not Archived", value: "not-archived" },
+  { label: "Archived", value: "archived" }
+]
+
+const PROVIDER_FILTER_OPTIONS: Array<{
+  label: string
+  value: ProviderFilterValue
+}> = [
+  { label: "All", value: "all" },
+  { label: "Claude", value: "claude" },
+  { label: "Codex", value: "codex" }
+]
+
+const DATE_FILTER_OPTIONS: Array<{
+  label: string
+  value: DateRangeFilterValue
+}> = [
+  { label: "Last 24h", value: "24h" },
+  { label: "Last 3 days", value: "3d" },
+  { label: "Last 7 days", value: "7d" },
+  { label: "Last 30 days", value: "30d" },
+  { label: "All dates", value: "all" }
+]
 
 function clampSidebarWidth(value: number, viewportWidth: number) {
   const maxWidth = Math.max(COLLAPSED_SIDEBAR_WIDTH, Math.floor(viewportWidth * 0.4))
   const minWidth = Math.min(MIN_SIDEBAR_WIDTH, maxWidth)
   return Math.min(Math.max(Math.round(value), minWidth), maxWidth)
+}
+
+function getPathBasename(filePath: string) {
+  return filePath.split(/[\\/]/).filter(Boolean).at(-1) ?? filePath
+}
+
+function formatProjectFilterLabel(projectPath: string) {
+  return getPathBasename(projectPath) || projectPath
+}
+
+function isDefaultSidebarFilters(filters: SidebarFilters) {
+  return (
+    filters.archived === DEFAULT_SIDEBAR_FILTERS.archived &&
+    filters.provider === DEFAULT_SIDEBAR_FILTERS.provider &&
+    filters.dateRange === DEFAULT_SIDEBAR_FILTERS.dateRange &&
+    filters.projectPaths.length === 0
+  )
+}
+
+function matchesArchivedFilter(
+  session: SessionListItem,
+  archivedFilter: ArchivedFilterValue
+) {
+  if (archivedFilter === "all") {
+    return true
+  }
+
+  return archivedFilter === "archived" ? session.archived : !session.archived
+}
+
+function matchesProviderFilter(
+  session: SessionListItem,
+  providerFilter: ProviderFilterValue
+) {
+  return providerFilter === "all" ? true : session.provider === providerFilter
+}
+
+function matchesDateFilter(
+  session: SessionListItem,
+  dateFilter: DateRangeFilterValue,
+  now: number
+) {
+  if (dateFilter === "all") {
+    return true
+  }
+
+  const updatedAtMs = Date.parse(session.updatedAt)
+  if (Number.isNaN(updatedAtMs)) {
+    return false
+  }
+
+  const maxAgeMs =
+    dateFilter === "24h"
+      ? 24 * 60 * 60 * 1000
+      : dateFilter === "3d"
+        ? 3 * 24 * 60 * 60 * 1000
+        : dateFilter === "7d"
+          ? 7 * 24 * 60 * 60 * 1000
+          : 30 * 24 * 60 * 60 * 1000
+
+  return updatedAtMs >= now - maxAgeMs
+}
+
+function FilterIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="sidebar-filter-icon"
+      fill="none"
+      viewBox="0 0 16 16"
+    >
+      <path
+        d="M2.5 3.25h11l-4.1 4.68v3.1l-2.8 1.72V7.93L2.5 3.25Z"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.2"
+      />
+    </svg>
+  )
 }
 
 function readStoredSidebarWidth() {
@@ -467,6 +599,10 @@ export default function App() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() =>
     readStoredSidebarCollapsed()
   )
+  const [sidebarFilters, setSidebarFilters] = useState<SidebarFilters>(
+    DEFAULT_SIDEBAR_FILTERS
+  )
+  const [isFilterPopoverOpen, setIsFilterPopoverOpen] = useState(false)
   const [sidebarDragState, setSidebarDragState] = useState<{
     startX: number
     startWidth: number
@@ -474,6 +610,8 @@ export default function App() {
   const [expandedThoughtChainIds, setExpandedThoughtChainIds] = useState<Set<string>>(
     () => new Set()
   )
+  const filterButtonRef = useRef<HTMLButtonElement | null>(null)
+  const filterPopoverRef = useRef<HTMLDivElement | null>(null)
   const resolvedSidebarWidth = isSidebarCollapsed
     ? COLLAPSED_SIDEBAR_WIDTH
     : clampSidebarWidth(sidebarWidth, viewportWidth)
@@ -485,9 +623,69 @@ export default function App() {
     [resolvedSidebarWidth]
   )
 
+  const hasActiveSidebarFilters = useMemo(
+    () => !isDefaultSidebarFilters(sidebarFilters),
+    [sidebarFilters]
+  )
+  const preProjectFilteredSessions = useMemo(() => {
+    const now = Date.now()
+
+    return sessions.filter(
+      session =>
+        matchesDateFilter(session, sidebarFilters.dateRange, now) &&
+        matchesArchivedFilter(session, sidebarFilters.archived) &&
+        matchesProviderFilter(session, sidebarFilters.provider)
+    )
+  }, [
+    sessions,
+    sidebarFilters.archived,
+    sidebarFilters.dateRange,
+    sidebarFilters.provider
+  ])
+  const projectOptions = useMemo(() => {
+    const optionsByPath = new Map<string, ProjectFilterOption>()
+
+    for (const session of preProjectFilteredSessions) {
+      if (!session.projectPath) {
+        continue
+      }
+
+      optionsByPath.set(session.projectPath, {
+        path: session.projectPath,
+        label: formatProjectFilterLabel(session.projectPath)
+      })
+    }
+
+    for (const projectPath of sidebarFilters.projectPaths) {
+      if (optionsByPath.has(projectPath)) {
+        continue
+      }
+
+      optionsByPath.set(projectPath, {
+        path: projectPath,
+        label: formatProjectFilterLabel(projectPath)
+      })
+    }
+
+    return [...optionsByPath.values()].sort(
+      (left, right) =>
+        left.label.localeCompare(right.label) || left.path.localeCompare(right.path)
+    )
+  }, [preProjectFilteredSessions, sidebarFilters.projectPaths])
+  const filteredSessions = useMemo(() => {
+    if (sidebarFilters.projectPaths.length === 0) {
+      return preProjectFilteredSessions
+    }
+
+    const selectedProjectPaths = new Set(sidebarFilters.projectPaths)
+    return preProjectFilteredSessions.filter(
+      session =>
+        session.projectPath !== null && selectedProjectPaths.has(session.projectPath)
+    )
+  }, [preProjectFilteredSessions, sidebarFilters.projectPaths])
   const activeSession = useMemo(
-    () => sessions.find(session => session.id === activeSessionId) ?? null,
-    [activeSessionId, sessions]
+    () => filteredSessions.find(session => session.id === activeSessionId) ?? null,
+    [activeSessionId, filteredSessions]
   )
   const activeProjectPath =
     activeTranscript && activeTranscript.id === activeSession?.id
@@ -743,6 +941,19 @@ export default function App() {
   }, [activeTranscript?.id, activeTranscript?.updatedAt])
 
   useEffect(() => {
+    if (filteredSessions.length === 0) {
+      if (activeSessionId !== null) {
+        setActiveSessionId(null)
+      }
+      return
+    }
+
+    if (!activeSessionId || !filteredSessions.some(session => session.id === activeSessionId)) {
+      setActiveSessionId(filteredSessions[0]?.id ?? null)
+    }
+  }, [activeSessionId, filteredSessions])
+
+  useEffect(() => {
     function handleResize() {
       setViewportWidth(window.innerWidth)
     }
@@ -771,6 +982,42 @@ export default function App() {
       return
     }
   }, [isSidebarCollapsed, sidebarWidth, viewportWidth])
+
+  useEffect(() => {
+    if (!isFilterPopoverOpen) {
+      return () => undefined
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target
+      if (!(target instanceof Node)) {
+        return
+      }
+
+      if (
+        filterPopoverRef.current?.contains(target) ||
+        filterButtonRef.current?.contains(target)
+      ) {
+        return
+      }
+
+      setIsFilterPopoverOpen(false)
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsFilterPopoverOpen(false)
+      }
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown)
+    window.addEventListener("keydown", handleKeyDown)
+
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown)
+      window.removeEventListener("keydown", handleKeyDown)
+    }
+  }, [isFilterPopoverOpen])
 
   useEffect(() => {
     if (!sidebarDragState) {
@@ -825,6 +1072,40 @@ export default function App() {
     setIsSidebarCollapsed(current => !current)
   }, [])
 
+  const handleFilterPopoverToggle = useCallback(() => {
+    setIsFilterPopoverOpen(current => !current)
+  }, [])
+
+  const handleArchivedFilterChange = useCallback((value: ArchivedFilterValue) => {
+    setSidebarFilters(current => ({
+      ...current,
+      archived: value
+    }))
+  }, [])
+
+  const handleProviderFilterChange = useCallback((value: ProviderFilterValue) => {
+    setSidebarFilters(current => ({
+      ...current,
+      provider: value
+    }))
+  }, [])
+
+  const handleDateFilterChange = useCallback((value: DateRangeFilterValue) => {
+    setSidebarFilters(current => ({
+      ...current,
+      dateRange: value
+    }))
+  }, [])
+
+  const handleProjectFilterToggle = useCallback((projectPath: string) => {
+    setSidebarFilters(current => ({
+      ...current,
+      projectPaths: current.projectPaths.includes(projectPath)
+        ? current.projectPaths.filter(path => path !== projectPath)
+        : [...current.projectPaths, projectPath]
+    }))
+  }, [])
+
   const handleSidebarResizeStart = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
       if (isSidebarCollapsed) {
@@ -850,23 +1131,151 @@ export default function App() {
           className={`sidebar-pane ${isSidebarCollapsed ? "is-collapsed" : ""}`}
         >
           <div className="sidebar-header">
-            <button
-              aria-label={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-              className="sidebar-toggle-button"
-              onClick={handleSidebarToggle}
-              type="button"
-            >
-              <span
-                aria-hidden="true"
-                className={`sidebar-toggle-icon ${
-                  isSidebarCollapsed ? "is-collapsed" : ""
-                }`}
+            <div className="sidebar-header-controls">
+              <button
+                aria-label={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+                className="sidebar-toggle-button"
+                onClick={handleSidebarToggle}
+                type="button"
               >
-                <span className="sidebar-toggle-frame" />
-                <span className="sidebar-toggle-divider" />
-              </span>
-            </button>
+                <span
+                  aria-hidden="true"
+                  className={`sidebar-toggle-icon ${
+                    isSidebarCollapsed ? "is-collapsed" : ""
+                  }`}
+                >
+                  <span className="sidebar-toggle-frame" />
+                  <span className="sidebar-toggle-divider" />
+                </span>
+              </button>
+
+              <button
+                aria-expanded={isFilterPopoverOpen}
+                aria-haspopup="dialog"
+                aria-label={isFilterPopoverOpen ? "Close filters" : "Open filters"}
+                aria-pressed={hasActiveSidebarFilters}
+                className={`sidebar-filter-button ${
+                  hasActiveSidebarFilters ? "is-active" : ""
+                }`}
+                onClick={handleFilterPopoverToggle}
+                ref={filterButtonRef}
+                type="button"
+              >
+                <FilterIcon />
+                {!isSidebarCollapsed ? (
+                  <span className="sidebar-filter-button-label">Filter</span>
+                ) : null}
+                {hasActiveSidebarFilters ? (
+                  <span aria-hidden="true" className="sidebar-filter-button-dot" />
+                ) : null}
+              </button>
+            </div>
           </div>
+
+          {isFilterPopoverOpen ? (
+            <div
+              aria-label="Session filters"
+              className="sidebar-filter-popover"
+              ref={filterPopoverRef}
+              role="dialog"
+            >
+              <div className="sidebar-filter-popover-header">
+                <span className="sidebar-filter-popover-title">Filters</span>
+                <button
+                  aria-label="Dismiss filter panel"
+                  className="sidebar-filter-close-button"
+                  onClick={() => setIsFilterPopoverOpen(false)}
+                  type="button"
+                >
+                  ×
+                </button>
+              </div>
+
+              <div className="sidebar-filter-section">
+                <p className="sidebar-filter-section-label">Archived</p>
+                <div className="sidebar-filter-option-group">
+                  {ARCHIVED_FILTER_OPTIONS.map(option => (
+                    <button
+                      aria-label={`Archived: ${option.label}`}
+                      className={`sidebar-filter-option-button ${
+                        sidebarFilters.archived === option.value ? "is-selected" : ""
+                      }`}
+                      key={option.value}
+                      onClick={() => handleArchivedFilterChange(option.value)}
+                      type="button"
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="sidebar-filter-section">
+                <p className="sidebar-filter-section-label">Provider</p>
+                <div className="sidebar-filter-option-group">
+                  {PROVIDER_FILTER_OPTIONS.map(option => (
+                    <button
+                      aria-label={`Provider: ${option.label}`}
+                      className={`sidebar-filter-option-button ${
+                        sidebarFilters.provider === option.value ? "is-selected" : ""
+                      }`}
+                      key={option.value}
+                      onClick={() => handleProviderFilterChange(option.value)}
+                      type="button"
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="sidebar-filter-section">
+                <p className="sidebar-filter-section-label">Project</p>
+                {projectOptions.length === 0 ? (
+                  <p className="sidebar-filter-empty">No projects available.</p>
+                ) : (
+                  <div className="sidebar-filter-project-list">
+                    {projectOptions.map(option => (
+                      <label
+                        className="sidebar-filter-project-option"
+                        key={option.path}
+                        title={option.path}
+                      >
+                        <input
+                          checked={sidebarFilters.projectPaths.includes(option.path)}
+                          onChange={() => handleProjectFilterToggle(option.path)}
+                          type="checkbox"
+                        />
+                        <span className="sidebar-filter-project-copy">
+                          <span className="sidebar-filter-project-name">{option.label}</span>
+                          <span className="sidebar-filter-project-path">{option.path}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="sidebar-filter-section">
+                <p className="sidebar-filter-section-label">Date</p>
+                <div className="sidebar-filter-option-group">
+                  {DATE_FILTER_OPTIONS.map(option => (
+                    <button
+                      aria-label={`Date: ${option.label}`}
+                      className={`sidebar-filter-option-button ${
+                        sidebarFilters.dateRange === option.value ? "is-selected" : ""
+                      }`}
+                      key={option.value}
+                      onClick={() => handleDateFilterChange(option.value)}
+                      type="button"
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : null}
 
           {!isSidebarCollapsed ? (
             <div className="session-list" role="list">
@@ -880,8 +1289,13 @@ export default function App() {
                     title="No sessions found"
                     detail="No conversation entries were available from Codex or Claude."
                   />
+                ) : filteredSessions.length === 0 ? (
+                  <EmptyState
+                    title="No matching sessions"
+                    detail="No sessions match the current filters."
+                  />
                 ) : (
-                sessions.map(session => (
+                filteredSessions.map(session => (
                   <button
                     key={`${session.id}:${session.updatedAt}:${session.threadName}`}
                     className={`session-row ${

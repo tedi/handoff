@@ -105,7 +105,7 @@ describe("Handoff App", () => {
           id: "codex:session-1",
           sourceSessionId: "session-1",
           provider: "codex",
-          archived: true,
+          archived: false,
           threadName: "Codex older session",
           updatedAt: "2026-03-14T01:00:00.000Z",
           projectPath: null,
@@ -117,7 +117,7 @@ describe("Handoff App", () => {
           id: "codex:session-1",
           sourceSessionId: "session-1",
           provider: "codex",
-          archived: true,
+          archived: false,
           threadName: "Codex older session",
           updatedAt: "2026-03-14T01:00:00.000Z",
           projectPath: "/tmp/codex-project",
@@ -228,7 +228,6 @@ describe("Handoff App", () => {
     await screen.findByRole("button", { name: /Claude newest session/i })
     expect(await screen.findByText("Newest answer")).toBeInTheDocument()
     expect(screen.getAllByTitle("Claude").length).toBeGreaterThan(0)
-    expect(screen.getAllByTitle("Archived").length).toBe(1)
     expect(screen.getByText("Thought chain (2)")).toBeInTheDocument()
     expect(screen.getByText("2 files changed")).toBeInTheDocument()
     expect(screen.getByText("Hello").closest(".user-bubble")).not.toBeNull()
@@ -269,7 +268,6 @@ describe("Handoff App", () => {
     await waitFor(() => {
       expect(screen.getByText("Older answer")).toBeInTheDocument()
     })
-    expect(screen.getAllByTitle("Archived").length).toBe(2)
 
     await userEvent.click(screen.getByRole("button", { name: /Open in Codex/i }))
 
@@ -402,6 +400,174 @@ describe("Handoff App", () => {
     expect(await screen.findByText("Session file missing")).toBeInTheDocument()
   })
 
+  it("applies sidebar filters with the documented defaults", async () => {
+    const now = Date.now()
+    const recentClaudeUpdatedAt = new Date(now - 24 * 60 * 60 * 1000).toISOString()
+    const recentCodexUpdatedAt = new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString()
+    const archivedCodexUpdatedAt = new Date(now - 3 * 24 * 60 * 60 * 1000).toISOString()
+    const oldClaudeUpdatedAt = new Date(now - 45 * 24 * 60 * 60 * 1000).toISOString()
+
+    const { api } = createMockApi({
+      sessions: [
+        {
+          id: "claude:handoff",
+          sourceSessionId: "handoff",
+          provider: "claude",
+          archived: false,
+          threadName: "Handoff recent",
+          updatedAt: recentClaudeUpdatedAt,
+          projectPath: "/Users/tedikonda/ai/handoff",
+          sessionPath: "/tmp/handoff.jsonl"
+        },
+        {
+          id: "codex:client",
+          sourceSessionId: "client",
+          provider: "codex",
+          archived: false,
+          threadName: "Client recent",
+          updatedAt: recentCodexUpdatedAt,
+          projectPath: "/Users/tedikonda/topchallenger/apps/client",
+          sessionPath: "/tmp/client.jsonl"
+        },
+        {
+          id: "codex:archived",
+          sourceSessionId: "archived",
+          provider: "codex",
+          archived: true,
+          threadName: "Archived recent",
+          updatedAt: archivedCodexUpdatedAt,
+          projectPath: "/Users/tedikonda/topchallenger/apps",
+          sessionPath: "/tmp/archived.jsonl"
+        },
+        {
+          id: "claude:old",
+          sourceSessionId: "old",
+          provider: "claude",
+          archived: false,
+          threadName: "Old research",
+          updatedAt: oldClaudeUpdatedAt,
+          projectPath: "/Users/tedikonda/research",
+          sessionPath: "/tmp/research.jsonl"
+        }
+      ],
+      transcriptById: {
+        "claude:handoff": {
+          id: "claude:handoff",
+          sourceSessionId: "handoff",
+          provider: "claude",
+          archived: false,
+          threadName: "Handoff recent",
+          updatedAt: recentClaudeUpdatedAt,
+          projectPath: "/Users/tedikonda/ai/handoff",
+          sessionPath: "/tmp/handoff.jsonl",
+          sessionClient: "cli",
+          sessionCwd: "/Users/tedikonda/ai/handoff",
+          entries: [
+            {
+              id: "handoff-user",
+              kind: "message",
+              role: "user",
+              timestamp: recentClaudeUpdatedAt,
+              bodyMarkdown: "Hello"
+            },
+            {
+              id: "handoff-assistant",
+              kind: "message",
+              role: "assistant",
+              timestamp: recentClaudeUpdatedAt,
+              bodyMarkdown: "Answer",
+              patches: []
+            }
+          ],
+          markdown: "# Transcript\n\n## User\nHello\n\n## Assistant\nAnswer\n",
+          lastAssistantMarkdown: "Answer",
+          hasDiffs: false
+        },
+        "codex:client": {
+          id: "codex:client",
+          sourceSessionId: "client",
+          provider: "codex",
+          archived: false,
+          threadName: "Client recent",
+          updatedAt: recentCodexUpdatedAt,
+          projectPath: "/Users/tedikonda/topchallenger/apps/client",
+          sessionPath: "/tmp/client.jsonl",
+          sessionClient: "desktop",
+          sessionCwd: "/Users/tedikonda/topchallenger/apps/client",
+          entries: [],
+          markdown: "",
+          lastAssistantMarkdown: null,
+          hasDiffs: false
+        },
+        "codex:archived": {
+          id: "codex:archived",
+          sourceSessionId: "archived",
+          provider: "codex",
+          archived: true,
+          threadName: "Archived recent",
+          updatedAt: archivedCodexUpdatedAt,
+          projectPath: "/Users/tedikonda/topchallenger/apps",
+          sessionPath: "/tmp/archived.jsonl",
+          sessionClient: "desktop",
+          sessionCwd: "/Users/tedikonda/topchallenger/apps",
+          entries: [],
+          markdown: "",
+          lastAssistantMarkdown: null,
+          hasDiffs: false
+        },
+        "claude:old": {
+          id: "claude:old",
+          sourceSessionId: "old",
+          provider: "claude",
+          archived: false,
+          threadName: "Old research",
+          updatedAt: oldClaudeUpdatedAt,
+          projectPath: "/Users/tedikonda/research",
+          sessionPath: "/tmp/research.jsonl",
+          sessionClient: "cli",
+          sessionCwd: "/Users/tedikonda/research",
+          entries: [],
+          markdown: "",
+          lastAssistantMarkdown: null,
+          hasDiffs: false
+        }
+      }
+    })
+
+    window.handoffApp = api
+    render(<App />)
+
+    expect(await screen.findByRole("button", { name: /Handoff recent/i })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /Client recent/i })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /Archived recent/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /Old research/i })).not.toBeInTheDocument()
+
+    const filterButton = screen.getByRole("button", { name: /Open filters/i })
+    expect(filterButton).toHaveAttribute("aria-pressed", "false")
+
+    await userEvent.click(filterButton)
+
+    expect(await screen.findByRole("dialog", { name: /Session filters/i })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole("button", { name: "Archived: All" }))
+    expect(await screen.findByRole("button", { name: /Archived recent/i })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole("button", { name: "Provider: Claude" }))
+    expect(screen.queryByRole("button", { name: /Client recent/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /Archived recent/i })).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole("button", { name: "Date: All dates" }))
+    expect(await screen.findByRole("button", { name: /Old research/i })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByLabelText(/handoff/i))
+    expect(screen.getByRole("button", { name: /Handoff recent/i })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /Old research/i })).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /Close filters/i })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    )
+  })
+
   it("collapses and expands the sidebar session list", async () => {
     const { api } = createMockApi({
       sessions: [
@@ -459,6 +625,8 @@ describe("Handoff App", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /Collapse sidebar/i }))
     expect(screen.queryByRole("button", { name: /Sidebar session/i })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole("button", { name: /Open filters/i }))
+    expect(await screen.findByRole("dialog", { name: /Session filters/i })).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole("button", { name: /Expand sidebar/i }))
     expect(await screen.findByRole("button", { name: /Sidebar session/i })).toBeInTheDocument()
