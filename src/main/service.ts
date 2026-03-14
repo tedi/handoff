@@ -61,6 +61,7 @@ interface ClaudeSessionFileMetadata {
   updatedAt: string | null
   projectPath: string | null
   isSidechain: boolean
+  shouldIgnore: boolean
 }
 
 function createSessionKey(provider: SessionProvider, sessionId: string) {
@@ -227,6 +228,25 @@ function extractClaudeTextFromMessage(message: Record<string, unknown>) {
   return parts.join("\n\n").trim()
 }
 
+function hasClaudeImageContent(message: Record<string, unknown>) {
+  const content = message.content
+  return Array.isArray(content)
+    ? content.some(item => isRecord(item) && item.type === "image")
+    : false
+}
+
+function isClaudeMistakeUserMessage(text: string) {
+  const lines = text
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+
+  return (
+    lines.length > 0 &&
+    lines.every(line => line.startsWith("Unknown skill:"))
+  )
+}
+
 async function readClaudeSessionFileMetadata(
   sessionPath: string
 ): Promise<ClaudeSessionFileMetadata> {
@@ -239,7 +259,8 @@ async function readClaudeSessionFileMetadata(
       firstUserText: null,
       updatedAt: null,
       projectPath: null,
-      isSidechain: false
+      isSidechain: false,
+      shouldIgnore: false
     }
   }
 
@@ -248,6 +269,10 @@ async function readClaudeSessionFileMetadata(
   let updatedAt: string | null = null
   let projectPath: string | null = null
   let isSidechain = false
+  let hasVisibleAssistantFinal = false
+  let hasMeaningfulUserInput = false
+  let hasUserImageContent = false
+  let hasVisibleUserText = false
 
   for (const rawLine of content.split(/\r?\n/)) {
     const line = rawLine.trim()
@@ -284,26 +309,54 @@ async function readClaudeSessionFileMetadata(
       isSidechain = true
     }
 
+    if (record.type === "assistant" && isRecord(record.message)) {
+      const stopReason =
+        typeof record.message.stop_reason === "string"
+          ? record.message.stop_reason
+          : null
+      const assistantText = extractClaudeTextFromMessage(record.message)
+
+      if (stopReason === "end_turn" && assistantText) {
+        hasVisibleAssistantFinal = true
+      }
+    }
+
     if (
-      !firstUserText &&
       record.type === "user" &&
       record.isMeta !== true &&
       !isRecord(record.toolUseResult) &&
       isRecord(record.message)
     ) {
+      if (hasClaudeImageContent(record.message)) {
+        hasUserImageContent = true
+      }
+
       const text = extractClaudeTextFromMessage(record.message)
       if (text) {
-        firstUserText = text
+        hasVisibleUserText = true
+        if (!firstUserText) {
+          firstUserText = text
+        }
+        if (!isClaudeMistakeUserMessage(text)) {
+          hasMeaningfulUserInput = true
+        }
       }
     }
   }
+
+  const shouldIgnore =
+    !hasVisibleAssistantFinal &&
+    !hasMeaningfulUserInput &&
+    !hasUserImageContent &&
+    (hasVisibleUserText || !firstUserText)
 
   return {
     sourceSessionId,
     firstUserText,
     updatedAt,
     projectPath,
-    isSidechain
+    isSidechain,
+    shouldIgnore
   }
 }
 
@@ -373,16 +426,21 @@ async function loadClaudeIndexEntries(projectDir: string, indexPath: string) {
         : path.join(projectDir, `${sourceSessionId}.jsonl`)
 
     const sessionPathExists = await fileExists(preferredPath)
-    const fileMetadata =
+    const shouldInspectFileMetadata =
       !sessionPathExists ||
-      (typeof rawEntry.summary !== "string" &&
-        (typeof rawEntry.firstPrompt !== "string" || rawEntry.firstPrompt === "No prompt")) ||
       typeof rawEntry.modified !== "string" ||
-      typeof rawEntry.projectPath !== "string"
+      typeof rawEntry.projectPath !== "string" ||
+      typeof rawEntry.summary !== "string" ||
+      rawEntry.summary.trim() === "" ||
+      typeof rawEntry.firstPrompt !== "string" ||
+      rawEntry.firstPrompt === "No prompt" ||
+      isClaudeMistakeUserMessage(rawEntry.firstPrompt)
+    const fileMetadata =
+      shouldInspectFileMetadata
         ? await readClaudeSessionFileMetadata(preferredPath)
         : null
 
-    if (fileMetadata?.isSidechain) {
+    if (fileMetadata?.isSidechain || fileMetadata?.shouldIgnore) {
       continue
     }
 
@@ -430,7 +488,7 @@ async function loadClaudeFallbackEntries(projectDir: string) {
 
     const sessionPath = path.join(projectDir, entry.name)
     const metadata = await readClaudeSessionFileMetadata(sessionPath)
-    if (metadata.isSidechain) {
+    if (metadata.isSidechain || metadata.shouldIgnore) {
       continue
     }
 

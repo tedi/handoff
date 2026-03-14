@@ -90,7 +90,8 @@ pre {
 .topbar-left {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
+  flex: 1;
   min-width: 0;
   overflow: hidden;
 }
@@ -103,16 +104,18 @@ pre {
   text-overflow: ellipsis;
 }
 
-.topbar-separator {
-  color: var(--soft);
-  font-size: 0.72rem;
-  flex-shrink: 0;
-}
-
 .topbar-updated {
   color: var(--muted);
   font-size: 0.72rem;
   white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.topbar-session-meta {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   flex-shrink: 0;
 }
 
@@ -127,33 +130,28 @@ pre {
   flex-shrink: 0;
 }
 
-.source-badge {
+.provider-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  font-size: 0.58rem;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
+  width: 14px;
+  height: 14px;
   white-space: nowrap;
   flex-shrink: 0;
 }
 
-.source-badge-icon,
-.source-badge-fallback {
-  width: 12px;
-  height: 12px;
+.provider-icon-image,
+.provider-icon-fallback {
+  width: 14px;
+  height: 14px;
   flex-shrink: 0;
 }
 
-.source-badge-icon {
+.provider-icon-image {
   border-radius: 3px;
 }
 
-.source-badge-fallback {
+.provider-icon-fallback {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -164,18 +162,12 @@ pre {
   font-weight: 700;
 }
 
-.source-badge-label {
-  display: inline-block;
-}
-
-.source-badge-codex {
+.provider-icon-codex {
   color: #91b4ff;
-  background: rgba(110, 147, 255, 0.14);
 }
 
-.source-badge-claude {
+.provider-icon-claude {
   color: #ffbf83;
-  background: rgba(255, 168, 84, 0.14);
 }
 
 .toolbar {
@@ -289,19 +281,7 @@ pre {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  align-items: baseline;
-}
-
-.session-title-group {
-  min-width: 0;
-  display: flex;
   align-items: center;
-  gap: 8px;
-  overflow: hidden;
-}
-
-.session-title-group .source-badge {
-  flex-shrink: 0;
 }
 
 .session-title {
@@ -312,6 +292,13 @@ pre {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.session-row-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
 }
 
 .session-time {

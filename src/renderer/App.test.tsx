@@ -27,7 +27,8 @@ function createMockApi({
     sessionsRoot: "/Users/tedikonda/.codex/sessions",
     claudeProjectsRoot: "/Users/tedikonda/.claude/projects",
     outputDir: "/Users/tedikonda/ai/handoff/output",
-    codexIconDataUrl: "data:image/png;base64,ZmFrZQ=="
+    codexIconDataUrl: "data:image/png;base64,ZmFrZQ==",
+    claudeIconDataUrl: "data:image/png;base64,Y2xhdWRl"
   }
   const listeners = new Set<(event: HandoffStateChangeEvent) => void>()
 
@@ -221,7 +222,7 @@ describe("Handoff App", () => {
 
     await screen.findByRole("button", { name: /Claude newest session/i })
     expect(await screen.findByText("Newest answer")).toBeInTheDocument()
-    expect(screen.getAllByText("Claude").length).toBeGreaterThan(0)
+    expect(screen.getAllByTitle("Claude").length).toBeGreaterThan(0)
     expect(screen.getByText("Thought chain (2)")).toBeInTheDocument()
     expect(screen.getByText("2 files changed")).toBeInTheDocument()
     expect(screen.getByText("Hello").closest(".user-bubble")).not.toBeNull()

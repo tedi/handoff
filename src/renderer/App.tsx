@@ -109,7 +109,7 @@ function getProviderIconDataUrl(
     : stateInfo.codexIconDataUrl ?? null
 }
 
-function ProviderMark({
+function ProviderIcon({
   provider,
   stateInfo
 }: {
@@ -121,22 +121,21 @@ function ProviderMark({
 
   return (
     <span
-      className={`source-badge source-badge-${provider}`}
+      className={`provider-icon provider-icon-${provider}`}
       title={label}
     >
       {iconDataUrl ? (
         <img
           alt=""
           aria-hidden="true"
-          className="source-badge-icon"
+          className="provider-icon-image"
           src={iconDataUrl}
         />
       ) : (
-        <span aria-hidden="true" className="source-badge-fallback">
+        <span aria-hidden="true" className="provider-icon-fallback">
           {provider === "claude" ? "Cl" : "Co"}
         </span>
       )}
-      <span className="source-badge-label">{label}</span>
     </span>
   )
 }
@@ -697,14 +696,15 @@ export default function App() {
           {activeSession ? (
             <>
               <span className="topbar-thread">{activeSession.threadName}</span>
-              <ProviderMark provider={activeSession.provider} stateInfo={stateInfo} />
-              <span className="topbar-separator">&middot;</span>
-              <span className="topbar-updated">
-                {formatTimestamp(activeSession.updatedAt)}
-              </span>
-              {activeTranscript?.hasDiffs ? (
-                <span className="topbar-badge">Diffs</span>
-              ) : null}
+              <div className="topbar-session-meta">
+                <ProviderIcon provider={activeSession.provider} stateInfo={stateInfo} />
+                <span className="topbar-updated">
+                  {formatTimestamp(activeSession.updatedAt)}
+                </span>
+                {activeTranscript?.hasDiffs ? (
+                  <span className="topbar-badge">Diffs</span>
+                ) : null}
+              </div>
             </>
           ) : (
             <span className="topbar-thread">Handoff</span>
@@ -758,14 +758,14 @@ export default function App() {
                   type="button"
                   >
                     <div className="session-row-main">
-                    <div className="session-title-group">
                       <span className="session-title">{session.threadName}</span>
-                      <ProviderMark provider={session.provider} stateInfo={stateInfo} />
+                      <div className="session-row-meta">
+                        <ProviderIcon provider={session.provider} stateInfo={stateInfo} />
+                        <span className="session-time">
+                          {formatRelativeTimestamp(session.updatedAt)}
+                        </span>
+                      </div>
                     </div>
-                    <span className="session-time">
-                      {formatRelativeTimestamp(session.updatedAt)}
-                    </span>
-                  </div>
                   {!session.sessionPath ? (
                     <span className="session-subtitle">Missing session file</span>
                   ) : null}

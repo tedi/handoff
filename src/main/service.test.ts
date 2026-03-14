@@ -170,6 +170,10 @@ async function createTestEnvironment(): Promise<TestEnvironment> {
     claudeFallbackProjectDir,
     `${claudeFallbackId}.jsonl`
   )
+  const claudeMistakeSessionPath = path.join(
+    claudeFallbackProjectDir,
+    "mistake-session.jsonl"
+  )
   const claudeIndexPath = path.join(claudeIndexedProjectDir, "sessions-index.json")
 
   await fs.mkdir(appDir, { recursive: true })
@@ -266,6 +270,43 @@ async function createTestEnvironment(): Promise<TestEnvironment> {
     })
   )
   await fs.writeFile(
+    claudeMistakeSessionPath,
+    [
+      JSON.stringify({
+        type: "user",
+        timestamp: "2026-03-14T00:22:00.000Z",
+        cwd: "/Users/tedikonda/ai/handoff",
+        sessionId: "mistake-session",
+        isSidechain: false,
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "<command-name>/plugin</command-name>\n<command-message>plugin</command-message>"
+            }
+          ]
+        }
+      }),
+      JSON.stringify({
+        type: "user",
+        timestamp: "2026-03-14T00:22:01.000Z",
+        cwd: "/Users/tedikonda/ai/handoff",
+        sessionId: "mistake-session",
+        isSidechain: false,
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "Unknown skill: react-native-ease-refactor"
+            }
+          ]
+        }
+      })
+    ].join("\n")
+  )
+  await fs.writeFile(
     path.join(claudeFallbackProjectDir, "subagents", "ignored.jsonl"),
     buildClaudeSession({
       sessionId: "ignored-subagent",
@@ -346,6 +387,9 @@ describe("handoff service", () => {
       "Missing Codex session",
       "Highlights regression"
     ])
+    expect(
+      sessions.some(session => session.id === "claude:mistake-session")
+    ).toBe(false)
     expect(sessions[0]).toMatchObject({
       provider: "claude",
       projectPath: "/Users/tedikonda/topchallenger/apps",
