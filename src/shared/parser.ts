@@ -1,6 +1,6 @@
 import type {
-  AssistantCommentaryEntry,
   AssistantMessageEntry,
+  AssistantThoughtChainEntry,
   ConversationEntry,
   ConversationPatch,
   ConversationTranscript,
@@ -81,15 +81,6 @@ function extractPatchFiles(patch: string) {
   return Array.from(patch.matchAll(PATCH_FILE_PATTERN), match => match[1] ?? "")
 }
 
-function extractPreviewText(text: string) {
-  const preview = text.replace(/\s+/g, " ").trim()
-  if (preview.length <= 96) {
-    return preview
-  }
-
-  return `${preview.slice(0, 93).trimEnd()}…`
-}
-
 function findLastIndex<T>(values: T[], predicate: (value: T) => boolean) {
   for (let index = values.length - 1; index >= 0; index -= 1) {
     if (predicate(values[index]!)) {
@@ -148,11 +139,17 @@ function renderMarkdown(
   const parts: string[] = ["# Transcript"]
 
   entries.forEach(entry => {
-    if (!includeCommentary && entry.kind === "commentary") {
+    if (!includeCommentary && entry.kind === "thought_chain") {
       return
     }
 
     parts.push(`\n## ${entry.role === "assistant" ? "Assistant" : "User"}`)
+
+    if (entry.kind === "thought_chain") {
+      parts.push(entry.messages.map(message => message.bodyMarkdown).join("\n\n"))
+      return
+    }
+
     parts.push(entry.bodyMarkdown)
 
     if (!includeDiffs || entry.kind !== "message" || entry.role !== "assistant") {
@@ -282,29 +279,52 @@ export function buildConversationTranscript(params: {
   }
 
   const attachments = attachPatchesToMessages(messages, patches)
-  const entries: ConversationEntry[] = messages.map((message, index) => {
+  const entries: ConversationEntry[] = []
+
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index]!
+
     if (message.role === "user") {
-      return {
+      entries.push({
         id: message.id,
         kind: "message",
         role: "user",
         timestamp: message.timestamp,
         bodyMarkdown: message.text
-      }
+      })
+      continue
     }
 
     if (message.phase === "commentary") {
-      const commentaryEntry: AssistantCommentaryEntry = {
-        id: message.id,
-        kind: "commentary",
-        role: "assistant",
-        timestamp: message.timestamp,
-        bodyMarkdown: message.text,
-        collapsedByDefault: true,
-        previewText: extractPreviewText(message.text)
+      const thoughtMessages = []
+      let nextIndex = index
+
+      while (
+        nextIndex < messages.length &&
+        messages[nextIndex]?.role === "assistant" &&
+        messages[nextIndex]?.phase === "commentary"
+      ) {
+        const currentMessage = messages[nextIndex]!
+        thoughtMessages.push({
+          id: currentMessage.id,
+          bodyMarkdown: currentMessage.text
+        })
+        nextIndex += 1
       }
 
-      return commentaryEntry
+      const thoughtChainEntry: AssistantThoughtChainEntry = {
+        id: `thought-chain-${message.id}`,
+        kind: "thought_chain",
+        role: "assistant",
+        timestamp: message.timestamp,
+        collapsedByDefault: true,
+        messageCount: thoughtMessages.length,
+        messages: thoughtMessages
+      }
+
+      entries.push(thoughtChainEntry)
+      index = nextIndex - 1
+      continue
     }
 
     const patchEntries: ConversationPatch[] = (attachments.get(index) ?? []).map(
@@ -324,8 +344,8 @@ export function buildConversationTranscript(params: {
       patches: patchEntries
     }
 
-    return assistantEntry
-  })
+    entries.push(assistantEntry)
+  }
 
   return {
     id: session.id,

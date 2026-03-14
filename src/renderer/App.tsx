@@ -4,8 +4,8 @@ import remarkGfm from "remark-gfm"
 
 import type {
   AppStateInfo,
-  AssistantCommentaryEntry,
   AssistantMessageEntry,
+  AssistantThoughtChainEntry,
   ConversationPatch,
   ConversationTranscript,
   HandoffApi,
@@ -20,6 +20,30 @@ function formatTimestamp(value: string) {
     day: "numeric",
     hour: "numeric",
     minute: "2-digit"
+  }).format(new Date(value))
+}
+
+function formatRelativeTimestamp(value: string) {
+  const diffMs = Date.now() - new Date(value).getTime()
+  const diffMinutes = Math.max(Math.floor(diffMs / 60000), 0)
+
+  if (diffMinutes < 60) {
+    return `${Math.max(diffMinutes, 1)}m`
+  }
+
+  const diffHours = Math.floor(diffMinutes / 60)
+  if (diffHours < 24) {
+    return `${diffHours}h`
+  }
+
+  const diffDays = Math.floor(diffHours / 24)
+  if (diffDays < 7) {
+    return `${diffDays}d`
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric"
   }).format(new Date(value))
 }
 
@@ -118,33 +142,40 @@ function PatchList({ patches }: { patches: ConversationPatch[] }) {
   )
 }
 
-function CommentaryStep({
+function ThoughtChain({
   entry,
   expanded,
   onToggle
 }: {
-  entry: AssistantCommentaryEntry
+  entry: AssistantThoughtChainEntry
   expanded: boolean
   onToggle: () => void
 }) {
   return (
-    <div className="conversation-entry commentary-entry">
+    <div className="conversation-entry thought-chain-entry">
       <button
         aria-expanded={expanded}
-        className="commentary-toggle"
+        className="thought-chain-toggle"
         onClick={onToggle}
         type="button"
       >
-        <span className={`commentary-chevron ${expanded ? "is-open" : ""}`}>›</span>
-        <span className="commentary-preview">{entry.previewText}</span>
-        <span className="commentary-time">{formatTimestamp(entry.timestamp)}</span>
+        <span className={`thought-chain-chevron ${expanded ? "is-open" : ""}`}>›</span>
+        <span className="thought-chain-title">
+          {`Thought chain (${entry.messageCount})`}
+        </span>
+        <span className="thought-chain-time">{formatTimestamp(entry.timestamp)}</span>
       </button>
 
       {expanded ? (
-        <MarkdownBlock
-          className="message-markdown commentary-markdown"
-          markdown={entry.bodyMarkdown}
-        />
+        <div className="thought-chain-body">
+          {entry.messages.map(message => (
+            <MarkdownBlock
+              className="message-markdown thought-chain-markdown"
+              key={message.id}
+              markdown={message.bodyMarkdown}
+            />
+          ))}
+        </div>
       ) : null}
     </div>
   )
@@ -178,7 +209,7 @@ export default function App() {
   const [conversationError, setConversationError] = useState<string | null>(null)
   const [copyStatus, setCopyStatus] = useState<string | null>(null)
   const [lastEvent, setLastEvent] = useState<HandoffStateChangeEvent | null>(null)
-  const [expandedCommentaryIds, setExpandedCommentaryIds] = useState<Set<string>>(
+  const [expandedThoughtChainIds, setExpandedThoughtChainIds] = useState<Set<string>>(
     () => new Set()
   )
 
@@ -313,8 +344,8 @@ export default function App() {
     await copyMarkdown(activeTranscript.lastAssistantMarkdown, "Copied last message")
   }, [activeTranscript, copyMarkdown])
 
-  const toggleCommentaryEntry = useCallback((entryId: string) => {
-    setExpandedCommentaryIds(current => {
+  const toggleThoughtChainEntry = useCallback((entryId: string) => {
+    setExpandedThoughtChainIds(current => {
       const next = new Set(current)
       if (next.has(entryId)) {
         next.delete(entryId)
@@ -361,7 +392,7 @@ export default function App() {
   }, [activeSession, loadConversation])
 
   useEffect(() => {
-    setExpandedCommentaryIds(new Set())
+    setExpandedThoughtChainIds(new Set())
   }, [activeTranscript?.id, activeTranscript?.updatedAt])
 
   useEffect(() => {
@@ -473,12 +504,12 @@ export default function App() {
                   <div className="session-row-main">
                     <span className="session-title">{session.threadName}</span>
                     <span className="session-time">
-                      {formatTimestamp(session.updatedAt)}
+                      {formatRelativeTimestamp(session.updatedAt)}
                     </span>
                   </div>
-                  <span className="session-subtitle">
-                    {session.sessionPath ? session.id : "Missing session file"}
-                  </span>
+                  {!session.sessionPath ? (
+                    <span className="session-subtitle">Missing session file</span>
+                  ) : null}
                 </button>
               ))
             )}
@@ -529,13 +560,13 @@ export default function App() {
             ) : activeTranscript ? (
               <div className="conversation-list">
                 {activeTranscript.entries.map(entry => {
-                  if (entry.kind === "commentary") {
+                  if (entry.kind === "thought_chain") {
                     return (
-                      <CommentaryStep
+                      <ThoughtChain
                         entry={entry}
-                        expanded={expandedCommentaryIds.has(entry.id)}
+                        expanded={expandedThoughtChainIds.has(entry.id)}
                         key={entry.id}
-                        onToggle={() => toggleCommentaryEntry(entry.id)}
+                        onToggle={() => toggleThoughtChainEntry(entry.id)}
                       />
                     )
                   }

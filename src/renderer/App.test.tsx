@@ -140,12 +140,21 @@ describe("Handoff App", () => {
             },
             {
               id: "session-2-commentary",
-              kind: "commentary",
+              kind: "thought_chain",
               role: "assistant",
               timestamp: "2026-03-14T02:00:02.000Z",
-              bodyMarkdown: "Tracing swipe path in highlights.tsx.\n\nChecking gesture ownership.",
               collapsedByDefault: true,
-              previewText: "Tracing swipe path in highlights.tsx."
+              messageCount: 2,
+              messages: [
+                {
+                  id: "session-2-thought-1",
+                  bodyMarkdown: "Tracing swipe path in highlights.tsx."
+                },
+                {
+                  id: "session-2-thought-2",
+                  bodyMarkdown: "Checking gesture ownership."
+                }
+              ]
             },
             {
               id: "session-2-assistant",
@@ -175,7 +184,8 @@ describe("Handoff App", () => {
 
     await screen.findByRole("button", { name: /Newest session/i })
     expect(await screen.findByText("Newest answer")).toBeInTheDocument()
-    expect(screen.getByText("Tracing swipe path in highlights.tsx.")).toBeInTheDocument()
+    expect(screen.getByText("Thought chain (2)")).toBeInTheDocument()
+    expect(screen.queryByText("Tracing swipe path in highlights.tsx.")).not.toBeInTheDocument()
     expect(screen.queryByText("Checking gesture ownership.")).not.toBeInTheDocument()
     expect(screen.getByText("/tmp/demo.ts")).toBeInTheDocument()
     expect(screen.queryByText("Transcript")).not.toBeInTheDocument()
@@ -185,9 +195,10 @@ describe("Handoff App", () => {
     expect(screen.getByText("Newest answer").closest(".assistant-entry")).not.toBeNull()
 
     await userEvent.click(
-      screen.getByRole("button", { name: /Tracing swipe path in highlights\.tsx\./i })
+      screen.getByRole("button", { name: /Thought chain \(2\)/i })
     )
 
+    expect(await screen.findByText("Tracing swipe path in highlights.tsx.")).toBeInTheDocument()
     expect(await screen.findByText("Checking gesture ownership.")).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole("button", { name: /Older session/i }))
@@ -223,12 +234,17 @@ describe("Handoff App", () => {
             },
             {
               id: "copy-commentary",
-              kind: "commentary",
+              kind: "thought_chain",
               role: "assistant",
               timestamp: "2026-03-14T01:00:02.000Z",
-              bodyMarkdown: "Tracing",
               collapsedByDefault: true,
-              previewText: "Tracing"
+              messageCount: 1,
+              messages: [
+                {
+                  id: "copy-thought-1",
+                  bodyMarkdown: "Tracing"
+                }
+              ]
             },
             {
               id: "copy-assistant",

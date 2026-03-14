@@ -23,31 +23,40 @@ interface BaseConversationEntry {
   id: string
   role: "user" | "assistant"
   timestamp: string
+}
+
+interface MarkdownConversationEntry extends BaseConversationEntry {
   bodyMarkdown: string
 }
 
-export interface UserConversationEntry extends BaseConversationEntry {
+export interface UserConversationEntry extends MarkdownConversationEntry {
   kind: "message"
   role: "user"
 }
 
-export interface AssistantMessageEntry extends BaseConversationEntry {
+export interface AssistantMessageEntry extends MarkdownConversationEntry {
   kind: "message"
   role: "assistant"
   patches: ConversationPatch[]
 }
 
-export interface AssistantCommentaryEntry extends BaseConversationEntry {
-  kind: "commentary"
+export interface ThoughtChainStep {
+  id: string
+  bodyMarkdown: string
+}
+
+export interface AssistantThoughtChainEntry extends BaseConversationEntry {
+  kind: "thought_chain"
   role: "assistant"
   collapsedByDefault: true
-  previewText: string
+  messageCount: number
+  messages: ThoughtChainStep[]
 }
 
 export type ConversationEntry =
   | UserConversationEntry
   | AssistantMessageEntry
-  | AssistantCommentaryEntry
+  | AssistantThoughtChainEntry
 
 export interface ConversationTranscript {
   id: string
