@@ -6,6 +6,7 @@ import type {
   HandoffApi,
   ProjectLocationTarget,
   SessionClient,
+  SessionProvider,
   HandoffStateChangeEvent,
   TranscriptOptions
 } from "../shared/contracts"
@@ -45,16 +46,18 @@ export function createHandoffBridge(
         >
       },
 
-      openCodexThread(
+      openSourceSession(
+        provider: SessionProvider,
         sessionId: string,
         sessionClient?: SessionClient,
-        sessionCwd?: string | null
+        workingDirectory?: string | null
       ) {
         return ipcRenderer.invoke(
-          IPC_CHANNELS.app.openCodexThread,
+          IPC_CHANNELS.app.openSourceSession,
+          provider,
           sessionId,
           sessionClient,
-          sessionCwd
+          workingDirectory
         ) as Promise<void>
       },
 

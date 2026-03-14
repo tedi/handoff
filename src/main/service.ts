@@ -13,15 +13,23 @@ import type {
   HandoffStateChangeReason,
   SessionIndexEntry,
   SessionListItem,
+  SessionProvider,
   TranscriptOptions
 } from "../shared/contracts"
 
 const SESSION_FILENAME_PATTERN =
   /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i
+const CLAUDE_HIDDEN_USER_PREFIXES = [
+  "<command-name>",
+  "<local-command-stdout>",
+  "<local-command-caveat>",
+  "<system-reminder>"
+]
 
 export interface HandoffServiceOptions {
   appDir?: string
   codexHome?: string
+  claudeHome?: string
 }
 
 export interface HandoffService {
@@ -45,6 +53,38 @@ interface CacheState {
   entries: SessionIndexEntry[]
   byId: Map<string, SessionIndexEntry>
   pathById: Map<string, string>
+}
+
+interface ClaudeSessionFileMetadata {
+  sourceSessionId: string | null
+  firstUserText: string | null
+  updatedAt: string | null
+  projectPath: string | null
+  isSidechain: boolean
+}
+
+function createSessionKey(provider: SessionProvider, sessionId: string) {
+  return `${provider}:${sessionId}`
+}
+
+function fileExists(filePath: string) {
+  return fs
+    .access(filePath)
+    .then(() => true)
+    .catch(() => false)
+}
+
+function truncateTitle(value: string, maxLength = 160) {
+  const trimmed = value.replace(/\s+/g, " ").trim()
+  if (!trimmed) {
+    return ""
+  }
+
+  if (trimmed.length <= maxLength) {
+    return trimmed
+  }
+
+  return `${trimmed.slice(0, maxLength - 1).trimEnd()}…`
 }
 
 function dedupeSessionEntries(entries: SessionIndexEntry[]) {
@@ -100,7 +140,7 @@ async function walkSessionFiles(rootDir: string): Promise<string[]> {
   return result
 }
 
-async function buildSessionPathMap(sessionsRoot: string) {
+async function buildCodexSessionPathMap(sessionsRoot: string) {
   const files = await walkSessionFiles(sessionsRoot)
   const pathById = new Map<string, string>()
 
@@ -111,13 +151,13 @@ async function buildSessionPathMap(sessionsRoot: string) {
       continue
     }
 
-    pathById.set(sessionId, filePath)
+    pathById.set(createSessionKey("codex", sessionId), filePath)
   }
 
   return pathById
 }
 
-function parseIndexLine(line: string, lineNumber: number): SessionIndexEntry {
+function parseCodexIndexLine(line: string, lineNumber: number): SessionIndexEntry {
   let parsed: unknown
   try {
     parsed = JSON.parse(line)
@@ -136,10 +176,308 @@ function parseIndexLine(line: string, lineNumber: number): SessionIndexEntry {
     throw new Error(`Invalid session index record on line ${lineNumber}.`)
   }
 
+  const sourceSessionId = (parsed as { id: string }).id
+
   return {
-    id: (parsed as { id: string }).id,
+    id: createSessionKey("codex", sourceSessionId),
+    sourceSessionId,
+    provider: "codex",
     threadName: (parsed as { thread_name: string }).thread_name,
-    updatedAt: (parsed as { updated_at: string }).updated_at
+    updatedAt: (parsed as { updated_at: string }).updated_at,
+    projectPath: null
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null
+}
+
+function extractClaudeTextFromMessage(message: Record<string, unknown>) {
+  const content = message.content
+
+  if (typeof content === "string") {
+    const trimmed = content.trim()
+    return CLAUDE_HIDDEN_USER_PREFIXES.some(prefix => trimmed.startsWith(prefix))
+      ? ""
+      : trimmed
+  }
+
+  if (!Array.isArray(content)) {
+    return ""
+  }
+
+  const parts: string[] = []
+  for (const item of content) {
+    if (!isRecord(item) || item.type !== "text" || typeof item.text !== "string") {
+      continue
+    }
+
+    const trimmed = item.text.trim()
+    if (!trimmed) {
+      continue
+    }
+
+    if (CLAUDE_HIDDEN_USER_PREFIXES.some(prefix => trimmed.startsWith(prefix))) {
+      continue
+    }
+
+    parts.push(trimmed)
+  }
+
+  return parts.join("\n\n").trim()
+}
+
+async function readClaudeSessionFileMetadata(
+  sessionPath: string
+): Promise<ClaudeSessionFileMetadata> {
+  let content = ""
+  try {
+    content = await fs.readFile(sessionPath, "utf8")
+  } catch {
+    return {
+      sourceSessionId: null,
+      firstUserText: null,
+      updatedAt: null,
+      projectPath: null,
+      isSidechain: false
+    }
+  }
+
+  let sourceSessionId: string | null = null
+  let firstUserText: string | null = null
+  let updatedAt: string | null = null
+  let projectPath: string | null = null
+  let isSidechain = false
+
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim()
+    if (!line) {
+      continue
+    }
+
+    let record: Record<string, unknown>
+    try {
+      record = JSON.parse(line) as Record<string, unknown>
+    } catch {
+      continue
+    }
+
+    if (!sourceSessionId && typeof record.sessionId === "string") {
+      sourceSessionId = record.sessionId
+    }
+
+    if (!updatedAt && typeof record.timestamp === "string") {
+      updatedAt = record.timestamp
+    } else if (
+      typeof record.timestamp === "string" &&
+      updatedAt !== null &&
+      record.timestamp > updatedAt
+    ) {
+      updatedAt = record.timestamp
+    }
+
+    if (!projectPath && typeof record.cwd === "string" && record.cwd.trim()) {
+      projectPath = record.cwd
+    }
+
+    if (record.isSidechain === true) {
+      isSidechain = true
+    }
+
+    if (
+      !firstUserText &&
+      record.type === "user" &&
+      record.isMeta !== true &&
+      !isRecord(record.toolUseResult) &&
+      isRecord(record.message)
+    ) {
+      const text = extractClaudeTextFromMessage(record.message)
+      if (text) {
+        firstUserText = text
+      }
+    }
+  }
+
+  return {
+    sourceSessionId,
+    firstUserText,
+    updatedAt,
+    projectPath,
+    isSidechain
+  }
+}
+
+function resolveClaudeThreadName(params: {
+  summary?: unknown
+  firstPrompt?: unknown
+  fileMetadata?: ClaudeSessionFileMetadata | null
+}) {
+  const summary = typeof params.summary === "string" ? truncateTitle(params.summary) : ""
+  if (summary) {
+    return summary
+  }
+
+  const firstPrompt =
+    typeof params.firstPrompt === "string" ? truncateTitle(params.firstPrompt) : ""
+  if (firstPrompt && firstPrompt !== "No prompt") {
+    return firstPrompt
+  }
+
+  const fallbackPrompt = truncateTitle(params.fileMetadata?.firstUserText ?? "")
+  if (fallbackPrompt) {
+    return fallbackPrompt
+  }
+
+  return "Claude conversation"
+}
+
+async function loadCodexEntries(params: {
+  indexPath: string
+  sessionsRoot: string
+}) {
+  const indexText = await fs.readFile(params.indexPath, "utf8")
+  const rawEntries = indexText
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map((line, index) => parseCodexIndexLine(line, index + 1))
+
+  return {
+    entries: dedupeSessionEntries(rawEntries),
+    pathById: await buildCodexSessionPathMap(params.sessionsRoot)
+  }
+}
+
+async function loadClaudeIndexEntries(projectDir: string, indexPath: string) {
+  const parsed = JSON.parse(await fs.readFile(indexPath, "utf8")) as {
+    entries?: unknown
+  }
+  const indexEntries = Array.isArray(parsed.entries) ? parsed.entries : []
+  const entries: SessionIndexEntry[] = []
+  const pathById = new Map<string, string>()
+
+  for (const rawEntry of indexEntries) {
+    if (!isRecord(rawEntry) || rawEntry.isSidechain === true) {
+      continue
+    }
+
+    const sourceSessionId =
+      typeof rawEntry.sessionId === "string" ? rawEntry.sessionId : null
+    if (!sourceSessionId) {
+      continue
+    }
+
+    const preferredPath =
+      typeof rawEntry.fullPath === "string"
+        ? rawEntry.fullPath
+        : path.join(projectDir, `${sourceSessionId}.jsonl`)
+
+    const sessionPathExists = await fileExists(preferredPath)
+    const fileMetadata =
+      !sessionPathExists ||
+      (typeof rawEntry.summary !== "string" &&
+        (typeof rawEntry.firstPrompt !== "string" || rawEntry.firstPrompt === "No prompt")) ||
+      typeof rawEntry.modified !== "string" ||
+      typeof rawEntry.projectPath !== "string"
+        ? await readClaudeSessionFileMetadata(preferredPath)
+        : null
+
+    if (fileMetadata?.isSidechain) {
+      continue
+    }
+
+    const stat = sessionPathExists ? await fs.stat(preferredPath) : null
+    const updatedAt =
+      typeof rawEntry.modified === "string"
+        ? rawEntry.modified
+        : fileMetadata?.updatedAt ?? stat?.mtime.toISOString() ?? new Date(0).toISOString()
+
+    const sessionId = createSessionKey("claude", sourceSessionId)
+    const sessionPath = sessionPathExists ? preferredPath : null
+    if (sessionPath) {
+      pathById.set(sessionId, sessionPath)
+    }
+
+    entries.push({
+      id: sessionId,
+      sourceSessionId,
+      provider: "claude",
+      threadName: resolveClaudeThreadName({
+        summary: rawEntry.summary,
+        firstPrompt: rawEntry.firstPrompt,
+        fileMetadata
+      }),
+      updatedAt,
+      projectPath:
+        typeof rawEntry.projectPath === "string"
+          ? rawEntry.projectPath
+          : fileMetadata?.projectPath ?? null
+    })
+  }
+
+  return { entries, pathById }
+}
+
+async function loadClaudeFallbackEntries(projectDir: string) {
+  const dirEntries = await fs.readdir(projectDir, { withFileTypes: true })
+  const entries: SessionIndexEntry[] = []
+  const pathById = new Map<string, string>()
+
+  for (const entry of dirEntries) {
+    if (!entry.isFile() || !entry.name.endsWith(".jsonl")) {
+      continue
+    }
+
+    const sessionPath = path.join(projectDir, entry.name)
+    const metadata = await readClaudeSessionFileMetadata(sessionPath)
+    if (metadata.isSidechain) {
+      continue
+    }
+
+    const sourceSessionId =
+      metadata.sourceSessionId ?? entry.name.match(SESSION_FILENAME_PATTERN)?.[1] ?? entry.name.replace(/\.jsonl$/i, "")
+
+    const stat = await fs.stat(sessionPath)
+    const id = createSessionKey("claude", sourceSessionId)
+    pathById.set(id, sessionPath)
+    entries.push({
+      id,
+      sourceSessionId,
+      provider: "claude",
+      threadName: resolveClaudeThreadName({ fileMetadata: metadata }),
+      updatedAt: metadata.updatedAt ?? stat.mtime.toISOString(),
+      projectPath: metadata.projectPath
+    })
+  }
+
+  return { entries, pathById }
+}
+
+async function loadClaudeEntries(claudeProjectsRoot: string) {
+  const rootEntries = await fs.readdir(claudeProjectsRoot, { withFileTypes: true })
+  const entries: SessionIndexEntry[] = []
+  const pathById = new Map<string, string>()
+
+  for (const rootEntry of rootEntries) {
+    if (!rootEntry.isDirectory()) {
+      continue
+    }
+
+    const projectDir = path.join(claudeProjectsRoot, rootEntry.name)
+    const indexPath = path.join(projectDir, "sessions-index.json")
+    const { entries: nextEntries, pathById: nextPathById } = (await fileExists(indexPath))
+      ? await loadClaudeIndexEntries(projectDir, indexPath)
+      : await loadClaudeFallbackEntries(projectDir)
+
+    nextEntries.forEach(entry => entries.push(entry))
+    nextPathById.forEach((value, key) => {
+      pathById.set(key, value)
+    })
+  }
+
+  return {
+    entries: dedupeSessionEntries(entries),
+    pathById
   }
 }
 
@@ -148,13 +486,17 @@ export function createHandoffService(
 ): HandoffService {
   const appDir = options.appDir ?? process.cwd()
   const codexHome = options.codexHome ?? path.join(os.homedir(), ".codex")
+  const claudeHome = options.claudeHome ?? path.join(os.homedir(), ".claude")
   const indexPath = path.join(codexHome, "session_index.jsonl")
   const sessionsRoot = path.join(codexHome, "sessions")
+  const claudeProjectsRoot = path.join(claudeHome, "projects")
   const outputDir = path.join(appDir, "output")
   const events = new EventEmitter()
+  const normalizedIndexPath = indexPath.replaceAll("\\", "/")
+  const normalizedClaudeProjectsRoot = claudeProjectsRoot.replaceAll("\\", "/")
 
   let cache: CacheState | null = null
-  let indexWatcher: ReturnType<typeof chokidar.watch> | null = null
+  let listWatcher: ReturnType<typeof chokidar.watch> | null = null
   let selectedSessionWatcher: ReturnType<typeof chokidar.watch> | null = null
   let selectedSessionPath: string | null = null
   let emitTimer: NodeJS.Timeout | null = null
@@ -167,6 +509,7 @@ export function createHandoffService(
     return {
       indexPath,
       sessionsRoot,
+      claudeProjectsRoot,
       outputDir
     }
   }
@@ -209,16 +552,32 @@ export function createHandoffService(
   }
 
   async function loadCache() {
-    const indexText = await fs.readFile(indexPath, "utf8")
-    const rawEntries = indexText
-      .split(/\r?\n/)
-      .map(line => line.trim())
-      .filter(Boolean)
-      .map((line, index) => parseIndexLine(line, index + 1))
-    const entries = dedupeSessionEntries(rawEntries)
+    const [{ entries: codexEntries, pathById: codexPathById }, { entries: claudeEntries, pathById: claudePathById }] =
+      await Promise.all([
+        loadCodexEntries({ indexPath, sessionsRoot }),
+        loadClaudeEntries(claudeProjectsRoot).catch(error => {
+          if (
+            error &&
+            typeof error === "object" &&
+            "code" in error &&
+            error.code === "ENOENT"
+          ) {
+            return { entries: [] as SessionIndexEntry[], pathById: new Map<string, string>() }
+          }
 
+          throw error
+        })
+      ])
+
+    const entries = dedupeSessionEntries([...codexEntries, ...claudeEntries])
     const byId = new Map(entries.map(entry => [entry.id, entry]))
-    const pathById = await buildSessionPathMap(sessionsRoot)
+    const pathById = new Map<string, string>()
+    codexPathById.forEach((value, key) => {
+      pathById.set(key, value)
+    })
+    claudePathById.forEach((value, key) => {
+      pathById.set(key, value)
+    })
 
     cache = {
       entries,
@@ -309,23 +668,45 @@ export function createHandoffService(
     },
 
     async startWatching() {
-      if (indexWatcher) {
+      if (listWatcher) {
         return
       }
 
       await loadCache()
 
-      indexWatcher = chokidar.watch(indexPath, {
+      listWatcher = chokidar.watch([indexPath, claudeProjectsRoot], {
         ignoreInitial: true,
         awaitWriteFinish: {
           stabilityThreshold: 100,
           pollInterval: 25
+        },
+        ignored: watchedPath => {
+          const normalizedPath = watchedPath.replaceAll("\\", "/")
+
+          if (
+            normalizedPath === normalizedIndexPath ||
+            normalizedPath === normalizedClaudeProjectsRoot
+          ) {
+            return false
+          }
+
+          if (
+            normalizedPath.includes("/subagents/") ||
+            normalizedPath.includes("/tool-results/")
+          ) {
+            return true
+          }
+
+          return (
+            !normalizedPath.endsWith("/sessions-index.json") &&
+            !normalizedPath.endsWith(".jsonl")
+          )
         }
       })
 
-      indexWatcher.on("all", async () => {
+      listWatcher.on("all", async (_eventName, changedPath) => {
         cache = null
-        scheduleStateChanged("index-changed", indexPath)
+        scheduleStateChanged("index-changed", changedPath ?? null)
       })
     },
 
@@ -349,9 +730,9 @@ export function createHandoffService(
         selectedSessionWatcher = null
       }
 
-      if (indexWatcher) {
-        await indexWatcher.close()
-        indexWatcher = null
+      if (listWatcher) {
+        await listWatcher.close()
+        listWatcher = null
       }
     }
   }

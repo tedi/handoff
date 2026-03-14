@@ -2,7 +2,7 @@ export const IPC_CHANNELS = {
   app: {
     getStateInfo: "handoff:get-state-info",
     refresh: "handoff:refresh",
-    openCodexThread: "handoff:open-codex-thread",
+    openSourceSession: "handoff:open-source-session",
     openProjectPath: "handoff:open-project-path"
   },
   sessions: {

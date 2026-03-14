@@ -15,10 +15,11 @@ describe("createHandoffBridge", () => {
     })
 
     await bridge.sessions.list()
-    await bridge.sessions.getTranscript("session-1", {
+    await bridge.sessions.getTranscript("codex:session-1", {
       includeCommentary: false,
       includeDiffs: true
     })
+    await bridge.app.openSourceSession("claude", "session-1", "cli", "/tmp/project")
     await bridge.app.openProjectPath("editor", "/tmp/project")
     await bridge.clipboard.writeText("copied")
 
@@ -26,7 +27,7 @@ describe("createHandoffBridge", () => {
     expect(invoke).toHaveBeenNthCalledWith(
       2,
       IPC_CHANNELS.sessions.getTranscript,
-      "session-1",
+      "codex:session-1",
       {
         includeCommentary: false,
         includeDiffs: true
@@ -34,12 +35,20 @@ describe("createHandoffBridge", () => {
     )
     expect(invoke).toHaveBeenNthCalledWith(
       3,
+      IPC_CHANNELS.app.openSourceSession,
+      "claude",
+      "session-1",
+      "cli",
+      "/tmp/project"
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      4,
       IPC_CHANNELS.app.openProjectPath,
       "editor",
       "/tmp/project"
     )
     expect(invoke).toHaveBeenNthCalledWith(
-      4,
+      5,
       IPC_CHANNELS.clipboard.writeText,
       "copied"
     )

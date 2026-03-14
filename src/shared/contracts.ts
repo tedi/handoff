@@ -1,7 +1,12 @@
+export type SessionProvider = "codex" | "claude"
+
 export interface SessionIndexEntry {
   id: string
+  sourceSessionId: string
+  provider: SessionProvider
   threadName: string
   updatedAt: string
+  projectPath: string | null
 }
 
 export interface SessionListItem extends SessionIndexEntry {
@@ -63,9 +68,12 @@ export type ConversationEntry =
 
 export interface ConversationTranscript {
   id: string
+  sourceSessionId: string
+  provider: SessionProvider
   threadName: string
   updatedAt: string
   sessionPath: string | null
+  projectPath: string | null
   sessionClient?: SessionClient
   sessionCwd?: string | null
   entries: ConversationEntry[]
@@ -77,8 +85,10 @@ export interface ConversationTranscript {
 export interface AppStateInfo {
   indexPath: string
   sessionsRoot: string
+  claudeProjectsRoot: string
   outputDir: string | null
   codexIconDataUrl?: string | null
+  claudeIconDataUrl?: string | null
 }
 
 export type HandoffStateChangeReason =
@@ -100,10 +110,11 @@ export interface HandoffApi {
   app: {
     getStateInfo(): Promise<AppStateInfo>
     refresh(): Promise<HandoffStateChangeEvent>
-    openCodexThread(
+    openSourceSession(
+      provider: SessionProvider,
       sessionId: string,
       sessionClient?: SessionClient,
-      sessionCwd?: string | null
+      workingDirectory?: string | null
     ): Promise<void>
     openProjectPath(
       target: ProjectLocationTarget,

@@ -22,7 +22,8 @@ import type {
   HandoffApi,
   HandoffStateChangeEvent,
   ProjectLocationTarget,
-  SessionListItem
+  SessionListItem,
+  SessionProvider
 } from "../shared/contracts"
 import {
   detectCodeLanguage,
@@ -89,6 +90,55 @@ function formatProjectLocationLabel(target: ProjectLocationTarget) {
   }
 
   return "Editor"
+}
+
+function formatProviderLabel(provider: SessionProvider) {
+  return provider === "claude" ? "Claude" : "Codex"
+}
+
+function getProviderIconDataUrl(
+  provider: SessionProvider,
+  stateInfo: AppStateInfo | null
+) {
+  if (!stateInfo) {
+    return null
+  }
+
+  return provider === "claude"
+    ? stateInfo.claudeIconDataUrl ?? null
+    : stateInfo.codexIconDataUrl ?? null
+}
+
+function ProviderMark({
+  provider,
+  stateInfo
+}: {
+  provider: SessionProvider
+  stateInfo: AppStateInfo | null
+}) {
+  const label = formatProviderLabel(provider)
+  const iconDataUrl = getProviderIconDataUrl(provider, stateInfo)
+
+  return (
+    <span
+      className={`source-badge source-badge-${provider}`}
+      title={label}
+    >
+      {iconDataUrl ? (
+        <img
+          alt=""
+          aria-hidden="true"
+          className="source-badge-icon"
+          src={iconDataUrl}
+        />
+      ) : (
+        <span aria-hidden="true" className="source-badge-fallback">
+          {provider === "claude" ? "Cl" : "Co"}
+        </span>
+      )}
+      <span className="source-badge-label">{label}</span>
+    </span>
+  )
 }
 
 function highlightCodeHtml(content: string, language: string) {
@@ -369,8 +419,13 @@ export default function App() {
   )
   const activeProjectPath =
     activeTranscript && activeTranscript.id === activeSession?.id
-      ? activeTranscript.sessionCwd ?? null
+      ? activeTranscript.projectPath ?? activeTranscript.sessionCwd ?? null
       : null
+  const activeProvider =
+    activeTranscript && activeTranscript.id === activeSession?.id
+      ? activeTranscript.provider
+      : activeSession?.provider ?? null
+  const activeProviderLabel = activeProvider ? formatProviderLabel(activeProvider) : null
 
   const loadSessions = useCallback(
     async (preferredSessionId?: string | null) => {
@@ -498,7 +553,7 @@ export default function App() {
     await copyMarkdown(activeTranscript.lastAssistantMarkdown, "Copied last message")
   }, [activeTranscript, copyMarkdown])
 
-  const handleOpenInCodex = useCallback(async () => {
+  const handleOpenInSource = useCallback(async () => {
     if (!activeSession?.id || activeTranscript?.id !== activeSession.id) {
       return
     }
@@ -510,18 +565,25 @@ export default function App() {
     }
 
     try {
-      await api.app.openCodexThread(
-        activeSession.id,
+      const providerLabel = formatProviderLabel(activeTranscript.provider)
+
+      await api.app.openSourceSession(
+        activeTranscript.provider,
+        activeTranscript.sourceSessionId,
         activeTranscript.sessionClient,
-        activeTranscript.sessionCwd
+        activeTranscript.projectPath ?? activeTranscript.sessionCwd
       )
-      setCopyStatus("Opened in Codex")
+      setCopyStatus(`Opened in ${providerLabel}`)
       window.setTimeout(() => {
-        setCopyStatus(current => (current === "Opened in Codex" ? null : current))
+        setCopyStatus(current =>
+          current === `Opened in ${providerLabel}` ? null : current
+        )
       }, 2400)
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : "Unable to open Codex"
+        error instanceof Error
+          ? error.message
+          : `Unable to open ${formatProviderLabel(activeTranscript.provider)}`
       setCopyStatus(message)
     }
   }, [activeSession, activeTranscript])
@@ -635,6 +697,7 @@ export default function App() {
           {activeSession ? (
             <>
               <span className="topbar-thread">{activeSession.threadName}</span>
+              <ProviderMark provider={activeSession.provider} stateInfo={stateInfo} />
               <span className="topbar-separator">&middot;</span>
               <span className="topbar-updated">
                 {formatTimestamp(activeSession.updatedAt)}
@@ -675,16 +738,16 @@ export default function App() {
         <section className="sidebar-pane">
           <div className="session-list" role="list">
             {isLoadingSessions && sessions.length === 0 ? (
-              <EmptyState
-                title="Loading sessions"
-                detail="Reading the Codex session index and resolving available conversation files."
-              />
-            ) : sessions.length === 0 ? (
-              <EmptyState
-                title="No sessions found"
-                detail="No conversation entries were available from the session index."
-              />
-            ) : (
+                <EmptyState
+                  title="Loading sessions"
+                  detail="Reading Codex and Claude session indexes and resolving available conversation files."
+                />
+              ) : sessions.length === 0 ? (
+                <EmptyState
+                  title="No sessions found"
+                  detail="No conversation entries were available from Codex or Claude."
+                />
+              ) : (
               sessions.map(session => (
                 <button
                   key={`${session.id}:${session.updatedAt}:${session.threadName}`}
@@ -693,9 +756,12 @@ export default function App() {
                   }`}
                   onClick={() => setActiveSessionId(session.id)}
                   type="button"
-                >
-                  <div className="session-row-main">
-                    <span className="session-title">{session.threadName}</span>
+                  >
+                    <div className="session-row-main">
+                    <div className="session-title-group">
+                      <span className="session-title">{session.threadName}</span>
+                      <ProviderMark provider={session.provider} stateInfo={stateInfo} />
+                    </div>
                     <span className="session-time">
                       {formatRelativeTimestamp(session.updatedAt)}
                     </span>
@@ -719,7 +785,7 @@ export default function App() {
             ) : !activeSession.sessionPath ? (
               <EmptyState
                 title="Session file missing"
-                detail="This thread still exists in the index, but no matching session JSONL file could be resolved from `~/.codex/sessions`."
+                detail="This thread still exists in the index, but no matching session file could be resolved from `~/.codex/sessions` or `~/.claude/projects`."
               />
             ) : conversationError ? (
               <EmptyState
@@ -813,22 +879,22 @@ export default function App() {
                 <button
                   className="ghost-button codex-thread-button"
                   disabled={!activeSession?.id || activeTranscript?.id !== activeSession.id}
-                  onClick={() => void handleOpenInCodex()}
+                  onClick={() => void handleOpenInSource()}
                   type="button"
                 >
-                  {stateInfo?.codexIconDataUrl ? (
+                  {activeProvider && getProviderIconDataUrl(activeProvider, stateInfo) ? (
                     <img
                       alt=""
                       aria-hidden="true"
                       className="codex-thread-icon"
-                      src={stateInfo.codexIconDataUrl}
+                      src={getProviderIconDataUrl(activeProvider, stateInfo) ?? undefined}
                     />
                   ) : (
                     <span aria-hidden="true" className="codex-thread-fallback">
-                      C
+                      {activeProvider === "claude" ? "Cl" : "Co"}
                     </span>
                   )}
-                  <span>Open in Codex</span>
+                  <span>{activeProviderLabel ? `Open in ${activeProviderLabel}` : "Open"}</span>
                 </button>
 
                 <div className="copy-actions">

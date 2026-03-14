@@ -7,11 +7,13 @@ import { IPC_CHANNELS } from "../shared/channels"
 import type {
   ProjectLocationTarget,
   SessionClient,
+  SessionProvider,
   TranscriptOptions
 } from "../shared/contracts"
 import type { HandoffService } from "./service"
 
 const CODEX_ICON_PATH = "/Applications/Codex.app/Contents/Resources/electron.icns"
+const CLAUDE_ICON_PATH = "/Applications/Claude.app/Contents/Resources/electron.icns"
 const EDITOR_APP_CANDIDATES = [
   {
     appName: "Cursor",
@@ -32,25 +34,54 @@ const EDITOR_APP_CANDIDATES = [
 const execFileAsync = promisify(execFile)
 
 let cachedCodexIconDataUrl: string | null | undefined
+let cachedClaudeIconDataUrl: string | null | undefined
+
+function getAppIconDataUrl(params: {
+  iconPath: string
+  size?: number
+  cacheValue: string | null | undefined
+  setCacheValue(value: string | null): void
+}) {
+  if (params.cacheValue !== undefined) {
+    return params.cacheValue
+  }
+
+  if (!fs.existsSync(params.iconPath)) {
+    params.setCacheValue(null)
+    return null
+  }
+
+  const icon = nativeImage.createFromPath(params.iconPath)
+  if (icon.isEmpty()) {
+    params.setCacheValue(null)
+    return null
+  }
+
+  const nextValue = icon
+    .resize({ width: params.size ?? 18, height: params.size ?? 18 })
+    .toDataURL()
+  params.setCacheValue(nextValue)
+  return nextValue
+}
 
 function getCodexIconDataUrl() {
-  if (cachedCodexIconDataUrl !== undefined) {
-    return cachedCodexIconDataUrl
-  }
+  return getAppIconDataUrl({
+    iconPath: CODEX_ICON_PATH,
+    cacheValue: cachedCodexIconDataUrl,
+    setCacheValue(value) {
+      cachedCodexIconDataUrl = value
+    }
+  })
+}
 
-  if (!fs.existsSync(CODEX_ICON_PATH)) {
-    cachedCodexIconDataUrl = null
-    return cachedCodexIconDataUrl
-  }
-
-  const icon = nativeImage.createFromPath(CODEX_ICON_PATH)
-  if (icon.isEmpty()) {
-    cachedCodexIconDataUrl = null
-    return cachedCodexIconDataUrl
-  }
-
-  cachedCodexIconDataUrl = icon.resize({ width: 18, height: 18 }).toDataURL()
-  return cachedCodexIconDataUrl
+function getClaudeIconDataUrl() {
+  return getAppIconDataUrl({
+    iconPath: CLAUDE_ICON_PATH,
+    cacheValue: cachedClaudeIconDataUrl,
+    setCacheValue(value) {
+      cachedClaudeIconDataUrl = value
+    }
+  })
 }
 
 function shellEscape(value: string) {
@@ -132,6 +163,23 @@ async function openCodexCliSession(sessionId: string, sessionCwd?: string | null
   await execFileAsync("osascript", ["-e", script])
 }
 
+async function openClaudeCliSession(sessionId: string, workingDirectory?: string | null) {
+  const segments = [
+    workingDirectory ? `cd ${shellEscape(workingDirectory)}` : null,
+    `claude -r ${shellEscape(sessionId)}`
+  ].filter((segment): segment is string => segment !== null)
+
+  const command = segments.join(" && ")
+  const script = [
+    'tell application "Terminal"',
+    "activate",
+    `do script "${appleScriptEscape(command)}"`,
+    "end tell"
+  ].join("\n")
+
+  await execFileAsync("osascript", ["-e", script])
+}
+
 async function openProjectInTerminal(projectPath: string) {
   ensureProjectPathExists(projectPath)
   const command = `cd ${shellEscape(projectPath)}`
@@ -185,19 +233,26 @@ async function openProjectPath(target: ProjectLocationTarget, projectPath: strin
 export function registerIpcHandlers(ipcMain: IpcMain, service: HandoffService) {
   ipcMain.handle(IPC_CHANNELS.app.getStateInfo, async () => ({
     ...(await service.app.getStateInfo()),
-    codexIconDataUrl: getCodexIconDataUrl()
+    codexIconDataUrl: getCodexIconDataUrl(),
+    claudeIconDataUrl: getClaudeIconDataUrl()
   }))
   ipcMain.handle(IPC_CHANNELS.app.refresh, () => service.app.refresh())
   ipcMain.handle(
-    IPC_CHANNELS.app.openCodexThread,
+    IPC_CHANNELS.app.openSourceSession,
     async (
       _event,
+      provider: SessionProvider,
       sessionId: string,
       sessionClient: SessionClient = "desktop",
-      sessionCwd: string | null = null
+      workingDirectory: string | null = null
     ) => {
+      if (provider === "claude") {
+        await openClaudeCliSession(sessionId, workingDirectory)
+        return
+      }
+
       if (sessionClient === "cli") {
-        await openCodexCliSession(sessionId, sessionCwd)
+        await openCodexCliSession(sessionId, workingDirectory)
         return
       }
 
@@ -223,7 +278,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, service: HandoffService) {
   return () => {
     ipcMain.removeHandler(IPC_CHANNELS.app.getStateInfo)
     ipcMain.removeHandler(IPC_CHANNELS.app.refresh)
-    ipcMain.removeHandler(IPC_CHANNELS.app.openCodexThread)
+    ipcMain.removeHandler(IPC_CHANNELS.app.openSourceSession)
     ipcMain.removeHandler(IPC_CHANNELS.app.openProjectPath)
     ipcMain.removeHandler(IPC_CHANNELS.sessions.list)
     ipcMain.removeHandler(IPC_CHANNELS.sessions.getTranscript)

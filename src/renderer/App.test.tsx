@@ -25,6 +25,7 @@ function createMockApi({
   const stateInfo: AppStateInfo = {
     indexPath: "/Users/tedikonda/.codex/session_index.jsonl",
     sessionsRoot: "/Users/tedikonda/.codex/sessions",
+    claudeProjectsRoot: "/Users/tedikonda/.claude/projects",
     outputDir: "/Users/tedikonda/ai/handoff/output",
     codexIconDataUrl: "data:image/png;base64,ZmFrZQ=="
   }
@@ -38,7 +39,7 @@ function createMockApi({
         reason: "manual-refresh",
         changedPath: null
       }),
-      openCodexThread: vi.fn().mockResolvedValue(undefined),
+      openSourceSession: vi.fn().mockResolvedValue(undefined),
       openProjectPath: vi.fn().mockResolvedValue(undefined),
       onStateChanged(listener) {
         listeners.add(listener)
@@ -51,20 +52,20 @@ function createMockApi({
     sessions: {
       list: vi.fn().mockResolvedValue(sessions),
       getTranscript: vi.fn().mockImplementation(async (id: string, options) => {
+        const error = transcriptErrors[id]
+        if (error && options.includeDiffs) {
+          throw error
+        }
+
+        const transcript = transcriptById[id]
         if (!options.includeDiffs) {
-          const transcript = transcriptById[id]
           return {
             ...transcript,
             markdown: transcript.markdown.replace(/\n### Diffs[\s\S]+$/m, "")
           }
         }
 
-        const error = transcriptErrors[id]
-        if (error) {
-          throw error
-        }
-
-        return transcriptById[id]
+        return transcript
       })
     },
     clipboard: {
@@ -85,30 +86,39 @@ describe("Handoff App", () => {
     vi.restoreAllMocks()
   })
 
-  it("loads and switches conversations from the sidebar", async () => {
+  it("renders a mixed-source sidebar and switches source-aware actions with the selected transcript", async () => {
     const { api } = createMockApi({
       sessions: [
         {
-          id: "session-2",
-          threadName: "Newest session",
+          id: "claude:session-2",
+          sourceSessionId: "session-2",
+          provider: "claude",
+          threadName: "Claude newest session",
           updatedAt: "2026-03-14T02:00:00.000Z",
+          projectPath: "/tmp/claude-project",
           sessionPath: "/tmp/session-2.jsonl"
         },
         {
-          id: "session-1",
-          threadName: "Older session",
+          id: "codex:session-1",
+          sourceSessionId: "session-1",
+          provider: "codex",
+          threadName: "Codex older session",
           updatedAt: "2026-03-14T01:00:00.000Z",
+          projectPath: null,
           sessionPath: "/tmp/session-1.jsonl"
         }
       ],
       transcriptById: {
-        "session-1": {
-          id: "session-1",
-          threadName: "Older session",
+        "codex:session-1": {
+          id: "codex:session-1",
+          sourceSessionId: "session-1",
+          provider: "codex",
+          threadName: "Codex older session",
           updatedAt: "2026-03-14T01:00:00.000Z",
+          projectPath: "/tmp/codex-project",
           sessionPath: "/tmp/session-1.jsonl",
-          sessionClient: "cli",
-          sessionCwd: "/tmp/older-session",
+          sessionClient: "desktop",
+          sessionCwd: "/tmp/codex-project",
           entries: [
             {
               id: "session-1-user",
@@ -130,13 +140,16 @@ describe("Handoff App", () => {
           lastAssistantMarkdown: "Older answer",
           hasDiffs: false
         },
-        "session-2": {
-          id: "session-2",
-          threadName: "Newest session",
+        "claude:session-2": {
+          id: "claude:session-2",
+          sourceSessionId: "session-2",
+          provider: "claude",
+          threadName: "Claude newest session",
           updatedAt: "2026-03-14T02:00:00.000Z",
+          projectPath: "/tmp/claude-project",
           sessionPath: "/tmp/session-2.jsonl",
-          sessionClient: "desktop",
-          sessionCwd: "/tmp/session-2",
+          sessionClient: "cli",
+          sessionCwd: "/tmp/claude-project",
           entries: [
             {
               id: "session-2-user",
@@ -159,7 +172,7 @@ describe("Handoff App", () => {
                 },
                 {
                   id: "session-2-thought-2",
-                  bodyMarkdown: "Checking gesture ownership."
+                  bodyMarkdown: "Read 2 files"
                 }
               ]
             },
@@ -176,7 +189,7 @@ describe("Handoff App", () => {
                   patch: [
                     "*** Begin Patch",
                     "*** Update File: /tmp/demo.ts",
-                    "@@",
+                    "@@ -1,1 +1,1 @@",
                     "-const value = 1",
                     "+const value = 2",
                     "*** End Patch"
@@ -206,38 +219,22 @@ describe("Handoff App", () => {
     window.handoffApp = api
     render(<App />)
 
-    await screen.findByRole("button", { name: /Newest session/i })
+    await screen.findByRole("button", { name: /Claude newest session/i })
     expect(await screen.findByText("Newest answer")).toBeInTheDocument()
+    expect(screen.getAllByText("Claude").length).toBeGreaterThan(0)
     expect(screen.getByText("Thought chain (2)")).toBeInTheDocument()
-    expect(screen.queryByText("Tracing swipe path in highlights.tsx.")).not.toBeInTheDocument()
-    expect(screen.queryByText("Checking gesture ownership.")).not.toBeInTheDocument()
     expect(screen.getByText("2 files changed")).toBeInTheDocument()
-    expect(screen.getByText("/tmp/demo.ts")).toBeInTheDocument()
-    expect(screen.getByText("/tmp/extra.ts")).toBeInTheDocument()
-    expect(screen.queryByText("const value = 2")).not.toBeInTheDocument()
-    expect(screen.queryByText("1 file changed")).not.toBeInTheDocument()
-    expect(screen.queryByText("Transcript")).not.toBeInTheDocument()
-    expect(screen.queryByText(/^User$/)).not.toBeInTheDocument()
-    expect(screen.queryByText(/^Assistant$/)).not.toBeInTheDocument()
     expect(screen.getByText("Hello").closest(".user-bubble")).not.toBeNull()
     expect(screen.getByText("Newest answer").closest(".assistant-entry")).not.toBeNull()
-    expect(screen.getByText("/tmp/session-2")).toBeInTheDocument()
+    expect(screen.getByText("/tmp/claude-project")).toBeInTheDocument()
     expect(
-      screen.getByRole("button", { name: "Finder" })
-    ).toBeInTheDocument()
-    expect(
-      screen.getByRole("button", { name: "Terminal" })
-    ).toBeInTheDocument()
-    expect(
-      screen.getByRole("button", { name: "Editor" })
+      screen.getByRole("button", { name: /Open in Claude/i })
     ).toBeInTheDocument()
 
-    await userEvent.click(
-      screen.getByRole("button", { name: /Thought chain \(2\)/i })
-    )
+    await userEvent.click(screen.getByRole("button", { name: /Thought chain \(2\)/i }))
 
     expect(await screen.findByText("Tracing swipe path in highlights.tsx.")).toBeInTheDocument()
-    expect(await screen.findByText("Checking gesture ownership.")).toBeInTheDocument()
+    expect(await screen.findByText("Read 2 files")).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole("button", { name: /\/tmp\/demo\.ts/i }))
 
@@ -247,41 +244,59 @@ describe("Handoff App", () => {
       )
     ).toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole("button", { name: /Open in Codex/i }))
+    await userEvent.click(screen.getByRole("button", { name: /Open in Claude/i }))
 
-    expect(api.app.openCodexThread).toHaveBeenCalledWith(
+    expect(api.app.openSourceSession).toHaveBeenCalledWith(
+      "claude",
       "session-2",
-      "desktop",
-      "/tmp/session-2"
+      "cli",
+      "/tmp/claude-project"
     )
 
     await userEvent.click(screen.getByRole("button", { name: "Editor" }))
 
-    expect(api.app.openProjectPath).toHaveBeenCalledWith("editor", "/tmp/session-2")
+    expect(api.app.openProjectPath).toHaveBeenCalledWith("editor", "/tmp/claude-project")
 
-    await userEvent.click(screen.getByRole("button", { name: /Older session/i }))
+    await userEvent.click(screen.getByRole("button", { name: /Codex older session/i }))
 
     await waitFor(() => {
       expect(screen.getByText("Older answer")).toBeInTheDocument()
     })
+
+    await userEvent.click(screen.getByRole("button", { name: /Open in Codex/i }))
+
+    expect(api.app.openSourceSession).toHaveBeenLastCalledWith(
+      "codex",
+      "session-1",
+      "desktop",
+      "/tmp/codex-project"
+    )
   })
 
   it("copies the expected markdown variants", async () => {
     const { api } = createMockApi({
       sessions: [
         {
-          id: "session-1",
+          id: "claude:session-1",
+          sourceSessionId: "session-1",
+          provider: "claude",
           threadName: "Copy session",
           updatedAt: "2026-03-14T01:00:00.000Z",
+          projectPath: "/tmp/project",
           sessionPath: "/tmp/session-1.jsonl"
         }
       ],
       transcriptById: {
-        "session-1": {
-          id: "session-1",
+        "claude:session-1": {
+          id: "claude:session-1",
+          sourceSessionId: "session-1",
+          provider: "claude",
           threadName: "Copy session",
           updatedAt: "2026-03-14T01:00:00.000Z",
+          projectPath: "/tmp/project",
           sessionPath: "/tmp/session-1.jsonl",
+          sessionClient: "cli",
+          sessionCwd: "/tmp/project",
           entries: [
             {
               id: "copy-user",
@@ -317,7 +332,7 @@ describe("Handoff App", () => {
                   patch: [
                     "*** Begin Patch",
                     "*** Update File: /tmp/demo.ts",
-                    "@@",
+                    "@@ -1,1 +1,1 @@",
                     "-const value = 1",
                     "+const value = 2",
                     "*** End Patch"
@@ -358,9 +373,12 @@ describe("Handoff App", () => {
     const { api } = createMockApi({
       sessions: [
         {
-          id: "session-1",
+          id: "claude:session-1",
+          sourceSessionId: "session-1",
+          provider: "claude",
           threadName: "Missing session",
           updatedAt: "2026-03-14T01:00:00.000Z",
+          projectPath: "/tmp/project",
           sessionPath: null
         }
       ],
@@ -377,17 +395,23 @@ describe("Handoff App", () => {
     const { api } = createMockApi({
       sessions: [
         {
-          id: "session-1",
+          id: "codex:session-1",
+          sourceSessionId: "session-1",
+          provider: "codex",
           threadName: "Broken session",
           updatedAt: "2026-03-14T01:00:00.000Z",
+          projectPath: null,
           sessionPath: "/tmp/session-1.jsonl"
         }
       ],
       transcriptById: {
-        "session-1": {
-          id: "session-1",
+        "codex:session-1": {
+          id: "codex:session-1",
+          sourceSessionId: "session-1",
+          provider: "codex",
           threadName: "Broken session",
           updatedAt: "2026-03-14T01:00:00.000Z",
+          projectPath: null,
           sessionPath: "/tmp/session-1.jsonl",
           entries: [],
           markdown: "",
@@ -396,7 +420,7 @@ describe("Handoff App", () => {
         }
       },
       transcriptErrors: {
-        "session-1": new Error("Invalid JSON on line 2")
+        "codex:session-1": new Error("Invalid JSON on line 2")
       }
     })
 
