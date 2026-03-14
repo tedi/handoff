@@ -259,27 +259,75 @@ def find_last_index(values: list[MessageRecord], predicate: Callable[[MessageRec
 
 
 def render_output(messages: list[MessageRecord], patches: list[PatchRecord], include_diffs: bool) -> str:
-    sections: list[str] = []
     transcript_parts: list[str] = ["# Transcript"]
+    message_patches = attach_patches_to_messages(messages, patches) if include_diffs else {}
 
-    for message in messages:
+    for index, message in enumerate(messages):
         transcript_parts.append(f"\n## {message.role.capitalize()}\n{message.text}")
 
-    sections.append("\n".join(transcript_parts).strip())
-
-    if include_diffs:
-        diff_parts: list[str] = ["# Diffs"]
-        if not patches:
-            diff_parts.append("\nNo structured `apply_patch` diffs found in the selected scope.")
-        else:
-            for index, patch in enumerate(patches, start=1):
+        attached_patches = message_patches.get(index, [])
+        if attached_patches:
+            transcript_parts.append("\n### Diffs")
+            for patch_index, patch in enumerate(attached_patches, start=1):
                 files = ", ".join(patch.files) if patch.files else "unknown files"
-                diff_parts.append(
-                    f"\n## Patch {index}\nFiles: {files}\n\n```diff\n{patch.patch}\n```",
+                transcript_parts.append(
+                    f"\n#### Patch {patch_index}\nFiles: {files}\n\n```diff\n{patch.patch}\n```",
                 )
-        sections.append("\n".join(diff_parts).strip())
 
-    return "\n\n".join(sections).strip() + "\n"
+    if include_diffs and patches and not message_patches:
+        transcript_parts.append("\n## Diffs\nNo matching assistant message found for the selected patches.")
+
+    return "\n".join(transcript_parts).strip() + "\n"
+
+
+def attach_patches_to_messages(
+    messages: list[MessageRecord],
+    patches: list[PatchRecord],
+) -> dict[int, list[PatchRecord]]:
+    attachments: dict[int, list[PatchRecord]] = {}
+
+    for patch in patches:
+        target_index = find_patch_owner(messages, patch)
+        if target_index is None:
+            continue
+
+        attachments.setdefault(target_index, []).append(patch)
+
+    return attachments
+
+
+def find_patch_owner(messages: list[MessageRecord], patch: PatchRecord) -> int | None:
+    same_turn_assistants = [
+        (index, message)
+        for index, message in enumerate(messages)
+        if message.role == "assistant" and message.turn_id == patch.turn_id
+    ]
+    if not same_turn_assistants:
+        return None
+
+    future_final_answer = next(
+        (
+            index
+            for index, message in same_turn_assistants
+            if message.timestamp >= patch.timestamp and message.phase == "final_answer"
+        ),
+        None,
+    )
+    if future_final_answer is not None:
+        return future_final_answer
+
+    future_assistant = next(
+        (
+            index
+            for index, message in same_turn_assistants
+            if message.timestamp >= patch.timestamp
+        ),
+        None,
+    )
+    if future_assistant is not None:
+        return future_assistant
+
+    return same_turn_assistants[-1][0]
 
 
 def main() -> int:
