@@ -18,6 +18,41 @@ export const IPC_CHANNELS = {
     delete: "handoff:agents:delete",
     duplicate: "handoff:agents:duplicate"
   },
+  selector: {
+    app: {
+      getStateInfo: "handoff:selector:get-state-info",
+      openPath: "handoff:selector:open-path",
+      refresh: "handoff:selector:refresh"
+    },
+    roots: {
+      list: "handoff:selector:roots:list"
+    },
+    git: {
+      diffStats: "handoff:selector:git:diff-stats",
+      status: "handoff:selector:git:status"
+    },
+    manifests: {
+      list: "handoff:selector:manifests:list",
+      get: "handoff:selector:manifests:get",
+      addFiles: "handoff:selector:manifests:add-files",
+      duplicate: "handoff:selector:manifests:duplicate",
+      deleteBundle: "handoff:selector:manifests:delete-bundle",
+      rename: "handoff:selector:manifests:rename",
+      setComment: "handoff:selector:manifests:set-comment",
+      setExportText: "handoff:selector:manifests:set-export-text",
+      setSelected: "handoff:selector:manifests:set-selected",
+      setSelectedPaths: "handoff:selector:manifests:set-selected-paths",
+      removeFiles: "handoff:selector:manifests:remove-files"
+    },
+    files: {
+      search: "handoff:selector:files:search",
+      preview: "handoff:selector:files:preview"
+    },
+    exports: {
+      estimate: "handoff:selector:exports:estimate",
+      regenerateAndCopy: "handoff:selector:exports:regenerate-and-copy"
+    }
+  },
   sessions: {
     list: "handoff:sessions:list",
     getTranscript: "handoff:sessions:get-transcript"
@@ -30,5 +65,6 @@ export const IPC_CHANNELS = {
     writeText: "handoff:clipboard:write-text"
   },
   stateChanged: "handoff:state-changed",
-  searchStatusChanged: "handoff:search-status-changed"
+  searchStatusChanged: "handoff:search-status-changed",
+  selectorStateChanged: "handoff:selector-state-changed"
 } as const

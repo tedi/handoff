@@ -70,6 +70,13 @@ import {
   type ParsedPatchFile,
   type ParsedPatchLine
 } from "../shared/patch"
+import {
+  SelectorAddFilesModal,
+  SelectorBundleDialog,
+  SelectorDetailPane,
+  SelectorSidebarPane,
+  useSelectorSection
+} from "./selector-section"
 
 function formatTimestamp(value: string) {
   return new Intl.DateTimeFormat("en-US", {
@@ -3220,6 +3227,7 @@ export default function App() {
     },
     []
   )
+  const selectorSection = useSelectorSection({ showToast })
 
   const loadSettingsSnapshot = useCallback(async () => {
     const api = getHandoffApi()
@@ -4849,7 +4857,7 @@ export default function App() {
                   stateInfo={stateInfo}
                 />
               ) : (
-                <div className="sidebar-empty-pane" />
+                <SelectorSidebarPane controller={selectorSection} />
               )}
 
               <div
@@ -4891,7 +4899,9 @@ export default function App() {
                   <span className="topbar-thread">Agents</span>
                 )
               ) : activeSection === "selector" ? (
-                <span className="topbar-thread">Selector</span>
+                <span className="topbar-thread">
+                  {selectorSection.activeManifest?.name ?? "Selector"}
+                </span>
               ) : rightPaneMode === "new-thread" ? (
                 <span className="topbar-thread">New Thread</span>
               ) : rightPaneMode === "search" ? (
@@ -4958,12 +4968,24 @@ export default function App() {
                 >
                   Refresh
                 </button>
+              ) : !isSettingsOpen && activeSection === "selector" ? (
+                <button
+                  className="topbar-button"
+                  onClick={() => {
+                    void selectorSection.refresh()
+                  }}
+                  type="button"
+                >
+                  Refresh
+                </button>
               ) : null}
             </div>
           </header>
 
           {activeSection === "threads" && listError ? (
             <div className="banner banner-error">{listError}</div>
+          ) : activeSection === "selector" && selectorSection.errorMessage ? (
+            <div className="banner banner-error">{selectorSection.errorMessage}</div>
           ) : null}
 
           <section className="detail-pane">
@@ -4988,7 +5010,7 @@ export default function App() {
                     title="No agents yet"
                     detail="Create an agent from the left rail to get started."
                   />
-                ) : (
+              ) : (
                   <AgentEditorPane
                     agent={selectedAgent}
                     draft={agentDraft}
@@ -5001,10 +5023,7 @@ export default function App() {
                   />
                 )
               ) : activeSection === "selector" ? (
-                <EmptyState
-                  title="Selector coming later"
-                  detail="This section is reserved for Selector integration."
-                />
+                <SelectorDetailPane controller={selectorSection} />
               ) : rightPaneMode === "new-thread" ? (
                 <NewThreadPane
                   draft={newThreadDraft}
@@ -5295,8 +5314,14 @@ export default function App() {
                 </div>
               </div>
             </div>
+            ) : null}
+          </section>
+          {!isSettingsOpen && activeSection === "selector" ? (
+            <>
+              <SelectorAddFilesModal controller={selectorSection} />
+              <SelectorBundleDialog controller={selectorSection} />
+            </>
           ) : null}
-        </section>
         </section>
       </div>
     </div>

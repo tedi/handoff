@@ -407,6 +407,28 @@ async function waitForStateChange(
   })
 }
 
+async function waitForSelectorStateChange(
+  service: ReturnType<typeof createHandoffService>,
+  reason: string
+) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      unsubscribe()
+      reject(new Error(`Timed out waiting for selector ${reason}.`))
+    }, 2000)
+
+    const unsubscribe = service.onSelectorStateChanged(event => {
+      if (event.reason !== reason) {
+        return
+      }
+
+      clearTimeout(timeout)
+      unsubscribe()
+      resolve(event)
+    })
+  })
+}
+
 describe("handoff service", () => {
   let env: TestEnvironment
   let service: ReturnType<typeof createHandoffService>
@@ -534,6 +556,151 @@ describe("handoff service", () => {
   it("emits a manual-refresh event through the app api", async () => {
     await expect(service.app.refresh()).resolves.toMatchObject({
       reason: "manual-refresh"
+    })
+  })
+
+  it("exposes selector state info, roots, manifests, and file search through the shared service", async () => {
+    await service.dispose()
+
+    const selectorStateDir = path.join(env.baseDir, "selector-state")
+    const selectorProjectDir = path.join(env.baseDir, "selector-project")
+    const selectorFilePath = path.join(selectorProjectDir, "src", "alpha.ts")
+
+    await fs.mkdir(path.dirname(selectorFilePath), { recursive: true })
+    await fs.writeFile(selectorFilePath, "export const alpha = 1\n")
+    await fs.mkdir(path.join(selectorStateDir, "manifests"), { recursive: true })
+    await fs.writeFile(
+      path.join(selectorStateDir, "config.json"),
+      JSON.stringify(
+        {
+          roots: [
+            {
+              id: "handoff",
+              path: selectorProjectDir
+            }
+          ]
+        },
+        null,
+        2
+      )
+    )
+    await fs.writeFile(
+      path.join(selectorStateDir, "manifests", "alpha.json"),
+      JSON.stringify(
+        {
+          name: "alpha",
+          created_at: "2026-03-14T00:00:00.000Z",
+          updated_at: "2026-03-14T00:05:00.000Z",
+          files: [
+            {
+              path: selectorFilePath,
+              relative_path: "src/alpha.ts",
+              root_id: "handoff",
+              comment: "Important file",
+              selected: true
+            }
+          ],
+          export_prefix_text: "prefix",
+          export_suffix_text: "suffix",
+          strip_comments: false,
+          git_diff_mode: "off",
+          use_git_diffs: false
+        },
+        null,
+        2
+      )
+    )
+
+    service = createHandoffService({
+      appDir: env.appDir,
+      codexHome: env.codexHome,
+      claudeHome: env.claudeHome,
+      selectorStateDir
+    })
+
+    await expect(service.selector.app.getStateInfo()).resolves.toMatchObject({
+      stateDir: selectorStateDir,
+      configPath: path.join(selectorStateDir, "config.json"),
+      manifestsDir: path.join(selectorStateDir, "manifests"),
+      exportsDir: path.join(selectorStateDir, "exports")
+    })
+    await expect(service.selector.roots.list()).resolves.toEqual([
+      {
+        id: "handoff",
+        path: selectorProjectDir,
+        exists: true
+      }
+    ])
+    await expect(service.selector.manifests.list()).resolves.toMatchObject([
+      {
+        name: "alpha",
+        file_count: 1
+      }
+    ])
+    await expect(service.selector.manifests.get("alpha")).resolves.toMatchObject({
+      name: "alpha",
+      file_count: 1,
+      files: [
+        expect.objectContaining({
+          path: selectorFilePath,
+          relative_path: "src/alpha.ts",
+          comment: "Important file"
+        })
+      ]
+    })
+    await expect(service.selector.files.search("handoff", "alpha", 20)).resolves.toMatchObject({
+      files: [
+        expect.objectContaining({
+          path: selectorFilePath,
+          relative_path: "src/alpha.ts"
+        })
+      ]
+    })
+  })
+
+  it("emits selector watcher updates when manifests change", async () => {
+    await service.dispose()
+
+    const selectorStateDir = path.join(env.baseDir, "selector-watch-state")
+    await fs.mkdir(path.join(selectorStateDir, "manifests"), { recursive: true })
+    await fs.writeFile(
+      path.join(selectorStateDir, "config.json"),
+      JSON.stringify({ roots: [] }, null, 2)
+    )
+
+    service = createHandoffService({
+      appDir: env.appDir,
+      codexHome: env.codexHome,
+      claudeHome: env.claudeHome,
+      selectorStateDir
+    })
+
+    await service.startWatching()
+    await new Promise(resolve => setTimeout(resolve, 150))
+
+    const eventPromise = waitForSelectorStateChange(service, "manifests-changed")
+    await fs.writeFile(
+      path.join(selectorStateDir, "manifests", "watch.json"),
+      JSON.stringify(
+        {
+          name: "watch",
+          created_at: "2026-03-14T00:00:00.000Z",
+          updated_at: "2026-03-14T00:01:00.000Z",
+          files: [],
+          export_prefix_text: null,
+          export_suffix_text: null,
+          strip_comments: false,
+          git_diff_mode: "off",
+          use_git_diffs: false
+        },
+        null,
+        2
+      )
+    )
+
+    await expect(eventPromise).resolves.toMatchObject({
+      reason: "manifests-changed",
+      changedPath: path.join(selectorStateDir, "manifests", "watch.json")
     })
   })
 

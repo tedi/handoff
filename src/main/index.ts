@@ -69,10 +69,18 @@ app.whenReady().then(async () => {
       }
     })
   })
+  const disposeSelectorStateSubscription = service.onSelectorStateChanged(payload => {
+    BrowserWindow.getAllWindows().forEach(window => {
+      if (!window.isDestroyed()) {
+        window.webContents.send(IPC_CHANNELS.selectorStateChanged, payload)
+      }
+    })
+  })
   const previousDisposeStateSubscription = disposeStateSubscription
   disposeStateSubscription = () => {
     previousDisposeStateSubscription?.()
     disposeSearchStatusSubscription()
+    disposeSelectorStateSubscription()
   }
 
   await service.startWatching()

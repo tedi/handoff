@@ -20,6 +20,41 @@ const IPC_CHANNELS = {
     delete: "handoff:agents:delete",
     duplicate: "handoff:agents:duplicate"
   },
+  selector: {
+    app: {
+      getStateInfo: "handoff:selector:get-state-info",
+      openPath: "handoff:selector:open-path",
+      refresh: "handoff:selector:refresh"
+    },
+    roots: {
+      list: "handoff:selector:roots:list"
+    },
+    git: {
+      diffStats: "handoff:selector:git:diff-stats",
+      status: "handoff:selector:git:status"
+    },
+    manifests: {
+      list: "handoff:selector:manifests:list",
+      get: "handoff:selector:manifests:get",
+      addFiles: "handoff:selector:manifests:add-files",
+      duplicate: "handoff:selector:manifests:duplicate",
+      deleteBundle: "handoff:selector:manifests:delete-bundle",
+      rename: "handoff:selector:manifests:rename",
+      setComment: "handoff:selector:manifests:set-comment",
+      setExportText: "handoff:selector:manifests:set-export-text",
+      setSelected: "handoff:selector:manifests:set-selected",
+      setSelectedPaths: "handoff:selector:manifests:set-selected-paths",
+      removeFiles: "handoff:selector:manifests:remove-files"
+    },
+    files: {
+      search: "handoff:selector:files:search",
+      preview: "handoff:selector:files:preview"
+    },
+    exports: {
+      estimate: "handoff:selector:exports:estimate",
+      regenerateAndCopy: "handoff:selector:exports:regenerate-and-copy"
+    }
+  },
   sessions: {
     list: "handoff:sessions:list",
     getTranscript: "handoff:sessions:get-transcript"
@@ -32,7 +67,8 @@ const IPC_CHANNELS = {
     writeText: "handoff:clipboard:write-text"
   },
   stateChanged: "handoff:state-changed",
-  searchStatusChanged: "handoff:search-status-changed"
+  searchStatusChanged: "handoff:search-status-changed",
+  selectorStateChanged: "handoff:selector-state-changed"
 }
 
 contextBridge.exposeInMainWorld("handoffApp", {
@@ -100,6 +136,145 @@ contextBridge.exposeInMainWorld("handoffApp", {
     },
     duplicate(id) {
       return ipcRenderer.invoke(IPC_CHANNELS.agents.duplicate, id)
+    }
+  },
+  selector: {
+    app: {
+      getStateInfo() {
+        return ipcRenderer.invoke(IPC_CHANNELS.selector.app.getStateInfo)
+      },
+      openPath(path) {
+        return ipcRenderer.invoke(IPC_CHANNELS.selector.app.openPath, path)
+      },
+      refresh() {
+        return ipcRenderer.invoke(IPC_CHANNELS.selector.app.refresh)
+      },
+      onStateChanged(listener) {
+        const wrappedListener = (_event, payload) => {
+          listener(payload)
+        }
+
+        ipcRenderer.on(IPC_CHANNELS.selectorStateChanged, wrappedListener)
+
+        return () => {
+          ipcRenderer.removeListener(
+            IPC_CHANNELS.selectorStateChanged,
+            wrappedListener
+          )
+        }
+      }
+    },
+    roots: {
+      list() {
+        return ipcRenderer.invoke(IPC_CHANNELS.selector.roots.list)
+      }
+    },
+    git: {
+      diffStats(paths) {
+        return ipcRenderer.invoke(IPC_CHANNELS.selector.git.diffStats, paths)
+      },
+      status(paths) {
+        return ipcRenderer.invoke(IPC_CHANNELS.selector.git.status, paths)
+      }
+    },
+    manifests: {
+      list() {
+        return ipcRenderer.invoke(IPC_CHANNELS.selector.manifests.list)
+      },
+      get(name) {
+        return ipcRenderer.invoke(IPC_CHANNELS.selector.manifests.get, name)
+      },
+      addFiles(name, paths) {
+        return ipcRenderer.invoke(
+          IPC_CHANNELS.selector.manifests.addFiles,
+          name,
+          paths
+        )
+      },
+      duplicate(name, nextName) {
+        return ipcRenderer.invoke(
+          IPC_CHANNELS.selector.manifests.duplicate,
+          name,
+          nextName
+        )
+      },
+      deleteBundle(name) {
+        return ipcRenderer.invoke(
+          IPC_CHANNELS.selector.manifests.deleteBundle,
+          name
+        )
+      },
+      rename(name, nextName) {
+        return ipcRenderer.invoke(
+          IPC_CHANNELS.selector.manifests.rename,
+          name,
+          nextName
+        )
+      },
+      setComment(name, path, comment) {
+        return ipcRenderer.invoke(
+          IPC_CHANNELS.selector.manifests.setComment,
+          name,
+          path,
+          comment
+        )
+      },
+      setExportText(name, exportPrefixText, exportSuffixText, stripComments, gitDiffModeOrUseGitDiffs) {
+        return ipcRenderer.invoke(
+          IPC_CHANNELS.selector.manifests.setExportText,
+          name,
+          exportPrefixText,
+          exportSuffixText,
+          stripComments,
+          gitDiffModeOrUseGitDiffs
+        )
+      },
+      setSelected(name, path, selected) {
+        return ipcRenderer.invoke(
+          IPC_CHANNELS.selector.manifests.setSelected,
+          name,
+          path,
+          selected
+        )
+      },
+      setSelectedPaths(name, paths) {
+        return ipcRenderer.invoke(
+          IPC_CHANNELS.selector.manifests.setSelectedPaths,
+          name,
+          paths
+        )
+      },
+      removeFiles(name, paths) {
+        return ipcRenderer.invoke(
+          IPC_CHANNELS.selector.manifests.removeFiles,
+          name,
+          paths
+        )
+      }
+    },
+    files: {
+      search(rootId, query, limit) {
+        return ipcRenderer.invoke(
+          IPC_CHANNELS.selector.files.search,
+          rootId,
+          query,
+          limit
+        )
+      },
+      preview(path) {
+        return ipcRenderer.invoke(IPC_CHANNELS.selector.files.preview, path)
+      }
+    },
+    exports: {
+      estimate(name) {
+        return ipcRenderer.invoke(IPC_CHANNELS.selector.exports.estimate, name)
+      },
+      regenerateAndCopy(name) {
+        return ipcRenderer.invoke(
+          IPC_CHANNELS.selector.exports.regenerateAndCopy,
+          name
+        )
+      }
     }
   },
   sessions: {

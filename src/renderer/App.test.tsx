@@ -104,6 +104,9 @@ function createMockApi({
   const searchStatusListeners = new Set<
     (status: import("../shared/contracts").SearchStatus) => void
   >()
+  const selectorStateListeners = new Set<
+    (event: import("../shared/contracts").SelectorAppStateChangeEvent) => void
+  >()
   let agentState = agents.map(agent => ({ ...agent }))
 
   const api: HandoffApi = {
@@ -239,6 +242,75 @@ function createMockApi({
         return () => {
           searchStatusListeners.delete(listener)
         }
+      }
+    },
+    selector: {
+      app: {
+        getStateInfo: vi.fn().mockResolvedValue({
+          stateDir: "/Users/tedikonda/.codex/selector",
+          configPath: "/Users/tedikonda/.codex/selector/config.json",
+          manifestsDir: "/Users/tedikonda/.codex/selector/manifests",
+          exportsDir: "/Users/tedikonda/.codex/selector/exports",
+          selectorHome: null
+        }),
+        openPath: vi.fn().mockResolvedValue({
+          path: "/workspace/src/example.ts",
+          opened_with: "Cursor"
+        }),
+        refresh: vi.fn().mockResolvedValue({
+          at: "2026-03-14T00:20:00.000Z",
+          reason: "manual-refresh",
+          changedPath: null
+        }),
+        onStateChanged(listener) {
+          selectorStateListeners.add(listener)
+
+          return () => {
+            selectorStateListeners.delete(listener)
+          }
+        }
+      },
+      roots: {
+        list: vi.fn().mockResolvedValue([])
+      },
+      git: {
+        diffStats: vi.fn().mockResolvedValue({}),
+        status: vi.fn().mockResolvedValue({})
+      },
+      manifests: {
+        list: vi.fn().mockResolvedValue([]),
+        get: vi.fn(),
+        addFiles: vi.fn(),
+        duplicate: vi.fn(),
+        deleteBundle: vi.fn(),
+        rename: vi.fn(),
+        setComment: vi.fn(),
+        setExportText: vi.fn(),
+        setSelected: vi.fn(),
+        setSelectedPaths: vi.fn(),
+        removeFiles: vi.fn()
+      },
+      files: {
+        search: vi.fn().mockResolvedValue({ files: [] }),
+        preview: vi.fn().mockResolvedValue({
+          path: "/workspace/src/example.ts",
+          content: "export const demo = true\n",
+          truncated: false
+        })
+      },
+      exports: {
+        estimate: vi.fn().mockResolvedValue({
+          estimated_tokens: 0,
+          selected_count: 0,
+          skipped_files: []
+        }),
+        regenerateAndCopy: vi.fn().mockResolvedValue({
+          output_path: "/Users/tedikonda/.codex/selector/exports/demo.txt",
+          estimated_tokens: 0,
+          file_count: 0,
+          skipped_files: [],
+          copied_to_clipboard: true
+        })
       }
     },
     clipboard: {
@@ -446,12 +518,75 @@ describe("Handoff App", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /Open in Codex/i }))
 
-    expect(api.app.openSourceSession).toHaveBeenLastCalledWith(
+  expect(api.app.openSourceSession).toHaveBeenLastCalledWith(
       "codex",
       "session-1",
       "desktop",
       "/tmp/codex-project"
     )
+  })
+
+  it("renders selector manifests in the inner pane and supports regenerate + copy", async () => {
+    const { api } = createMockApi({
+      sessions: [],
+      transcriptById: {}
+    })
+    const selectorManifest = {
+      name: "alpha",
+      created_at: "2026-03-14T00:00:00.000Z",
+      updated_at: "2026-03-14T00:05:00.000Z",
+      file_count: 1,
+      files: [
+        {
+          path: "/workspace/src/alpha.ts",
+          relative_path: "src/alpha.ts",
+          root_id: "handoff",
+          comment: "Important file",
+          selected: true
+        }
+      ],
+      export_prefix_text: null,
+      export_suffix_text: null,
+      strip_comments: false,
+      git_diff_mode: "off",
+      use_git_diffs: false
+    }
+
+    api.selector.roots.list = vi.fn().mockResolvedValue([
+      {
+        id: "handoff",
+        path: "/workspace",
+        exists: true
+      }
+    ])
+    api.selector.manifests.list = vi.fn().mockResolvedValue([selectorManifest])
+    api.selector.manifests.get = vi.fn().mockResolvedValue(selectorManifest)
+    api.selector.exports.estimate = vi.fn().mockResolvedValue({
+      estimated_tokens: 120,
+      selected_count: 1,
+      skipped_files: []
+    })
+    api.selector.exports.regenerateAndCopy = vi.fn().mockResolvedValue({
+      output_path: "/tmp/alpha.txt",
+      estimated_tokens: 120,
+      file_count: 1,
+      skipped_files: [],
+      copied_to_clipboard: true
+    })
+
+    window.handoffApp = api
+    render(<App />)
+
+    await userEvent.click(screen.getByRole("button", { name: "Selector" }))
+
+    expect(await screen.findAllByText("alpha")).not.toHaveLength(0)
+    expect(await screen.findByText("src/alpha.ts")).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole("button", { name: "Regenerate + Copy" }))
+
+    await waitFor(() => {
+      expect(api.selector.exports.regenerateAndCopy).toHaveBeenCalledWith("alpha")
+    })
   })
 
   it("copies the expected markdown variants through the split copy button", async () => {

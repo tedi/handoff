@@ -327,4 +327,88 @@ describe("registerIpcHandlers", () => {
       command: "claude-start-command"
     })
   })
+
+  it("forwards selector ipc calls to the selector service", async () => {
+    const ipcMain = createIpcMainStub()
+    const selectorService = {
+      app: {
+        getStateInfo: vi.fn().mockResolvedValue({ stateDir: "/tmp/selector" }),
+        openPath: vi.fn().mockResolvedValue({ path: "/tmp/demo.ts" }),
+        refresh: vi.fn().mockResolvedValue({ reason: "manual-refresh" })
+      },
+      roots: {
+        list: vi.fn().mockResolvedValue([{ id: "app", path: "/tmp/app", exists: true }])
+      },
+      git: {
+        diffStats: vi.fn().mockResolvedValue({}),
+        status: vi.fn().mockResolvedValue({})
+      },
+      manifests: {
+        list: vi.fn().mockResolvedValue([]),
+        get: vi.fn().mockResolvedValue({ name: "alpha" }),
+        addFiles: vi.fn().mockResolvedValue({ name: "alpha" }),
+        duplicate: vi.fn().mockResolvedValue({ name: "alpha-copy" }),
+        deleteBundle: vi.fn().mockResolvedValue({ deleted: true }),
+        rename: vi.fn().mockResolvedValue({ name: "beta" }),
+        setComment: vi.fn().mockResolvedValue({ name: "alpha" }),
+        setExportText: vi.fn().mockResolvedValue({ name: "alpha" }),
+        setSelected: vi.fn().mockResolvedValue({ name: "alpha" }),
+        setSelectedPaths: vi.fn().mockResolvedValue({ name: "alpha" }),
+        removeFiles: vi.fn().mockResolvedValue({ name: "alpha" })
+      },
+      files: {
+        search: vi.fn().mockResolvedValue({ files: [] }),
+        preview: vi.fn().mockResolvedValue({ path: "/tmp/demo.ts", content: "", truncated: false })
+      },
+      exports: {
+        estimate: vi.fn().mockResolvedValue({ estimated_tokens: 0, selected_count: 0, skipped_files: [] }),
+        regenerateAndCopy: vi.fn().mockResolvedValue({ output_path: "/tmp/out.txt", estimated_tokens: 0, file_count: 0, skipped_files: [], copied_to_clipboard: true })
+      }
+    }
+    const service = {
+      app: {
+        getStateInfo: vi.fn(),
+        refresh: vi.fn()
+      },
+      settings: {
+        get: vi.fn().mockResolvedValue(settingsSnapshot),
+        update: vi.fn(),
+        resetProvider: vi.fn()
+      },
+      agents: {
+        list: vi.fn().mockResolvedValue([]),
+        create: vi.fn(),
+        update: vi.fn(),
+        delete: vi.fn(),
+        duplicate: vi.fn()
+      },
+      sessions: {
+        list: vi.fn(),
+        getTranscript: vi.fn()
+      },
+      search: {
+        getStatus: vi.fn(),
+        query: vi.fn()
+      },
+      selector: selectorService,
+      startWatching: vi.fn(),
+      onStateChanged: vi.fn(),
+      onSearchStatusChanged: vi.fn(),
+      dispose: vi.fn()
+    } as any
+
+    registerIpcHandlers(ipcMain as any, service)
+
+    await ipcMain.invoke(IPC_CHANNELS.selector.app.getStateInfo)
+    await ipcMain.invoke(IPC_CHANNELS.selector.app.openPath, "/tmp/demo.ts")
+    await ipcMain.invoke(IPC_CHANNELS.selector.manifests.addFiles, "alpha", ["/tmp/demo.ts"])
+    await ipcMain.invoke(IPC_CHANNELS.selector.files.search, "app", "demo", 20)
+    await ipcMain.invoke(IPC_CHANNELS.selector.exports.regenerateAndCopy, "alpha")
+
+    expect(selectorService.app.getStateInfo).toHaveBeenCalled()
+    expect(selectorService.app.openPath).toHaveBeenCalledWith("/tmp/demo.ts")
+    expect(selectorService.manifests.addFiles).toHaveBeenCalledWith("alpha", ["/tmp/demo.ts"])
+    expect(selectorService.files.search).toHaveBeenCalledWith("app", "demo", 20)
+    expect(selectorService.exports.regenerateAndCopy).toHaveBeenCalledWith("alpha")
+  })
 })

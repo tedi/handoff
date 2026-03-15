@@ -2,6 +2,7 @@ import { clipboard, nativeImage, shell, type IpcMain } from "electron"
 import { execFile } from "node:child_process"
 import fs from "node:fs"
 import { promisify } from "node:util"
+import type { SelectorGitDiffMode } from "selector"
 
 import { IPC_CHANNELS } from "../shared/channels"
 import type {
@@ -436,6 +437,106 @@ export function registerIpcHandlers(ipcMain: IpcMain, service: HandoffService) {
     IPC_CHANNELS.agents.duplicate,
     (_event, id: string) => service.agents.duplicate(id)
   )
+  ipcMain.handle(IPC_CHANNELS.selector.app.getStateInfo, () =>
+    service.selector.app.getStateInfo()
+  )
+  ipcMain.handle(IPC_CHANNELS.selector.app.openPath, (_event, filePath: string) =>
+    service.selector.app.openPath(filePath)
+  )
+  ipcMain.handle(IPC_CHANNELS.selector.app.refresh, () =>
+    service.selector.app.refresh()
+  )
+  ipcMain.handle(IPC_CHANNELS.selector.roots.list, () => service.selector.roots.list())
+  ipcMain.handle(
+    IPC_CHANNELS.selector.git.diffStats,
+    (_event, paths: string[]) => service.selector.git.diffStats(paths)
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.selector.git.status,
+    (_event, paths: string[]) => service.selector.git.status(paths)
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.selector.manifests.list,
+    () => service.selector.manifests.list()
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.selector.manifests.get,
+    (_event, name: string) => service.selector.manifests.get(name)
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.selector.manifests.addFiles,
+    (_event, name: string, paths: string[]) =>
+      service.selector.manifests.addFiles(name, paths)
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.selector.manifests.duplicate,
+    (_event, name: string, nextName: string) =>
+      service.selector.manifests.duplicate(name, nextName)
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.selector.manifests.deleteBundle,
+    (_event, name: string) => service.selector.manifests.deleteBundle(name)
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.selector.manifests.rename,
+    (_event, name: string, nextName: string) =>
+      service.selector.manifests.rename(name, nextName)
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.selector.manifests.setComment,
+    (_event, name: string, filePath: string, comment: string) =>
+      service.selector.manifests.setComment(name, filePath, comment)
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.selector.manifests.setExportText,
+    (
+      _event,
+      name: string,
+      exportPrefixText: string,
+      exportSuffixText: string,
+      stripComments?: boolean,
+      gitDiffModeOrUseGitDiffs?: SelectorGitDiffMode | boolean
+    ) =>
+      service.selector.manifests.setExportText(
+        name,
+        exportPrefixText,
+        exportSuffixText,
+        stripComments,
+        gitDiffModeOrUseGitDiffs
+      )
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.selector.manifests.setSelected,
+    (_event, name: string, filePath: string, selected: boolean) =>
+      service.selector.manifests.setSelected(name, filePath, selected)
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.selector.manifests.setSelectedPaths,
+    (_event, name: string, paths: string[]) =>
+      service.selector.manifests.setSelectedPaths(name, paths)
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.selector.manifests.removeFiles,
+    (_event, name: string, paths: string[]) =>
+      service.selector.manifests.removeFiles(name, paths)
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.selector.files.search,
+    (_event, rootId: string, query: string, limit?: number) =>
+      service.selector.files.search(rootId, query, limit)
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.selector.files.preview,
+    (_event, filePath: string) => service.selector.files.preview(filePath)
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.selector.exports.estimate,
+    (_event, name: string) => service.selector.exports.estimate(name)
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.selector.exports.regenerateAndCopy,
+    (_event, name: string) => service.selector.exports.regenerateAndCopy(name)
+  )
   ipcMain.handle(
     IPC_CHANNELS.app.openSourceSession,
     async (
@@ -505,6 +606,27 @@ export function registerIpcHandlers(ipcMain: IpcMain, service: HandoffService) {
     ipcMain.removeHandler(IPC_CHANNELS.agents.update)
     ipcMain.removeHandler(IPC_CHANNELS.agents.delete)
     ipcMain.removeHandler(IPC_CHANNELS.agents.duplicate)
+    ipcMain.removeHandler(IPC_CHANNELS.selector.app.getStateInfo)
+    ipcMain.removeHandler(IPC_CHANNELS.selector.app.openPath)
+    ipcMain.removeHandler(IPC_CHANNELS.selector.app.refresh)
+    ipcMain.removeHandler(IPC_CHANNELS.selector.roots.list)
+    ipcMain.removeHandler(IPC_CHANNELS.selector.git.diffStats)
+    ipcMain.removeHandler(IPC_CHANNELS.selector.git.status)
+    ipcMain.removeHandler(IPC_CHANNELS.selector.manifests.list)
+    ipcMain.removeHandler(IPC_CHANNELS.selector.manifests.get)
+    ipcMain.removeHandler(IPC_CHANNELS.selector.manifests.addFiles)
+    ipcMain.removeHandler(IPC_CHANNELS.selector.manifests.duplicate)
+    ipcMain.removeHandler(IPC_CHANNELS.selector.manifests.deleteBundle)
+    ipcMain.removeHandler(IPC_CHANNELS.selector.manifests.rename)
+    ipcMain.removeHandler(IPC_CHANNELS.selector.manifests.setComment)
+    ipcMain.removeHandler(IPC_CHANNELS.selector.manifests.setExportText)
+    ipcMain.removeHandler(IPC_CHANNELS.selector.manifests.setSelected)
+    ipcMain.removeHandler(IPC_CHANNELS.selector.manifests.setSelectedPaths)
+    ipcMain.removeHandler(IPC_CHANNELS.selector.manifests.removeFiles)
+    ipcMain.removeHandler(IPC_CHANNELS.selector.files.search)
+    ipcMain.removeHandler(IPC_CHANNELS.selector.files.preview)
+    ipcMain.removeHandler(IPC_CHANNELS.selector.exports.estimate)
+    ipcMain.removeHandler(IPC_CHANNELS.selector.exports.regenerateAndCopy)
     ipcMain.removeHandler(IPC_CHANNELS.app.openSourceSession)
     ipcMain.removeHandler(IPC_CHANNELS.app.openProjectPath)
     ipcMain.removeHandler(IPC_CHANNELS.app.startNewThread)

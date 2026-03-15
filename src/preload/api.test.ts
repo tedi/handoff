@@ -163,4 +163,144 @@ describe("createHandoffBridge", () => {
       "copied"
     )
   })
+
+  it("forwards selector IPC calls through the preload bridge", async () => {
+    const invoke = vi.fn().mockResolvedValue("ok")
+    const on = vi.fn()
+    const removeListener = vi.fn()
+    const bridge = createHandoffBridge({
+      invoke,
+      on,
+      removeListener
+    })
+
+    await bridge.selector.app.getStateInfo()
+    await bridge.selector.app.openPath("/tmp/example.ts")
+    await bridge.selector.app.refresh()
+    await bridge.selector.roots.list()
+    await bridge.selector.git.diffStats(["/tmp/example.ts"])
+    await bridge.selector.git.status(["/tmp/example.ts"])
+    await bridge.selector.manifests.list()
+    await bridge.selector.manifests.get("alpha")
+    await bridge.selector.manifests.addFiles("alpha", ["/tmp/example.ts"])
+    await bridge.selector.manifests.duplicate("alpha", "alpha-copy")
+    await bridge.selector.manifests.deleteBundle("alpha")
+    await bridge.selector.manifests.rename("alpha", "beta")
+    await bridge.selector.manifests.setComment("alpha", "/tmp/example.ts", "note")
+    await bridge.selector.manifests.setExportText(
+      "alpha",
+      "prefix",
+      "suffix",
+      true,
+      "diff_only"
+    )
+    await bridge.selector.manifests.setSelected("alpha", "/tmp/example.ts", true)
+    await bridge.selector.manifests.setSelectedPaths("alpha", ["/tmp/example.ts"])
+    await bridge.selector.manifests.removeFiles("alpha", ["/tmp/example.ts"])
+    await bridge.selector.files.search("project", "alpha", 20)
+    await bridge.selector.files.preview("/tmp/example.ts")
+    await bridge.selector.exports.estimate("alpha")
+    await bridge.selector.exports.regenerateAndCopy("alpha")
+
+    expect(invoke).toHaveBeenNthCalledWith(1, IPC_CHANNELS.selector.app.getStateInfo)
+    expect(invoke).toHaveBeenNthCalledWith(
+      2,
+      IPC_CHANNELS.selector.app.openPath,
+      "/tmp/example.ts"
+    )
+    expect(invoke).toHaveBeenNthCalledWith(3, IPC_CHANNELS.selector.app.refresh)
+    expect(invoke).toHaveBeenNthCalledWith(4, IPC_CHANNELS.selector.roots.list)
+    expect(invoke).toHaveBeenNthCalledWith(
+      5,
+      IPC_CHANNELS.selector.git.diffStats,
+      ["/tmp/example.ts"]
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      6,
+      IPC_CHANNELS.selector.git.status,
+      ["/tmp/example.ts"]
+    )
+    expect(invoke).toHaveBeenNthCalledWith(7, IPC_CHANNELS.selector.manifests.list)
+    expect(invoke).toHaveBeenNthCalledWith(8, IPC_CHANNELS.selector.manifests.get, "alpha")
+    expect(invoke).toHaveBeenNthCalledWith(
+      9,
+      IPC_CHANNELS.selector.manifests.addFiles,
+      "alpha",
+      ["/tmp/example.ts"]
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      10,
+      IPC_CHANNELS.selector.manifests.duplicate,
+      "alpha",
+      "alpha-copy"
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      11,
+      IPC_CHANNELS.selector.manifests.deleteBundle,
+      "alpha"
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      12,
+      IPC_CHANNELS.selector.manifests.rename,
+      "alpha",
+      "beta"
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      13,
+      IPC_CHANNELS.selector.manifests.setComment,
+      "alpha",
+      "/tmp/example.ts",
+      "note"
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      14,
+      IPC_CHANNELS.selector.manifests.setExportText,
+      "alpha",
+      "prefix",
+      "suffix",
+      true,
+      "diff_only"
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      15,
+      IPC_CHANNELS.selector.manifests.setSelected,
+      "alpha",
+      "/tmp/example.ts",
+      true
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      16,
+      IPC_CHANNELS.selector.manifests.setSelectedPaths,
+      "alpha",
+      ["/tmp/example.ts"]
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      17,
+      IPC_CHANNELS.selector.manifests.removeFiles,
+      "alpha",
+      ["/tmp/example.ts"]
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      18,
+      IPC_CHANNELS.selector.files.search,
+      "project",
+      "alpha",
+      20
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      19,
+      IPC_CHANNELS.selector.files.preview,
+      "/tmp/example.ts"
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      20,
+      IPC_CHANNELS.selector.exports.estimate,
+      "alpha"
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      21,
+      IPC_CHANNELS.selector.exports.regenerateAndCopy,
+      "alpha"
+    )
+  })
 })

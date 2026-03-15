@@ -8,12 +8,4 @@ declare global {
   }
 }
 
-import type { SelectorAppApi } from "../shared/contracts"
-
-declare global {
-  interface Window {
-    selectorApp: SelectorAppApi
-  }
-}
-
 export {}

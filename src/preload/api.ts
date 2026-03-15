@@ -1,4 +1,5 @@
 import type { IpcRendererEvent } from "electron"
+import type { SelectorGitDiffMode } from "selector"
 
 import { IPC_CHANNELS } from "../shared/channels"
 import type {
@@ -11,6 +12,7 @@ import type {
   NewThreadLaunchResult,
   OpenActionResult,
   ProjectLocationTarget,
+  SelectorAppStateChangeEvent,
   SearchFilters,
   SearchStatus,
   SessionClient,
@@ -146,6 +148,219 @@ export function createHandoffBridge(
         return ipcRenderer.invoke(IPC_CHANNELS.agents.duplicate, id) as Promise<
           Awaited<ReturnType<HandoffApi["agents"]["duplicate"]>>
         >
+      }
+    },
+
+    selector: {
+      app: {
+        getStateInfo() {
+          return ipcRenderer.invoke(IPC_CHANNELS.selector.app.getStateInfo) as Promise<
+            Awaited<ReturnType<HandoffApi["selector"]["app"]["getStateInfo"]>>
+          >
+        },
+
+        openPath(path: string) {
+          return ipcRenderer.invoke(
+            IPC_CHANNELS.selector.app.openPath,
+            path
+          ) as Promise<Awaited<ReturnType<HandoffApi["selector"]["app"]["openPath"]>>>
+        },
+
+        refresh() {
+          return ipcRenderer.invoke(IPC_CHANNELS.selector.app.refresh) as Promise<
+            Awaited<ReturnType<HandoffApi["selector"]["app"]["refresh"]>>
+          >
+        },
+
+        onStateChanged(listener) {
+          const wrappedListener = (_event: IpcRendererEvent | Event, payload: unknown) => {
+            listener(payload as SelectorAppStateChangeEvent)
+          }
+
+          ipcRenderer.on(IPC_CHANNELS.selectorStateChanged, wrappedListener)
+
+          return () => {
+            ipcRenderer.removeListener(
+              IPC_CHANNELS.selectorStateChanged,
+              wrappedListener
+            )
+          }
+        }
+      },
+
+      roots: {
+        list() {
+          return ipcRenderer.invoke(IPC_CHANNELS.selector.roots.list) as Promise<
+            Awaited<ReturnType<HandoffApi["selector"]["roots"]["list"]>>
+          >
+        }
+      },
+
+      git: {
+        diffStats(paths: string[]) {
+          return ipcRenderer.invoke(
+            IPC_CHANNELS.selector.git.diffStats,
+            paths
+          ) as Promise<Awaited<ReturnType<HandoffApi["selector"]["git"]["diffStats"]>>>
+        },
+
+        status(paths: string[]) {
+          return ipcRenderer.invoke(
+            IPC_CHANNELS.selector.git.status,
+            paths
+          ) as Promise<Awaited<ReturnType<HandoffApi["selector"]["git"]["status"]>>>
+        }
+      },
+
+      manifests: {
+        list() {
+          return ipcRenderer.invoke(IPC_CHANNELS.selector.manifests.list) as Promise<
+            Awaited<ReturnType<HandoffApi["selector"]["manifests"]["list"]>>
+          >
+        },
+
+        get(name: string) {
+          return ipcRenderer.invoke(
+            IPC_CHANNELS.selector.manifests.get,
+            name
+          ) as Promise<Awaited<ReturnType<HandoffApi["selector"]["manifests"]["get"]>>>
+        },
+
+        addFiles(name: string, paths: string[]) {
+          return ipcRenderer.invoke(
+            IPC_CHANNELS.selector.manifests.addFiles,
+            name,
+            paths
+          ) as Promise<
+            Awaited<ReturnType<HandoffApi["selector"]["manifests"]["addFiles"]>>
+          >
+        },
+
+        duplicate(name: string, nextName: string) {
+          return ipcRenderer.invoke(
+            IPC_CHANNELS.selector.manifests.duplicate,
+            name,
+            nextName
+          ) as Promise<
+            Awaited<ReturnType<HandoffApi["selector"]["manifests"]["duplicate"]>>
+          >
+        },
+
+        deleteBundle(name: string) {
+          return ipcRenderer.invoke(
+            IPC_CHANNELS.selector.manifests.deleteBundle,
+            name
+          ) as Promise<
+            Awaited<ReturnType<HandoffApi["selector"]["manifests"]["deleteBundle"]>>
+          >
+        },
+
+        rename(name: string, nextName: string) {
+          return ipcRenderer.invoke(
+            IPC_CHANNELS.selector.manifests.rename,
+            name,
+            nextName
+          ) as Promise<
+            Awaited<ReturnType<HandoffApi["selector"]["manifests"]["rename"]>>
+          >
+        },
+
+        setComment(name: string, path: string, comment: string) {
+          return ipcRenderer.invoke(
+            IPC_CHANNELS.selector.manifests.setComment,
+            name,
+            path,
+            comment
+          ) as Promise<
+            Awaited<ReturnType<HandoffApi["selector"]["manifests"]["setComment"]>>
+          >
+        },
+
+        setExportText(
+          name: string,
+          exportPrefixText: string,
+          exportSuffixText: string,
+          stripComments?: boolean,
+          gitDiffModeOrUseGitDiffs?: SelectorGitDiffMode | boolean
+        ) {
+          return ipcRenderer.invoke(
+            IPC_CHANNELS.selector.manifests.setExportText,
+            name,
+            exportPrefixText,
+            exportSuffixText,
+            stripComments,
+            gitDiffModeOrUseGitDiffs
+          ) as Promise<
+            Awaited<ReturnType<HandoffApi["selector"]["manifests"]["setExportText"]>>
+          >
+        },
+
+        setSelected(name: string, path: string, selected: boolean) {
+          return ipcRenderer.invoke(
+            IPC_CHANNELS.selector.manifests.setSelected,
+            name,
+            path,
+            selected
+          ) as Promise<
+            Awaited<ReturnType<HandoffApi["selector"]["manifests"]["setSelected"]>>
+          >
+        },
+
+        setSelectedPaths(name: string, paths: string[]) {
+          return ipcRenderer.invoke(
+            IPC_CHANNELS.selector.manifests.setSelectedPaths,
+            name,
+            paths
+          ) as Promise<
+            Awaited<ReturnType<HandoffApi["selector"]["manifests"]["setSelectedPaths"]>>
+          >
+        },
+
+        removeFiles(name: string, paths: string[]) {
+          return ipcRenderer.invoke(
+            IPC_CHANNELS.selector.manifests.removeFiles,
+            name,
+            paths
+          ) as Promise<
+            Awaited<ReturnType<HandoffApi["selector"]["manifests"]["removeFiles"]>>
+          >
+        }
+      },
+
+      files: {
+        search(rootId: string, query: string, limit?: number) {
+          return ipcRenderer.invoke(
+            IPC_CHANNELS.selector.files.search,
+            rootId,
+            query,
+            limit
+          ) as Promise<Awaited<ReturnType<HandoffApi["selector"]["files"]["search"]>>>
+        },
+
+        preview(path: string) {
+          return ipcRenderer.invoke(
+            IPC_CHANNELS.selector.files.preview,
+            path
+          ) as Promise<Awaited<ReturnType<HandoffApi["selector"]["files"]["preview"]>>>
+        }
+      },
+
+      exports: {
+        estimate(name: string) {
+          return ipcRenderer.invoke(
+            IPC_CHANNELS.selector.exports.estimate,
+            name
+          ) as Promise<Awaited<ReturnType<HandoffApi["selector"]["exports"]["estimate"]>>>
+        },
+
+        regenerateAndCopy(name: string) {
+          return ipcRenderer.invoke(
+            IPC_CHANNELS.selector.exports.regenerateAndCopy,
+            name
+          ) as Promise<
+            Awaited<ReturnType<HandoffApi["selector"]["exports"]["regenerateAndCopy"]>>
+          >
+        }
       }
     },
 

@@ -14,6 +14,7 @@ import type {
   ConversationTranscript,
   HandoffSettingsPatch,
   HandoffSettingsSnapshot,
+  SelectorAppStateChangeEvent,
   HandoffStateChangeEvent,
   HandoffStateChangeReason,
   SearchFilters,
@@ -28,6 +29,10 @@ import {
   createHandoffSearchService,
   type HandoffSearchService
 } from "./search"
+import {
+  createSelectorService,
+  type HandoffSelectorService
+} from "./selector"
 import { createHandoffSettingsStore } from "./settings"
 
 const SESSION_FILENAME_PATTERN =
@@ -44,6 +49,7 @@ export interface HandoffServiceOptions {
   dataDir?: string
   codexHome?: string
   claudeHome?: string
+  selectorStateDir?: string
   searchEnabled?: boolean
   searchService?: HandoffSearchService
 }
@@ -65,6 +71,7 @@ export interface HandoffService {
     delete(id: string): Promise<AgentDeleteResult>
     duplicate(id: string): Promise<AgentDefinition>
   }
+  selector: HandoffSelectorService
   sessions: {
     list(): Promise<SessionListItem[]>
     getTranscript(
@@ -83,6 +90,9 @@ export interface HandoffService {
   startWatching(): Promise<void>
   onStateChanged(listener: (event: HandoffStateChangeEvent) => void): () => void
   onSearchStatusChanged(listener: (status: SearchStatus) => void): () => void
+  onSelectorStateChanged(
+    listener: (event: SelectorAppStateChangeEvent) => void
+  ): () => void
   dispose(): Promise<void>
 }
 
@@ -702,6 +712,10 @@ export function createHandoffService(
     codexHome,
     claudeHome
   })
+  const selectorService = createSelectorService({
+    cwd: appDir,
+    stateDir: options.selectorStateDir
+  })
   const normalizedIndexPath = indexPath.replaceAll("\\", "/")
   const normalizedArchivedSessionsRoot = archivedSessionsRoot.replaceAll("\\", "/")
   const normalizedClaudeProjectsRoot = claudeProjectsRoot.replaceAll("\\", "/")
@@ -896,6 +910,8 @@ export function createHandoffService(
       }
     },
 
+    selector: selectorService,
+
     sessions: {
       async list() {
         return getResolvedSessionsFromCache()
@@ -953,10 +969,12 @@ export function createHandoffService(
 
     async startWatching() {
       if (listWatcher) {
+        await selectorService.startWatching()
         return
       }
 
       await loadCache()
+      await selectorService.startWatching()
 
       listWatcher = chokidar.watch([indexPath, claudeProjectsRoot, archivedSessionsRoot], {
         ignoreInitial: true,
@@ -1010,6 +1028,10 @@ export function createHandoffService(
       return searchService.onStatusChanged(listener)
     },
 
+    onSelectorStateChanged(listener) {
+      return selectorService.onStateChanged(listener)
+    },
+
     async dispose() {
       if (emitTimer) {
         clearTimeout(emitTimer)
@@ -1028,6 +1050,7 @@ export function createHandoffService(
         listWatcher = null
       }
 
+      await selectorService.dispose()
       await searchService?.dispose()
     }
   }
