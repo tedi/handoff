@@ -71,6 +71,9 @@ describe("createHandoffSkillsService", () => {
     expect(codexConfig).toContain("# BEGIN HANDOFF SKILLS MANAGED BLOCK")
     expect(codexConfig).toContain('[[skills.config]]')
     expect(codexConfig).toContain('handoff-agent-bridge')
+    expect(codexConfig).toContain(
+      path.join(context.codexHome, "skills", "handoff-agent-bridge", "SKILL.md")
+    )
     expect(claudeConfig).toMatchObject({
       mcpServers: {
         "handoff-agent-bridge": {
@@ -85,6 +88,12 @@ describe("createHandoffSkillsService", () => {
       path.join(context.codexHome, "config.toml"),
       "utf8"
     )
+    await expect(
+      fs.readFile(
+        path.join(context.codexHome, "skills", "handoff-agent-bridge", "SKILL.md"),
+        "utf8"
+      )
+    ).resolves.toContain("Handoff Agent Bridge")
     expect(
       codexConfigAfterReinstall.match(/# BEGIN HANDOFF SKILLS MANAGED BLOCK/g)
     ).toHaveLength(1)

@@ -277,9 +277,8 @@ function normalizeSettingsPaths(settings: HandoffSettings, options: HandoffSkill
     codexConfigPath: path.join(codexHomePath, "config.toml"),
     claudeConfigPath: path.join(claudeHomePath, "settings.json"),
     codexSkillPath: path.join(
-      options.dataDir,
+      codexHomePath,
       "skills",
-      "codex",
       HANDOFF_SKILL_NAME,
       "SKILL.md"
     ),

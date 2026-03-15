@@ -17,8 +17,8 @@
     --accent-strong: #a78bfa;
     --rust: #d4956a;
     --ink: #e1e2e5;
-    --muted: #6b6f76;
-    --soft: #464a52;
+    --muted: #7a7e86;
+    --soft: #52565e;
     --card-bg: rgba(255, 255, 255, 0.02);
     --card-border: rgba(255, 255, 255, 0.04);
     --hover-lift: rgba(255, 255, 255, 0.02);
@@ -508,7 +508,7 @@ pre {
     background: rgba(255, 255, 255, 0.04);
     color: var(--ink);
     padding: 6px 9px;
-    border-radius: 7px;
+    border-radius: 6px;
     font-size: 0.7rem;
     transition: background-color 80ms ease, border-color 80ms ease, color 80ms ease;
 }
@@ -1011,7 +1011,7 @@ pre {
     background: rgba(255, 255, 255, 0.04);
     color: var(--ink);
     padding: 6px 9px;
-    border-radius: 7px;
+    border-radius: 6px;
     font-size: 0.7rem;
     transition: background-color 80ms ease, border-color 80ms ease, color 80ms ease;
 }
@@ -1217,7 +1217,7 @@ pre {
     background: rgba(255, 255, 255, 0.05);
     color: var(--ink);
     padding: 6px 10px;
-    border-radius: 7px;
+    border-radius: 6px;
     font-size: 0.72rem;
     transition: background-color 80ms ease, border-color 80ms ease;
 }
@@ -2655,7 +2655,7 @@ pre {
 .selector-manifest-menu-button {
     width: 24px;
     height: 24px;
-    border-radius: 7px;
+    border-radius: 6px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -3128,9 +3128,9 @@ pre {
 .modal-card {
     width: min(980px, 100%);
     max-height: min(84vh, 920px);
-    border-radius: 18px;
+    border-radius: 12px;
     padding: 18px;
-    box-shadow: 0 26px 80px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
     display: flex;
     flex-direction: column;
     gap: 16px;
@@ -3151,10 +3151,10 @@ pre {
 
 .danger-button {
     border: none;
-    background: linear-gradient(135deg, #dc5d5d, #b63838);
-    color: #fff8f8;
+    background: linear-gradient(135deg, #d45555, #b03535);
+    color: #fff;
     font-weight: 600;
-    box-shadow: 0 14px 30px rgba(182, 56, 56, 0.2);
+    box-shadow: 0 4px 12px rgba(176, 53, 53, 0.18);
 }
 
 .export-path {
@@ -3167,13 +3167,13 @@ pre {
 
 .accent-button {
     border: none;
-    background: linear-gradient(135deg, var(--accent), #7c3aed);
-    color: #faf5ff;
+    background: linear-gradient(135deg, var(--accent), #6d5cdf);
+    color: #fff;
     font-weight: 600;
     padding: 7px 13px;
     border-radius: 8px;
     font-size: 0.78rem;
-    transition: opacity 120ms ease;
+    transition: opacity 80ms ease;
 }
 
 .accent-button:hover {

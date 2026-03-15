@@ -118,8 +118,7 @@ function createMockApi({
         provider: "codex",
         configPath: "/Users/tedikonda/.codex/config.toml",
         configExists: true,
-        skillPath:
-          "/Users/tedikonda/Library/Application Support/Handoff/skills/codex/handoff-agent-bridge/SKILL.md",
+        skillPath: "/Users/tedikonda/.codex/skills/handoff-agent-bridge/SKILL.md",
         skillInstalled: false,
         mcpInstalled: false,
         managedConfigBlock: false,
