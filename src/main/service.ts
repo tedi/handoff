@@ -7,6 +7,9 @@ import chokidar from "chokidar"
 
 import { buildConversationTranscript } from "../shared/parser"
 import type {
+  AgentDefinition,
+  AgentDeleteResult,
+  AgentUpdatePatch,
   AppStateInfo,
   ConversationTranscript,
   HandoffSettingsPatch,
@@ -54,6 +57,13 @@ export interface HandoffService {
     get(): Promise<HandoffSettingsSnapshot>
     update(patch: HandoffSettingsPatch): Promise<HandoffSettingsSnapshot>
     resetProvider(provider: SessionProvider): Promise<HandoffSettingsSnapshot>
+  }
+  agents: {
+    list(): Promise<AgentDefinition[]>
+    create(): Promise<AgentDefinition>
+    update(id: string, patch: AgentUpdatePatch): Promise<AgentDefinition>
+    delete(id: string): Promise<AgentDeleteResult>
+    duplicate(id: string): Promise<AgentDefinition>
   }
   sessions: {
     list(): Promise<SessionListItem[]>
@@ -861,6 +871,28 @@ export function createHandoffService(
 
       async resetProvider(provider) {
         return settingsStore.resetProvider(provider, await getResolvedSessionsFromCache())
+      }
+    },
+
+    agents: {
+      async list() {
+        return settingsStore.listAgents()
+      },
+
+      async create() {
+        return settingsStore.createAgent()
+      },
+
+      async update(id, patch) {
+        return settingsStore.updateAgent(id, patch)
+      },
+
+      async delete(id) {
+        return settingsStore.deleteAgent(id)
+      },
+
+      async duplicate(id) {
+        return settingsStore.duplicateAgent(id)
       }
     },
 

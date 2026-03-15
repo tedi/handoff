@@ -80,7 +80,8 @@ const settingsSnapshot: HandoffSettingsSnapshot = {
     terminals: {
       enabledTerminalIds: ["terminal", "ghostty"],
       defaultTerminalId: "ghostty"
-    }
+    },
+    agents: []
   },
   providerInfo: {
     codex: {
@@ -137,6 +138,13 @@ describe("registerIpcHandlers", () => {
         get: vi.fn().mockResolvedValue(settingsSnapshot),
         update: vi.fn(),
         resetProvider: vi.fn()
+      },
+      agents: {
+        list: vi.fn().mockResolvedValue([]),
+        create: vi.fn(),
+        update: vi.fn(),
+        delete: vi.fn(),
+        duplicate: vi.fn()
       },
       sessions: {
         list: vi.fn(),
@@ -203,6 +211,13 @@ describe("registerIpcHandlers", () => {
         update: vi.fn(),
         resetProvider: vi.fn()
       },
+      agents: {
+        list: vi.fn().mockResolvedValue([]),
+        create: vi.fn(),
+        update: vi.fn(),
+        delete: vi.fn(),
+        duplicate: vi.fn()
+      },
       sessions: {
         list: vi.fn(),
         getTranscript: vi.fn()
@@ -242,6 +257,13 @@ describe("registerIpcHandlers", () => {
         get: vi.fn().mockResolvedValue(settingsSnapshot),
         update: vi.fn(),
         resetProvider: vi.fn()
+      },
+      agents: {
+        list: vi.fn().mockResolvedValue([]),
+        create: vi.fn(),
+        update: vi.fn(),
+        delete: vi.fn(),
+        duplicate: vi.fn()
       },
       sessions: {
         list: vi.fn(),

@@ -39,6 +39,13 @@ describe("createHandoffBridge", () => {
       }
     })
     await bridge.settings.resetProvider("claude")
+    await bridge.agents.list()
+    await bridge.agents.create()
+    await bridge.agents.update("agent-1", {
+      name: "Reviewer"
+    })
+    await bridge.agents.delete("agent-1")
+    await bridge.agents.duplicate("agent-2")
     await bridge.app.openSourceSession("claude", "session-1", "cli", "/tmp/project")
     await bridge.app.startNewThread({
       provider: "codex",
@@ -99,6 +106,32 @@ describe("createHandoffBridge", () => {
     )
     expect(invoke).toHaveBeenNthCalledWith(
       8,
+      IPC_CHANNELS.agents.list
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      9,
+      IPC_CHANNELS.agents.create
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      10,
+      IPC_CHANNELS.agents.update,
+      "agent-1",
+      {
+        name: "Reviewer"
+      }
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      11,
+      IPC_CHANNELS.agents.delete,
+      "agent-1"
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      12,
+      IPC_CHANNELS.agents.duplicate,
+      "agent-2"
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      13,
       IPC_CHANNELS.app.openSourceSession,
       "claude",
       "session-1",
@@ -106,7 +139,7 @@ describe("createHandoffBridge", () => {
       "/tmp/project"
     )
     expect(invoke).toHaveBeenNthCalledWith(
-      9,
+      14,
       IPC_CHANNELS.app.startNewThread,
       {
         provider: "codex",
@@ -119,13 +152,13 @@ describe("createHandoffBridge", () => {
       }
     )
     expect(invoke).toHaveBeenNthCalledWith(
-      10,
+      15,
       IPC_CHANNELS.app.openProjectPath,
       "editor",
       "/tmp/project"
     )
     expect(invoke).toHaveBeenNthCalledWith(
-      11,
+      16,
       IPC_CHANNELS.clipboard.writeText,
       "copied"
     )

@@ -23,8 +23,11 @@ import "prismjs/components/prism-tsx"
 import "prismjs/components/prism-typescript"
 
 import type {
+  AgentDefinition,
+  AgentUpdatePatch,
   ArchivedFilterValue,
   AppStateInfo,
+  AppSection,
   AssistantMessageEntry,
   AssistantThoughtChainEntry,
   ConversationPatch,
@@ -188,9 +191,9 @@ function ProviderIcon({
   )
 }
 
+const SECTION_RAIL_WIDTH = 76
 const DEFAULT_SIDEBAR_WIDTH = 280
 const MIN_SIDEBAR_WIDTH = 220
-const COLLAPSED_SIDEBAR_WIDTH = 128
 const SIDEBAR_WIDTH_STORAGE_KEY = "handoff.sidebar-width"
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "handoff.sidebar-collapsed"
 const NEW_THREAD_INCLUDE_DIFFS_STORAGE_KEY = "handoff.new-thread-include-diffs"
@@ -280,6 +283,7 @@ function applySettingsPatchToSnapshot(
   return {
     ...snapshot,
     settings: {
+      agents: snapshot.settings.agents,
       providers: {
         codex: {
           ...snapshot.settings.providers.codex,
@@ -299,7 +303,7 @@ function applySettingsPatchToSnapshot(
 }
 
 function clampSidebarWidth(value: number, viewportWidth: number) {
-  const maxWidth = Math.max(COLLAPSED_SIDEBAR_WIDTH, Math.floor(viewportWidth * 0.4))
+  const maxWidth = Math.max(MIN_SIDEBAR_WIDTH, Math.floor(viewportWidth * 0.4))
   const minWidth = Math.min(MIN_SIDEBAR_WIDTH, maxWidth)
   return Math.min(Math.max(Math.round(value), minWidth), maxWidth)
 }
@@ -505,6 +509,22 @@ function buildNewThreadStartLabel(draft: Pick<NewThreadDraft, "launchMode" | "ve
   }
 
   return `Start in ${providerLabel} ${formatLaunchModeLabel(draft.launchMode)}`
+}
+
+function sortAgentsByName(agents: AgentDefinition[]) {
+  return [...agents].sort(
+    (left, right) =>
+      left.name.localeCompare(right.name, undefined, { sensitivity: "base" }) ||
+      left.id.localeCompare(right.id)
+  )
+}
+
+function cloneAgentDefinition(agent: AgentDefinition | null) {
+  return agent ? { ...agent } : null
+}
+
+function areAgentsEqual(left: AgentDefinition | null, right: AgentDefinition | null) {
+  return JSON.stringify(left) === JSON.stringify(right)
 }
 
 function buildMarkdownExport(
@@ -864,6 +884,68 @@ function BackArrowIcon() {
         strokeLinecap="round"
         strokeLinejoin="round"
         strokeWidth="1.2"
+      />
+    </svg>
+  )
+}
+
+function ThreadsIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="sidebar-filter-icon"
+      fill="none"
+      viewBox="0 0 16 16"
+    >
+      <path
+        d="M3 4.25h10M3 8h10M3 11.75h10"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.2"
+      />
+    </svg>
+  )
+}
+
+function AgentsIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="sidebar-filter-icon"
+      fill="none"
+      viewBox="0 0 16 16"
+    >
+      <circle cx="8" cy="5.2" r="2.1" stroke="currentColor" strokeWidth="1.15" />
+      <path
+        d="M3.75 12.75c.42-2.1 2.02-3.25 4.25-3.25s3.83 1.15 4.25 3.25"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.15"
+      />
+    </svg>
+  )
+}
+
+function SelectorIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="sidebar-filter-icon"
+      fill="none"
+      viewBox="0 0 16 16"
+    >
+      <path
+        d="M8 2.75 12.75 5.5v5L8 13.25 3.25 10.5v-5L8 2.75Z"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.15"
+      />
+      <path
+        d="M8 2.75v10.5M3.25 5.5 8 8.25l4.75-2.75"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.05"
       />
     </svg>
   )
@@ -1904,6 +1986,243 @@ function SettingsPane({
   )
 }
 
+function AgentsListPane({
+  agents,
+  agentsError,
+  isLoading,
+  onCreate,
+  onSelect,
+  selectedAgentId,
+  stateInfo
+}: {
+  agents: AgentDefinition[]
+  agentsError: string | null
+  isLoading: boolean
+  onCreate(): void
+  onSelect(agentId: string): void
+  selectedAgentId: string | null
+  stateInfo: AppStateInfo | null
+}) {
+  if (agentsError) {
+    return (
+      <div className="agent-list">
+        <EmptyState
+          title="Unable to load agents"
+          detail={agentsError}
+        />
+      </div>
+    )
+  }
+
+  return (
+    <div className="agent-list" role="list">
+      <div className="agent-list-create-row">
+        <button
+          className="sidebar-filter-button sidebar-filter-list-button"
+          onClick={onCreate}
+          type="button"
+        >
+          <WriteIcon />
+          <span className="sidebar-filter-button-label">New agent</span>
+        </button>
+      </div>
+
+      {isLoading ? (
+        <EmptyState
+          title="Loading agents"
+          detail="Reading saved agent presets."
+        />
+      ) : agents.length === 0 ? (
+        <EmptyState
+          title="No agents yet"
+          detail="Create an agent to save provider, model, and instruction presets."
+        />
+      ) : (
+        sortAgentsByName(agents).map(agent => (
+          <button
+            className={`session-row ${agent.id === selectedAgentId ? "is-active" : ""}`}
+            key={agent.id}
+            onClick={() => onSelect(agent.id)}
+            type="button"
+          >
+            <div className="session-row-main">
+              <div className="session-title-group">
+                <span className="session-title">{agent.name}</span>
+              </div>
+              <div className="session-row-meta">
+                <ProviderIcon provider={agent.provider} stateInfo={stateInfo} />
+              </div>
+            </div>
+            <span className="session-subtitle">
+              {getComposerModelLabel(agent.provider, agent.modelId)}
+            </span>
+          </button>
+        ))
+      )}
+    </div>
+  )
+}
+
+function AgentEditorPane({
+  agent,
+  draft,
+  editorError,
+  onDraftChange,
+  onDuplicate,
+  onDelete,
+  onReset,
+  onSave
+}: {
+  agent: AgentDefinition | null
+  draft: AgentDefinition | null
+  editorError: string | null
+  onDraftChange(patch: AgentUpdatePatch): void
+  onDuplicate(): void
+  onDelete(): void
+  onReset(): void
+  onSave(): void
+}) {
+  if (!agent) {
+    return (
+      <EmptyState
+        title="No agent selected"
+        detail="Pick an agent from the left list or create a new one."
+      />
+    )
+  }
+
+  if (!draft) {
+    return (
+      <EmptyState
+        title="Loading agent"
+        detail="Preparing the selected agent."
+      />
+    )
+  }
+
+  const isDirty = !areAgentsEqual(agent, draft)
+  const modelOptions = getComposerModelOptions(draft.provider)
+  const supportsFastMode = getComposerProviderConfig(draft.provider).supportsFastMode
+
+  return (
+    <div className="settings-layout">
+      <section className="settings-card">
+        <div className="settings-card-header">
+          <div className="settings-card-copy">
+            <h2>{draft.name}</h2>
+            <p>Save reusable provider, model, and instruction defaults for later use.</p>
+          </div>
+          <div className="agent-editor-header-actions">
+            <button className="ghost-button" onClick={onDuplicate} type="button">
+              Duplicate
+            </button>
+            <button className="ghost-button" onClick={onDelete} type="button">
+              Delete
+            </button>
+          </div>
+        </div>
+
+        <div className="settings-field-list">
+          <label className="settings-field">
+            <span className="settings-field-label">Name</span>
+            <input
+              className="settings-input"
+              onChange={event => onDraftChange({ name: event.target.value })}
+              type="text"
+              value={draft.name}
+            />
+          </label>
+
+          <div className="agent-editor-grid">
+            <label className="settings-field">
+              <span className="settings-field-label">Provider</span>
+              <select
+                className="settings-input"
+                onChange={event =>
+                  onDraftChange({ provider: event.target.value as SessionProvider })
+                }
+                value={draft.provider}
+              >
+                {NEW_THREAD_VENDOR_OPTIONS.map(option => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="settings-field">
+              <span className="settings-field-label">Model</span>
+              <select
+                className="settings-input"
+                onChange={event => onDraftChange({ modelId: event.target.value })}
+                value={draft.modelId}
+              >
+                {modelOptions.map(option => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="settings-field">
+              <span className="settings-field-label">Thinking strength</span>
+              <select
+                className="settings-input"
+                onChange={event =>
+                  onDraftChange({ thinkingLevel: event.target.value as ThinkingLevel })
+                }
+                value={draft.thinkingLevel}
+              >
+                {THINKING_LEVEL_OPTIONS.map(option => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <label className="new-thread-inline-toggle">
+            <input
+              checked={draft.fast}
+              disabled={!supportsFastMode}
+              onChange={event => onDraftChange({ fast: event.target.checked })}
+              type="checkbox"
+            />
+            <span>{supportsFastMode ? "Fast mode" : "Fast mode unavailable for this provider"}</span>
+          </label>
+
+          <label className="settings-field">
+            <span className="settings-field-label">Custom instructions</span>
+            <textarea
+              className="new-thread-prompt-input agent-editor-textarea"
+              onChange={event =>
+                onDraftChange({ customInstructions: event.target.value })
+              }
+              placeholder="Add custom instructions"
+              spellCheck={false}
+              value={draft.customInstructions}
+            />
+          </label>
+        </div>
+
+        {editorError ? <div className="new-thread-inline-error">{editorError}</div> : null}
+
+        <div className="new-thread-actions">
+          <button className="ghost-button" disabled={!isDirty} onClick={onReset} type="button">
+            Reset
+          </button>
+          <button className="accent-button" onClick={onSave} type="button">
+            Save
+          </button>
+        </div>
+      </section>
+    </div>
+  )
+}
+
 function NewThreadPane({
   draft,
   generatedPrompt,
@@ -2565,22 +2884,23 @@ function getHandoffApi(): HandoffApi | null {
 }
 
 export default function App() {
-  const [rightPaneMode, setRightPaneMode] = useState<
-    "conversation" | "search" | "settings" | "new-thread"
-  >(
+  const [activeSection, setActiveSection] = useState<AppSection>("threads")
+  const [rightPaneMode, setRightPaneMode] = useState<"conversation" | "search" | "new-thread">(
     "conversation"
   )
-  const [previousPaneMode, setPreviousPaneMode] = useState<
-    "conversation" | "search" | "new-thread"
-  >("conversation")
-  const [previousNonComposerPaneMode, setPreviousNonComposerPaneMode] = useState<
-    "conversation" | "search"
-  >("conversation")
+  const [previousNonComposerPaneMode, setPreviousNonComposerPaneMode] = useState<"conversation" | "search">("conversation")
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [stateInfo, setStateInfo] = useState<AppStateInfo | null>(null)
   const [settingsSnapshot, setSettingsSnapshot] = useState<HandoffSettingsSnapshot | null>(
     null
   )
   const [settingsError, setSettingsError] = useState<string | null>(null)
+  const [agents, setAgents] = useState<AgentDefinition[]>([])
+  const [isLoadingAgents, setIsLoadingAgents] = useState(true)
+  const [agentsError, setAgentsError] = useState<string | null>(null)
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
+  const [agentDraft, setAgentDraft] = useState<AgentDefinition | null>(null)
+  const [agentEditorError, setAgentEditorError] = useState<string | null>(null)
   const [sessions, setSessions] = useState<SessionListItem[]>([])
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [activeTranscript, setActiveTranscript] =
@@ -2648,11 +2968,12 @@ export default function App() {
   const toastHideTimerRef = useRef<number | null>(null)
   const toastClearTimerRef = useRef<number | null>(null)
   const resolvedSidebarWidth = isSidebarCollapsed
-    ? COLLAPSED_SIDEBAR_WIDTH
+    ? 0
     : clampSidebarWidth(sidebarWidth, viewportWidth)
   const workspaceStyle = useMemo(
     () =>
       ({
+        "--section-rail-width": `${SECTION_RAIL_WIDTH}px`,
         "--sidebar-width": `${resolvedSidebarWidth}px`
       }) as CSSProperties,
     [resolvedSidebarWidth]
@@ -2770,6 +3091,11 @@ export default function App() {
   const activeSession = useMemo(
     () => sessions.find(session => session.id === activeSessionId) ?? null,
     [activeSessionId, sessions]
+  )
+  const sortedAgents = useMemo(() => sortAgentsByName(agents), [agents])
+  const selectedAgent = useMemo(
+    () => agents.find(agent => agent.id === selectedAgentId) ?? null,
+    [agents, selectedAgentId]
   )
   const activeProjectPath =
     activeTranscript && activeTranscript.id === activeSession?.id
@@ -2912,6 +3238,38 @@ export default function App() {
         error instanceof Error ? error.message : "Unable to load settings."
       setSettingsSnapshot(null)
       setSettingsError(message)
+    }
+  }, [])
+
+  const loadAgents = useCallback(async () => {
+    setIsLoadingAgents(true)
+    const api = getHandoffApi()
+
+    if (!api) {
+      setAgents([])
+      setAgentsError("The preload bridge did not load. Restart the app.")
+      setSelectedAgentId(null)
+      setIsLoadingAgents(false)
+      return
+    }
+
+    try {
+      const nextAgents = await api.agents.list()
+      setAgents(nextAgents)
+      setAgentsError(null)
+      setSelectedAgentId(currentSelectedId => {
+        if (currentSelectedId && nextAgents.some(agent => agent.id === currentSelectedId)) {
+          return currentSelectedId
+        }
+
+        return nextAgents[0]?.id ?? null
+      })
+    } catch (error) {
+      setAgents([])
+      setAgentsError(error instanceof Error ? error.message : "Unable to load agents.")
+      setSelectedAgentId(null)
+    } finally {
+      setIsLoadingAgents(false)
     }
   }, [])
 
@@ -3481,7 +3839,7 @@ export default function App() {
           documentCount: 0
         })
       }
-      await loadSessions()
+      await Promise.all([loadSessions(), loadAgents()])
     }
 
     initialize().catch(error => {
@@ -3494,7 +3852,7 @@ export default function App() {
     return () => {
       isMounted = false
     }
-  }, [loadSessions])
+  }, [loadAgents, loadSessions])
 
   useEffect(() => {
     const api = getHandoffApi()
@@ -3510,6 +3868,11 @@ export default function App() {
   useEffect(() => {
     void loadConversation(activeSession)
   }, [activeSession, loadConversation])
+
+  useEffect(() => {
+    setAgentDraft(cloneAgentDefinition(selectedAgent))
+    setAgentEditorError(null)
+  }, [selectedAgent])
 
   useEffect(() => {
     const session = selectedNewThreadSourceSession
@@ -3655,7 +4018,7 @@ export default function App() {
   ])
 
   useEffect(() => {
-    if (rightPaneMode !== "search") {
+    if (activeSection !== "threads" || isSettingsOpen || rightPaneMode !== "search") {
       return
     }
 
@@ -3663,7 +4026,7 @@ export default function App() {
     window.requestAnimationFrame(() => {
       searchInputRef.current?.focus()
     })
-  }, [rightPaneMode])
+  }, [activeSection, isSettingsOpen, rightPaneMode])
 
   useEffect(() => {
     setExpandedThoughtChainIds(new Set())
@@ -3683,7 +4046,20 @@ export default function App() {
   }, [activeSessionId, sessions])
 
   useEffect(() => {
-    if (rightPaneMode !== "search") {
+    if (agents.length === 0) {
+      if (selectedAgentId !== null) {
+        setSelectedAgentId(null)
+      }
+      return
+    }
+
+    if (!selectedAgentId || !agents.some(agent => agent.id === selectedAgentId)) {
+      setSelectedAgentId(sortAgentsByName(agents)[0]?.id ?? null)
+    }
+  }, [agents, selectedAgentId])
+
+  useEffect(() => {
+    if (activeSection !== "threads" || isSettingsOpen || rightPaneMode !== "search") {
       return () => undefined
     }
 
@@ -3734,7 +4110,15 @@ export default function App() {
     return () => {
       window.clearTimeout(timer)
     }
-  }, [rightPaneMode, searchFilters, searchQuery, searchStatus?.indexedAt, sessions.length])
+  }, [
+    activeSection,
+    isSettingsOpen,
+    rightPaneMode,
+    searchFilters,
+    searchQuery,
+    searchStatus?.indexedAt,
+    sessions.length
+  ])
 
   useEffect(() => {
     function handleResize() {
@@ -3769,7 +4153,7 @@ export default function App() {
   useEffect(() => {
     setIsCopyMenuOpen(false)
     setIsOutputFormatMenuOpen(false)
-  }, [activeSessionId, rightPaneMode])
+  }, [activeSection, activeSessionId, isSettingsOpen, rightPaneMode])
 
   useEffect(() => {
     if (!isFilterPopoverOpen) {
@@ -3995,20 +4379,18 @@ export default function App() {
   }, [])
 
   const handleOpenSearch = useCallback(() => {
+    setActiveSection("threads")
+    setIsSettingsOpen(false)
+    setIsFilterPopoverOpen(false)
     setRightPaneMode("search")
   }, [])
 
   const handleOpenNewThread = useCallback(() => {
-    const nextPreviousPaneMode =
-      rightPaneMode === "settings"
-        ? previousPaneMode
-        : rightPaneMode === "new-thread"
-          ? previousPaneMode
-          : rightPaneMode
-
-    setPreviousPaneMode(nextPreviousPaneMode)
+    setActiveSection("threads")
+    setIsSettingsOpen(false)
+    setIsFilterPopoverOpen(false)
     setPreviousNonComposerPaneMode(
-      nextPreviousPaneMode === "new-thread" ? previousNonComposerPaneMode : nextPreviousPaneMode
+      rightPaneMode === "new-thread" ? previousNonComposerPaneMode : rightPaneMode
     )
 
     const nextDraft = createDefaultNewThreadDraft()
@@ -4040,34 +4422,35 @@ export default function App() {
     setNewThreadSourceTranscript(seedTranscript)
     setNewThreadDraft(nextDraft)
     setRightPaneMode("new-thread")
-  }, [
-    activeSession,
-    activeTranscript,
-    previousNonComposerPaneMode,
-    previousPaneMode,
-    rightPaneMode
-  ])
+  }, [activeSession, activeTranscript, previousNonComposerPaneMode, rightPaneMode])
 
   const handleOpenSettings = useCallback(() => {
-    if (rightPaneMode !== "settings") {
-      setPreviousPaneMode(rightPaneMode)
-    }
-    setRightPaneMode("settings")
-  }, [rightPaneMode])
+    setIsSettingsOpen(true)
+  }, [])
 
   const handleCloseSettings = useCallback(() => {
-    setRightPaneMode(previousPaneMode)
-  }, [previousPaneMode])
+    setIsSettingsOpen(false)
+  }, [])
 
   const handleCloseNewThread = useCallback(() => {
     setRightPaneMode(previousNonComposerPaneMode)
   }, [previousNonComposerPaneMode])
 
   const handleReturnToSearch = useCallback(() => {
+    setActiveSection("threads")
+    setIsSettingsOpen(false)
     setRightPaneMode("search")
   }, [])
 
+  const handleSelectSection = useCallback((section: AppSection) => {
+    setActiveSection(section)
+    setIsSettingsOpen(false)
+    setIsFilterPopoverOpen(false)
+  }, [])
+
   const handleSelectSessionFromSidebar = useCallback((sessionId: string) => {
+    setActiveSection("threads")
+    setIsSettingsOpen(false)
     setActiveSessionId(sessionId)
     setRightPaneMode("conversation")
     setSearchReturnActive(false)
@@ -4075,10 +4458,158 @@ export default function App() {
   }, [])
 
   const handleSelectSearchResult = useCallback((result: SearchResult) => {
+    setActiveSection("threads")
+    setIsSettingsOpen(false)
     setActiveSessionId(result.id)
     setRightPaneMode("conversation")
     setSearchReturnActive(true)
   }, [])
+
+  const handleCreateAgent = useCallback(async () => {
+    const api = getHandoffApi()
+    if (!api) {
+      showToast("Preload bridge unavailable", "error")
+      return
+    }
+
+    try {
+      const nextAgent = await api.agents.create()
+      setAgents(currentAgents => [...currentAgents, nextAgent])
+      setSelectedAgentId(nextAgent.id)
+      setAgentDraft(cloneAgentDefinition(nextAgent))
+      setAgentEditorError(null)
+      setActiveSection("agents")
+      setIsSettingsOpen(false)
+      showToast("Created agent")
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to create agent.", "error")
+    }
+  }, [showToast])
+
+  const handleSelectAgent = useCallback((agentId: string) => {
+    setActiveSection("agents")
+    setIsSettingsOpen(false)
+    setSelectedAgentId(agentId)
+    setAgentEditorError(null)
+  }, [])
+
+  const handleAgentDraftChange = useCallback((patch: AgentUpdatePatch) => {
+    setAgentDraft(currentDraft => {
+      if (!currentDraft) {
+        return currentDraft
+      }
+
+      const provider = patch.provider ?? currentDraft.provider
+      const normalizedTarget = normalizeComposerTarget({
+        provider,
+        launchMode: "cli",
+        modelId: patch.modelId ?? currentDraft.modelId,
+        fast: patch.fast ?? currentDraft.fast
+      })
+
+      return {
+        ...currentDraft,
+        ...patch,
+        provider,
+        modelId: normalizedTarget.modelId,
+        fast: normalizedTarget.fast
+      }
+    })
+    setAgentEditorError(null)
+  }, [])
+
+  const handleSaveAgent = useCallback(async () => {
+    if (!selectedAgentId || !agentDraft) {
+      return
+    }
+
+    const trimmedName = agentDraft.name.trim()
+    if (!trimmedName) {
+      setAgentEditorError("Agent name is required.")
+      return
+    }
+
+    const api = getHandoffApi()
+    if (!api) {
+      showToast("Preload bridge unavailable", "error")
+      return
+    }
+
+    try {
+      const updatedAgent = await api.agents.update(selectedAgentId, {
+        name: trimmedName,
+        provider: agentDraft.provider,
+        modelId: agentDraft.modelId,
+        thinkingLevel: agentDraft.thinkingLevel,
+        fast: agentDraft.fast,
+        customInstructions: agentDraft.customInstructions
+      })
+      setAgents(currentAgents =>
+        currentAgents.map(agent => (agent.id === updatedAgent.id ? updatedAgent : agent))
+      )
+      setAgentDraft(cloneAgentDefinition(updatedAgent))
+      setAgentEditorError(null)
+      showToast("Saved agent")
+    } catch (error) {
+      setAgentEditorError(error instanceof Error ? error.message : "Unable to save agent.")
+      showToast(error instanceof Error ? error.message : "Unable to save agent.", "error")
+    }
+  }, [agentDraft, selectedAgentId, showToast])
+
+  const handleResetAgent = useCallback(() => {
+    setAgentDraft(cloneAgentDefinition(selectedAgent))
+    setAgentEditorError(null)
+  }, [selectedAgent])
+
+  const handleDeleteAgent = useCallback(async () => {
+    if (!selectedAgent) {
+      return
+    }
+
+    if (!window.confirm(`Delete "${selectedAgent.name}"?`)) {
+      return
+    }
+
+    const api = getHandoffApi()
+    if (!api) {
+      showToast("Preload bridge unavailable", "error")
+      return
+    }
+
+    try {
+      await api.agents.delete(selectedAgent.id)
+      setAgents(currentAgents =>
+        currentAgents.filter(agent => agent.id !== selectedAgent.id)
+      )
+      setAgentEditorError(null)
+      showToast("Deleted agent")
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to delete agent.", "error")
+    }
+  }, [selectedAgent, showToast])
+
+  const handleDuplicateAgent = useCallback(async () => {
+    if (!selectedAgent) {
+      return
+    }
+
+    const api = getHandoffApi()
+    if (!api) {
+      showToast("Preload bridge unavailable", "error")
+      return
+    }
+
+    try {
+      const duplicatedAgent = await api.agents.duplicate(selectedAgent.id)
+      setAgents(currentAgents => [...currentAgents, duplicatedAgent])
+      setSelectedAgentId(duplicatedAgent.id)
+      setAgentDraft(cloneAgentDefinition(duplicatedAgent))
+      setAgentEditorError(null)
+      showToast("Duplicated agent")
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Unable to duplicate agent.", "error")
+    }
+  }, [selectedAgent, showToast])
 
   const handleSidebarResizeStart = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -4098,245 +4629,237 @@ export default function App() {
   return (
     <div className="app-shell">
       <div
-        className={`workspace ${sidebarDragState ? "is-resizing" : ""}`}
+        className={`workspace ${sidebarDragState ? "is-resizing" : ""} ${
+          isSidebarCollapsed ? "is-sidebar-collapsed" : ""
+        }`}
         style={workspaceStyle}
       >
-        <section
-          className={`sidebar-pane ${isSidebarCollapsed ? "is-collapsed" : ""}`}
-        >
-          <div className="sidebar-header">
-            <div className="sidebar-header-controls">
-              <button
-                aria-label={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-                className="sidebar-toggle-button"
-                onClick={handleSidebarToggle}
-                type="button"
-              >
-                <span
-                  aria-hidden="true"
-                  className={`sidebar-toggle-icon ${
-                    isSidebarCollapsed ? "is-collapsed" : ""
-                  }`}
-                >
-                  <span className="sidebar-toggle-frame" />
-                  <span className="sidebar-toggle-divider" />
-                </span>
-              </button>
-
-              <button
-                aria-label="Open search"
-                aria-pressed={rightPaneMode === "search"}
-                className={`sidebar-filter-button ${
-                  rightPaneMode === "search" ? "is-active" : ""
-                }`}
-                onClick={handleOpenSearch}
-                type="button"
-              >
-                <SearchIcon />
-                {!isSidebarCollapsed ? (
-                  <span className="sidebar-filter-button-label">Search</span>
-                ) : null}
-              </button>
-
-              <button
-                aria-label="Open new thread"
-                aria-pressed={rightPaneMode === "new-thread"}
-                className={`sidebar-filter-button ${
-                  rightPaneMode === "new-thread" ? "is-active" : ""
-                }`}
-                onClick={handleOpenNewThread}
-                type="button"
-              >
-                <WriteIcon />
-                {!isSidebarCollapsed ? (
-                  <span className="sidebar-filter-button-label">New</span>
-                ) : null}
-              </button>
-            </div>
-          </div>
-
-          {!isSidebarCollapsed ? (
-            <div className="session-list" role="list">
-              <div className="sidebar-filter-list-row">
-                <button
-                  aria-expanded={isFilterPopoverOpen}
-                  aria-haspopup="dialog"
-                  aria-label={isFilterPopoverOpen ? "Close filters" : "Open filters"}
-                  aria-pressed={hasActiveSidebarFilters}
-                  className={`sidebar-filter-button sidebar-filter-list-button ${
-                    hasActiveSidebarFilters ? "is-active" : ""
-                  }`}
-                  onClick={handleFilterPopoverToggle}
-                  ref={filterButtonRef}
-                  type="button"
-                >
-                  <FilterIcon />
-                  <span className="sidebar-filter-button-label">Filter</span>
-                  {hasActiveSidebarFilters ? (
-                    <span aria-hidden="true" className="sidebar-filter-button-dot" />
-                  ) : null}
-                </button>
-
-                {isFilterPopoverOpen ? (
-                  <div
-                    aria-label="Session filters"
-                    className="sidebar-filter-popover"
-                    ref={filterPopoverRef}
-                    role="dialog"
-                  >
-                    <div className="sidebar-filter-popover-header">
-                      <span className="sidebar-filter-popover-title">Filters</span>
-                      <button
-                        aria-label="Dismiss filter panel"
-                        className="sidebar-filter-close-button"
-                        onClick={() => setIsFilterPopoverOpen(false)}
-                        type="button"
-                      >
-                        ×
-                      </button>
-                    </div>
-                    <SidebarFilterContent
-                      filters={sidebarFilters}
-                      onArchivedChange={handleArchivedFilterChange}
-                      onDateChange={handleDateFilterChange}
-                      onProjectToggle={handleProjectFilterToggle}
-                      onProviderChange={handleProviderFilterChange}
-                      projectOptions={projectOptions}
-                    />
-                  </div>
-                ) : null}
-              </div>
-
-              {isLoadingSessions && sessions.length === 0 ? (
-                  <EmptyState
-                    title="Loading sessions"
-                    detail="Reading Codex and Claude session indexes and resolving available conversation files."
-                  />
-                ) : sessions.length === 0 ? (
-                  <EmptyState
-                    title="No sessions found"
-                    detail="No conversation entries were available from Codex or Claude."
-                  />
-                ) : filteredSessions.length === 0 ? (
-                  <EmptyState
-                    title="No matching sessions"
-                    detail="No sessions match the current filters."
-                  />
-                ) : (
-                filteredSessions.map(session => (
-                  <button
-                    key={`${session.id}:${session.updatedAt}:${session.threadName}`}
-                    className={`session-row ${
-                      session.id === activeSessionId &&
-                      filteredSessions.some(visibleSession => visibleSession.id === activeSessionId)
-                        ? "is-active"
-                        : ""
-                    }`}
-                    onClick={() => handleSelectSessionFromSidebar(session.id)}
-                    type="button"
-                    >
-                      <div className="session-row-main">
-                        <div className="session-title-group">
-                          {session.archived ? (
-                            <span className="archived-indicator" title="Archived">
-                              A
-                            </span>
-                          ) : null}
-                          <span className="session-title">{session.threadName}</span>
-                        </div>
-                        <div className="session-row-meta">
-                          <ProviderIcon provider={session.provider} stateInfo={stateInfo} />
-                          <span className="session-time">
-                            {formatRelativeTimestamp(session.updatedAt)}
-                          </span>
-                        </div>
-                      </div>
-                    {!session.sessionPath ? (
-                      <span className="session-subtitle">Missing session file</span>
-                    ) : null}
-                  </button>
-                ))
-              )}
-            </div>
-          ) : (
-            <>
-              <div className="sidebar-collapsed-filters">
-                <button
-                  aria-expanded={isFilterPopoverOpen}
-                  aria-haspopup="dialog"
-                  aria-label={isFilterPopoverOpen ? "Close filters" : "Open filters"}
-                  aria-pressed={hasActiveSidebarFilters}
-                  className={`sidebar-filter-button ${hasActiveSidebarFilters ? "is-active" : ""}`}
-                  onClick={handleFilterPopoverToggle}
-                  ref={filterButtonRef}
-                  type="button"
-                >
-                  <FilterIcon />
-                  {hasActiveSidebarFilters ? (
-                    <span aria-hidden="true" className="sidebar-filter-button-dot" />
-                  ) : null}
-                </button>
-
-                {isFilterPopoverOpen ? (
-                  <div
-                    aria-label="Session filters"
-                    className="sidebar-filter-popover"
-                    ref={filterPopoverRef}
-                    role="dialog"
-                  >
-                    <div className="sidebar-filter-popover-header">
-                      <span className="sidebar-filter-popover-title">Filters</span>
-                      <button
-                        aria-label="Dismiss filter panel"
-                        className="sidebar-filter-close-button"
-                        onClick={() => setIsFilterPopoverOpen(false)}
-                        type="button"
-                      >
-                        ×
-                      </button>
-                    </div>
-                    <SidebarFilterContent
-                      filters={sidebarFilters}
-                      onArchivedChange={handleArchivedFilterChange}
-                      onDateChange={handleDateFilterChange}
-                      onProjectToggle={handleProjectFilterToggle}
-                      onProviderChange={handleProviderFilterChange}
-                      projectOptions={projectOptions}
-                    />
-                  </div>
-                ) : null}
-              </div>
-
-              <div className="sidebar-collapsed-spacer" />
-            </>
-          )}
-
-          <div className="sidebar-footer">
+        <section className="section-rail">
+          <div className="section-rail-top">
             <button
-              aria-label={rightPaneMode === "settings" ? "Back from settings" : "Open settings"}
-              className={`sidebar-footer-button ${
-                rightPaneMode === "settings" ? "is-active" : ""
-              }`}
-              onClick={rightPaneMode === "settings" ? handleCloseSettings : handleOpenSettings}
-              title={rightPaneMode === "settings" ? "Back" : "Settings"}
+              aria-label={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+              className="sidebar-toggle-button section-rail-collapse-button"
+              onClick={handleSidebarToggle}
               type="button"
             >
-              {rightPaneMode === "settings" ? <BackArrowIcon /> : <SettingsIcon />}
-              {!isSidebarCollapsed ? (
-                <span className="sidebar-footer-button-label">
-                  {rightPaneMode === "settings" ? "Back" : "Settings"}
-                </span>
-              ) : null}
+              <span
+                aria-hidden="true"
+                className={`sidebar-toggle-icon ${isSidebarCollapsed ? "is-collapsed" : ""}`}
+              >
+                <span className="sidebar-toggle-frame" />
+                <span className="sidebar-toggle-divider" />
+              </span>
             </button>
+
+            <div className="section-rail-nav">
+              <button
+                aria-pressed={activeSection === "threads"}
+                className={`section-rail-button ${activeSection === "threads" ? "is-active" : ""}`}
+                onClick={() => handleSelectSection("threads")}
+                type="button"
+              >
+                <ThreadsIcon />
+                <span className="section-rail-label">Threads</span>
+              </button>
+              <button
+                aria-pressed={activeSection === "agents"}
+                className={`section-rail-button ${activeSection === "agents" ? "is-active" : ""}`}
+                onClick={() => handleSelectSection("agents")}
+                type="button"
+              >
+                <AgentsIcon />
+                <span className="section-rail-label">Agents</span>
+              </button>
+              <button
+                aria-pressed={activeSection === "selector"}
+                className={`section-rail-button ${activeSection === "selector" ? "is-active" : ""}`}
+                onClick={() => handleSelectSection("selector")}
+                type="button"
+              >
+                <SelectorIcon />
+                <span className="section-rail-label">Selector</span>
+              </button>
+            </div>
           </div>
 
+          <div className="section-rail-footer">
+            <button
+              aria-label={isSettingsOpen ? "Back from settings" : "Open settings"}
+              className={`section-rail-button section-rail-settings-button ${
+                isSettingsOpen ? "is-active" : ""
+              }`}
+              onClick={isSettingsOpen ? handleCloseSettings : handleOpenSettings}
+              title={isSettingsOpen ? "Back" : "Settings"}
+              type="button"
+            >
+              {isSettingsOpen ? <BackArrowIcon /> : <SettingsIcon />}
+              <span className="section-rail-label">{isSettingsOpen ? "Back" : "Settings"}</span>
+            </button>
+          </div>
+        </section>
+
+        <section className={`sidebar-pane ${isSidebarCollapsed ? "is-collapsed" : ""}`}>
           {!isSidebarCollapsed ? (
-            <div
-              aria-hidden="true"
-              className="sidebar-resizer"
-              onPointerDown={handleSidebarResizeStart}
-            />
+            <>
+              {activeSection === "threads" ? (
+                <>
+                  <div className="sidebar-header">
+                    <div className="sidebar-header-controls">
+                      <button
+                        aria-label="Open search"
+                        aria-pressed={!isSettingsOpen && rightPaneMode === "search"}
+                        className={`sidebar-filter-button ${
+                          !isSettingsOpen && rightPaneMode === "search" ? "is-active" : ""
+                        }`}
+                        onClick={handleOpenSearch}
+                        type="button"
+                      >
+                        <SearchIcon />
+                        <span className="sidebar-filter-button-label">Search</span>
+                      </button>
+
+                      <button
+                        aria-label="Open new thread"
+                        aria-pressed={!isSettingsOpen && rightPaneMode === "new-thread"}
+                        className={`sidebar-filter-button ${
+                          !isSettingsOpen && rightPaneMode === "new-thread" ? "is-active" : ""
+                        }`}
+                        onClick={handleOpenNewThread}
+                        type="button"
+                      >
+                        <WriteIcon />
+                        <span className="sidebar-filter-button-label">New</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="session-list" role="list">
+                    <div className="sidebar-filter-list-row">
+                      <button
+                        aria-expanded={isFilterPopoverOpen}
+                        aria-haspopup="dialog"
+                        aria-label={isFilterPopoverOpen ? "Close filters" : "Open filters"}
+                        aria-pressed={hasActiveSidebarFilters}
+                        className={`sidebar-filter-button sidebar-filter-list-button ${
+                          hasActiveSidebarFilters ? "is-active" : ""
+                        }`}
+                        onClick={handleFilterPopoverToggle}
+                        ref={filterButtonRef}
+                        type="button"
+                      >
+                        <FilterIcon />
+                        <span className="sidebar-filter-button-label">Filter</span>
+                        {hasActiveSidebarFilters ? (
+                          <span aria-hidden="true" className="sidebar-filter-button-dot" />
+                        ) : null}
+                      </button>
+
+                      {isFilterPopoverOpen ? (
+                        <div
+                          aria-label="Session filters"
+                          className="sidebar-filter-popover"
+                          ref={filterPopoverRef}
+                          role="dialog"
+                        >
+                          <div className="sidebar-filter-popover-header">
+                            <span className="sidebar-filter-popover-title">Filters</span>
+                            <button
+                              aria-label="Dismiss filter panel"
+                              className="sidebar-filter-close-button"
+                              onClick={() => setIsFilterPopoverOpen(false)}
+                              type="button"
+                            >
+                              ×
+                            </button>
+                          </div>
+                          <SidebarFilterContent
+                            filters={sidebarFilters}
+                            onArchivedChange={handleArchivedFilterChange}
+                            onDateChange={handleDateFilterChange}
+                            onProjectToggle={handleProjectFilterToggle}
+                            onProviderChange={handleProviderFilterChange}
+                            projectOptions={projectOptions}
+                          />
+                        </div>
+                      ) : null}
+                    </div>
+
+                    {isLoadingSessions && sessions.length === 0 ? (
+                      <EmptyState
+                        title="Loading sessions"
+                        detail="Reading Codex and Claude session indexes and resolving available conversation files."
+                      />
+                    ) : sessions.length === 0 ? (
+                      <EmptyState
+                        title="No sessions found"
+                        detail="No conversation entries were available from Codex or Claude."
+                      />
+                    ) : filteredSessions.length === 0 ? (
+                      <EmptyState
+                        title="No matching sessions"
+                        detail="No sessions match the current filters."
+                      />
+                    ) : (
+                      filteredSessions.map(session => (
+                        <button
+                          key={`${session.id}:${session.updatedAt}:${session.threadName}`}
+                          className={`session-row ${
+                            session.id === activeSessionId &&
+                            filteredSessions.some(
+                              visibleSession => visibleSession.id === activeSessionId
+                            )
+                              ? "is-active"
+                              : ""
+                          }`}
+                          onClick={() => handleSelectSessionFromSidebar(session.id)}
+                          type="button"
+                        >
+                          <div className="session-row-main">
+                            <div className="session-title-group">
+                              {session.archived ? (
+                                <span className="archived-indicator" title="Archived">
+                                  A
+                                </span>
+                              ) : null}
+                              <span className="session-title">{session.threadName}</span>
+                            </div>
+                            <div className="session-row-meta">
+                              <ProviderIcon provider={session.provider} stateInfo={stateInfo} />
+                              <span className="session-time">
+                                {formatRelativeTimestamp(session.updatedAt)}
+                              </span>
+                            </div>
+                          </div>
+                          {!session.sessionPath ? (
+                            <span className="session-subtitle">Missing session file</span>
+                          ) : null}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </>
+              ) : activeSection === "agents" ? (
+                <AgentsListPane
+                  agents={sortedAgents}
+                  agentsError={agentsError}
+                  isLoading={isLoadingAgents}
+                  onCreate={() => void handleCreateAgent()}
+                  onSelect={handleSelectAgent}
+                  selectedAgentId={selectedAgentId}
+                  stateInfo={stateInfo}
+                />
+              ) : (
+                <div className="sidebar-empty-pane" />
+              )}
+
+              <div
+                aria-hidden="true"
+                className="sidebar-resizer"
+                onPointerDown={handleSidebarResizeStart}
+              />
+            </>
           ) : null}
+
         </section>
 
         <section className="main-pane">
@@ -4354,8 +4877,21 @@ export default function App() {
 
           <header className="topbar">
             <div className="topbar-left">
-              {rightPaneMode === "settings" ? (
+              {isSettingsOpen ? (
                 <span className="topbar-thread">Settings</span>
+              ) : activeSection === "agents" ? (
+                selectedAgent ? (
+                  <>
+                    <span className="topbar-thread">{selectedAgent.name}</span>
+                    <div className="topbar-session-meta">
+                      <ProviderIcon provider={selectedAgent.provider} stateInfo={stateInfo} />
+                    </div>
+                  </>
+                ) : (
+                  <span className="topbar-thread">Agents</span>
+                )
+              ) : activeSection === "selector" ? (
+                <span className="topbar-thread">Selector</span>
               ) : rightPaneMode === "new-thread" ? (
                 <span className="topbar-thread">New Thread</span>
               ) : rightPaneMode === "search" ? (
@@ -4384,7 +4920,7 @@ export default function App() {
             </div>
 
             <div className="toolbar">
-              {rightPaneMode === "new-thread" ? (
+              {!isSettingsOpen && activeSection === "threads" && rightPaneMode === "new-thread" ? (
                 <button
                   className="topbar-button"
                   onClick={handleCloseNewThread}
@@ -4392,7 +4928,10 @@ export default function App() {
                 >
                   Cancel
                 </button>
-              ) : rightPaneMode === "conversation" && searchReturnActive ? (
+              ) : !isSettingsOpen &&
+                activeSection === "threads" &&
+                rightPaneMode === "conversation" &&
+                searchReturnActive ? (
                 <button
                   className="topbar-button"
                   onClick={handleReturnToSearch}
@@ -4401,7 +4940,9 @@ export default function App() {
                   Back to results
                 </button>
               ) : null}
-              {rightPaneMode !== "settings" && rightPaneMode !== "new-thread" ? (
+              {!isSettingsOpen &&
+              activeSection === "threads" &&
+              rightPaneMode !== "new-thread" ? (
                 <button
                   className="topbar-button"
                   onClick={() => {
@@ -4421,180 +4962,208 @@ export default function App() {
             </div>
           </header>
 
-          {listError ? (
+          {activeSection === "threads" && listError ? (
             <div className="banner banner-error">{listError}</div>
           ) : null}
 
           <section className="detail-pane">
-              <div className="transcript-surface">
-            {rightPaneMode === "settings" ? (
-              <SettingsPane
-                onDefaultTerminalSelect={handleDefaultTerminalSelect}
-                onProviderOverrideChange={handleProviderOverrideChange}
-                onProviderReset={handleProviderReset}
-                onTerminalToggle={handleTerminalToggle}
-                settingsError={settingsError}
-                settingsSnapshot={settingsSnapshot}
-              />
-            ) : rightPaneMode === "new-thread" ? (
-              <NewThreadPane
-                draft={newThreadDraft}
-                generatedPrompt={generatedNewThreadPrompt}
-                isLoadingSourceTranscript={isLoadingNewThreadSource}
-                onCopyPrompt={() => void handleCopyNewThreadPrompt()}
-                onDraftChange={handleNewThreadDraftChange}
-                onProjectPathChange={projectPath =>
-                  handleNewThreadDraftChange({ projectPath })
-                }
-                onSelectSourceSession={handleSelectNewThreadSource}
-                onSourceQueryChange={handleNewThreadSourceQueryChange}
-                onStartThread={() => void handleStartNewThread()}
-                projectOptions={newThreadProjectOptions}
-                projectPath={newThreadDraft.projectPath}
-                promptError={newThreadPromptError}
-                selectedSourceSession={selectedNewThreadSourceSession}
-                sourceError={newThreadSourceError}
-                sourceQuery={newThreadSourceQuery}
-                sourceResults={newThreadSourceResults}
-                stateInfo={stateInfo}
-              />
-            ) : rightPaneMode === "search" ? (
-              <div className="search-layout">
-                <div className="search-input-row">
-                  <label className="search-input-shell">
-                    <SearchIcon />
-                    <input
-                      className="search-input"
-                      onChange={event => setSearchQuery(event.target.value)}
-                      placeholder="Search conversations"
-                      ref={searchInputRef}
-                      type="text"
-                      value={searchQuery}
-                    />
-                  </label>
-                  <span className={`search-status-pill is-${searchStatus?.state ?? "warming"}`}>
-                    {searchStatus?.state === "ready"
-                      ? "Ready"
-                      : searchStatus?.state === "error"
-                        ? "Unavailable"
-                        : "Preparing"}
-                  </span>
-                </div>
-
-                <SearchFilterBar
-                  filters={searchFilters}
-                  onArchivedChange={handleSearchArchivedFilterChange}
-                  onDateChange={handleSearchDateFilterChange}
-                  onProjectToggle={handleSearchProjectToggle}
-                  onProviderChange={handleSearchProviderFilterChange}
-                  projectOptions={searchProjectOptions}
+            <div className="transcript-surface">
+              {isSettingsOpen ? (
+                <SettingsPane
+                  onDefaultTerminalSelect={handleDefaultTerminalSelect}
+                  onProviderOverrideChange={handleProviderOverrideChange}
+                  onProviderReset={handleProviderReset}
+                  onTerminalToggle={handleTerminalToggle}
+                  settingsError={settingsError}
+                  settingsSnapshot={settingsSnapshot}
                 />
-
-                <SearchResultsPane
-                  isLoading={isSearchLoading}
-                  onSelect={handleSelectSearchResult}
-                  query={searchQuery}
-                  results={searchResults}
-                  searchStatus={searchStatus}
+              ) : activeSection === "agents" ? (
+                isLoadingAgents && agents.length === 0 ? (
+                  <EmptyState
+                    title="Loading agents"
+                    detail="Reading saved agent presets."
+                  />
+                ) : agents.length === 0 ? (
+                  <EmptyState
+                    title="No agents yet"
+                    detail="Create an agent from the left rail to get started."
+                  />
+                ) : (
+                  <AgentEditorPane
+                    agent={selectedAgent}
+                    draft={agentDraft}
+                    editorError={agentEditorError}
+                    onDelete={() => void handleDeleteAgent()}
+                    onDraftChange={handleAgentDraftChange}
+                    onDuplicate={() => void handleDuplicateAgent()}
+                    onReset={handleResetAgent}
+                    onSave={() => void handleSaveAgent()}
+                  />
+                )
+              ) : activeSection === "selector" ? (
+                <EmptyState
+                  title="Selector coming later"
+                  detail="This section is reserved for Selector integration."
+                />
+              ) : rightPaneMode === "new-thread" ? (
+                <NewThreadPane
+                  draft={newThreadDraft}
+                  generatedPrompt={generatedNewThreadPrompt}
+                  isLoadingSourceTranscript={isLoadingNewThreadSource}
+                  onCopyPrompt={() => void handleCopyNewThreadPrompt()}
+                  onDraftChange={handleNewThreadDraftChange}
+                  onProjectPathChange={projectPath =>
+                    handleNewThreadDraftChange({ projectPath })
+                  }
+                  onSelectSourceSession={handleSelectNewThreadSource}
+                  onSourceQueryChange={handleNewThreadSourceQueryChange}
+                  onStartThread={() => void handleStartNewThread()}
+                  projectOptions={newThreadProjectOptions}
+                  projectPath={newThreadDraft.projectPath}
+                  promptError={newThreadPromptError}
+                  selectedSourceSession={selectedNewThreadSourceSession}
+                  sourceError={newThreadSourceError}
+                  sourceQuery={newThreadSourceQuery}
+                  sourceResults={newThreadSourceResults}
                   stateInfo={stateInfo}
                 />
-              </div>
-            ) : !activeSession ? (
-              <EmptyState
-                title="No conversation selected"
-                detail="Pick a conversation from the left sidebar to inspect it."
-              />
-            ) : !activeSession.sessionPath ? (
-              <EmptyState
-                title="Session file missing"
-                detail="This thread still exists in the index, but no matching session file could be resolved from `~/.codex/sessions` or `~/.claude/projects`."
-              />
-            ) : conversationError ? (
-              <EmptyState
-                title="Unable to parse conversation"
-                detail={conversationError}
-              />
-            ) : isLoadingConversation && !activeTranscript ? (
-              <EmptyState
-                title="Loading conversation"
-                detail="Reading and parsing the selected session file."
-              />
-            ) : activeTranscript ? (
-              <div className="conversation-layout">
-                {activeProjectPath ? (
-                  <div className="project-toolbar">
-                    <div className="project-toolbar-path-group">
-                      <span className="project-toolbar-label">Project</span>
-                      <span className="project-toolbar-path" title={activeProjectPath}>
-                        {activeProjectPath}
-                      </span>
-                    </div>
-
-                    <div className="project-toolbar-actions">
-                      <button
-                        className="project-toolbar-button"
-                        onClick={() => void handleOpenProjectPath("finder")}
-                        type="button"
-                      >
-                        Finder
-                      </button>
-                      <button
-                        className="project-toolbar-button"
-                        onClick={() => void handleOpenProjectPath("terminal")}
-                        type="button"
-                      >
-                        Terminal
-                      </button>
-                      <button
-                        className="project-toolbar-button"
-                        onClick={() => void handleOpenProjectPath("editor")}
-                        type="button"
-                      >
-                        Editor
-                      </button>
-                    </div>
+              ) : rightPaneMode === "search" ? (
+                <div className="search-layout">
+                  <div className="search-input-row">
+                    <label className="search-input-shell">
+                      <SearchIcon />
+                      <input
+                        className="search-input"
+                        onChange={event => setSearchQuery(event.target.value)}
+                        placeholder="Search conversations"
+                        ref={searchInputRef}
+                        type="text"
+                        value={searchQuery}
+                      />
+                    </label>
+                    <span className={`search-status-pill is-${searchStatus?.state ?? "warming"}`}>
+                      {searchStatus?.state === "ready"
+                        ? "Ready"
+                        : searchStatus?.state === "error"
+                          ? "Unavailable"
+                          : "Preparing"}
+                    </span>
                   </div>
-                ) : null}
 
-                <div className="conversation-list">
-                  {activeTranscript.entries.map(entry => {
-                    if (entry.kind === "thought_chain") {
-                      return (
-                        <ThoughtChain
-                          entry={entry}
-                          expanded={expandedThoughtChainIds.has(entry.id)}
-                          key={entry.id}
-                          onToggle={() => toggleThoughtChainEntry(entry.id)}
-                        />
-                      )
-                    }
+                  <SearchFilterBar
+                    filters={searchFilters}
+                    onArchivedChange={handleSearchArchivedFilterChange}
+                    onDateChange={handleSearchDateFilterChange}
+                    onProjectToggle={handleSearchProjectToggle}
+                    onProviderChange={handleSearchProviderFilterChange}
+                    projectOptions={searchProjectOptions}
+                  />
 
-                    if (entry.role === "user") {
-                      return (
-                        <div className="conversation-entry user-entry" key={entry.id}>
-                          <div className="user-bubble">
-                            <MarkdownBlock
-                              className="message-markdown user-markdown"
-                              markdown={entry.bodyMarkdown}
-                            />
-                          </div>
-                        </div>
-                      )
-                    }
-
-                    return <AssistantMessage entry={entry} key={entry.id} />
-                  })}
+                  <SearchResultsPane
+                    isLoading={isSearchLoading}
+                    onSelect={handleSelectSearchResult}
+                    query={searchQuery}
+                    results={searchResults}
+                    searchStatus={searchStatus}
+                    stateInfo={stateInfo}
+                  />
                 </div>
-              </div>
-            ) : (
-              <EmptyState
-                title="Conversation unavailable"
-                detail="The selected conversation could not be rendered."
-              />
-            )}
-          </div>
+              ) : !activeSession ? (
+                <EmptyState
+                  title="No conversation selected"
+                  detail="Pick a conversation from the left sidebar to inspect it."
+                />
+              ) : !activeSession.sessionPath ? (
+                <EmptyState
+                  title="Session file missing"
+                  detail="This thread still exists in the index, but no matching session file could be resolved from `~/.codex/sessions` or `~/.claude/projects`."
+                />
+              ) : conversationError ? (
+                <EmptyState
+                  title="Unable to parse conversation"
+                  detail={conversationError}
+                />
+              ) : isLoadingConversation && !activeTranscript ? (
+                <EmptyState
+                  title="Loading conversation"
+                  detail="Reading and parsing the selected session file."
+                />
+              ) : activeTranscript ? (
+                <div className="conversation-layout">
+                  {activeProjectPath ? (
+                    <div className="project-toolbar">
+                      <div className="project-toolbar-path-group">
+                        <span className="project-toolbar-label">Project</span>
+                        <span className="project-toolbar-path" title={activeProjectPath}>
+                          {activeProjectPath}
+                        </span>
+                      </div>
 
-          {rightPaneMode === "conversation" ? (
+                      <div className="project-toolbar-actions">
+                        <button
+                          className="project-toolbar-button"
+                          onClick={() => void handleOpenProjectPath("finder")}
+                          type="button"
+                        >
+                          Finder
+                        </button>
+                        <button
+                          className="project-toolbar-button"
+                          onClick={() => void handleOpenProjectPath("terminal")}
+                          type="button"
+                        >
+                          Terminal
+                        </button>
+                        <button
+                          className="project-toolbar-button"
+                          onClick={() => void handleOpenProjectPath("editor")}
+                          type="button"
+                        >
+                          Editor
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="conversation-list">
+                    {activeTranscript.entries.map(entry => {
+                      if (entry.kind === "thought_chain") {
+                        return (
+                          <ThoughtChain
+                            entry={entry}
+                            expanded={expandedThoughtChainIds.has(entry.id)}
+                            key={entry.id}
+                            onToggle={() => toggleThoughtChainEntry(entry.id)}
+                          />
+                        )
+                      }
+
+                      if (entry.role === "user") {
+                        return (
+                          <div className="conversation-entry user-entry" key={entry.id}>
+                            <div className="user-bubble">
+                              <MarkdownBlock
+                                className="message-markdown user-markdown"
+                                markdown={entry.bodyMarkdown}
+                              />
+                            </div>
+                          </div>
+                        )
+                      }
+
+                      return <AssistantMessage entry={entry} key={entry.id} />
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <EmptyState
+                  title="Conversation unavailable"
+                  detail="The selected conversation could not be rendered."
+                />
+              )}
+            </div>
+
+          {!isSettingsOpen && activeSection === "threads" && rightPaneMode === "conversation" ? (
             <div className="copy-bar">
               <div className="copy-bar-inner">
                 <div className="copy-bar-row">

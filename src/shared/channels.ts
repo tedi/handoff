@@ -11,6 +11,13 @@ export const IPC_CHANNELS = {
     update: "handoff:settings:update",
     resetProvider: "handoff:settings:reset-provider"
   },
+  agents: {
+    list: "handoff:agents:list",
+    create: "handoff:agents:create",
+    update: "handoff:agents:update",
+    delete: "handoff:agents:delete",
+    duplicate: "handoff:agents:duplicate"
+  },
   sessions: {
     list: "handoff:sessions:list",
     getTranscript: "handoff:sessions:get-transcript"

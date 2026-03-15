@@ -1,9 +1,13 @@
+import { randomUUID } from "node:crypto"
 import fs from "node:fs"
 import fsPromises from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 
 import type {
+  AgentDefinition,
+  AgentDeleteResult,
+  AgentUpdatePatch,
   HandoffSettings,
   HandoffSettingsPatch,
   HandoffSettingsSnapshot,
@@ -15,6 +19,10 @@ import type {
   TerminalOption,
   TerminalPreferences
 } from "../shared/contracts"
+import {
+  getDefaultComposerModelId,
+  normalizeComposerTarget
+} from "../shared/provider-config"
 
 const TERMINAL_OPTIONS: ReadonlyArray<{
   id: TerminalAppId
@@ -46,6 +54,8 @@ interface SettingsStoreOptions {
   codexHome: string
   claudeHome: string
 }
+
+const SUPPORTED_THINKING_LEVELS = new Set(["low", "medium", "high", "max"])
 
 const SUPPORTED_TERMINAL_IDS = new Set<TerminalAppId>(
   TERMINAL_OPTIONS.map(option => option.id)
@@ -103,8 +113,94 @@ function getDefaultSettings(params: SettingsStoreOptions): HandoffSettings {
         homePath: ""
       }
     },
-    terminals: getDefaultTerminalPreferences()
+    terminals: getDefaultTerminalPreferences(),
+    agents: []
   }
+}
+
+function buildUniqueAgentName(existingAgents: AgentDefinition[], baseName: string) {
+  const normalizedExistingNames = new Set(
+    existingAgents.map(agent => agent.name.trim().toLowerCase()).filter(Boolean)
+  )
+  const trimmedBaseName = baseName.trim() || "New agent"
+
+  if (!normalizedExistingNames.has(trimmedBaseName.toLowerCase())) {
+    return trimmedBaseName
+  }
+
+  let suffix = 2
+  while (normalizedExistingNames.has(`${trimmedBaseName} ${suffix}`.toLowerCase())) {
+    suffix += 1
+  }
+
+  return `${trimmedBaseName} ${suffix}`
+}
+
+function normalizeThinkingLevel(value: unknown) {
+  if (typeof value === "string" && SUPPORTED_THINKING_LEVELS.has(value)) {
+    return value as AgentDefinition["thinkingLevel"]
+  }
+
+  return "high"
+}
+
+function normalizeAgentDefinition(
+  value: unknown,
+  existingAgents: AgentDefinition[],
+  fallbackName: string
+): AgentDefinition | null {
+  if (!value || typeof value !== "object") {
+    return null
+  }
+
+  const candidate = value as Partial<AgentDefinition>
+  const provider = candidate.provider === "claude" ? "claude" : "codex"
+  const normalizedTarget = normalizeComposerTarget({
+    provider,
+    launchMode: "cli",
+    modelId:
+      typeof candidate.modelId === "string" && candidate.modelId.trim()
+        ? candidate.modelId
+        : getDefaultComposerModelId(provider),
+    fast: candidate.fast === true
+  })
+  const requestedId = typeof candidate.id === "string" ? candidate.id.trim() : ""
+  const nextId =
+    requestedId && !existingAgents.some(agent => agent.id === requestedId)
+      ? requestedId
+      : randomUUID()
+  const requestedName = typeof candidate.name === "string" ? candidate.name.trim() : ""
+
+  return {
+    id: nextId,
+    name: requestedName || buildUniqueAgentName(existingAgents, fallbackName),
+    provider,
+    modelId: normalizedTarget.modelId,
+    thinkingLevel: normalizeThinkingLevel(candidate.thinkingLevel),
+    fast: normalizedTarget.fast,
+    customInstructions:
+      typeof candidate.customInstructions === "string" ? candidate.customInstructions : ""
+  }
+}
+
+function normalizeAgents(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [] as AgentDefinition[]
+  }
+
+  const agents: AgentDefinition[] = []
+  for (const candidate of value) {
+    const normalizedAgent = normalizeAgentDefinition(
+      candidate,
+      agents,
+      "New agent"
+    )
+    if (normalizedAgent) {
+      agents.push(normalizedAgent)
+    }
+  }
+
+  return agents
 }
 
 function normalizeProviderOverrides(
@@ -185,7 +281,8 @@ function normalizeSettings(
       codex: normalizeProviderOverrides(candidate.providers?.codex, defaults.providers.codex),
       claude: normalizeProviderOverrides(candidate.providers?.claude, defaults.providers.claude)
     },
-    terminals: normalizeTerminalPreferences(candidate.terminals, defaults.terminals)
+    terminals: normalizeTerminalPreferences(candidate.terminals, defaults.terminals),
+    agents: normalizeAgents(candidate.agents)
   }
 }
 
@@ -207,7 +304,48 @@ function mergeSettingsPatch(
     terminals: {
       ...current.terminals,
       ...(patch.terminals ?? {})
-    }
+    },
+    agents: current.agents
+  }
+}
+
+function createDefaultAgentDefinition(existingAgents: AgentDefinition[]): AgentDefinition {
+  return {
+    id: randomUUID(),
+    name: buildUniqueAgentName(existingAgents, "New agent"),
+    provider: "codex",
+    modelId: getDefaultComposerModelId("codex"),
+    thinkingLevel: "high",
+    fast: false,
+    customInstructions: ""
+  }
+}
+
+function buildUpdatedAgentDefinition(
+  currentAgent: AgentDefinition,
+  patch: AgentUpdatePatch
+): AgentDefinition {
+  const provider = patch.provider ?? currentAgent.provider
+  const normalizedTarget = normalizeComposerTarget({
+    provider,
+    launchMode: "cli",
+    modelId: patch.modelId ?? currentAgent.modelId,
+    fast: patch.fast ?? currentAgent.fast
+  })
+  const nextName = (patch.name ?? currentAgent.name).trim()
+
+  if (!nextName) {
+    throw new Error("Agent name is required.")
+  }
+
+  return {
+    ...currentAgent,
+    name: nextName,
+    provider,
+    modelId: normalizedTarget.modelId,
+    thinkingLevel: normalizeThinkingLevel(patch.thinkingLevel ?? currentAgent.thinkingLevel),
+    fast: normalizedTarget.fast,
+    customInstructions: patch.customInstructions ?? currentAgent.customInstructions
   }
 }
 
@@ -421,6 +559,82 @@ export function createHandoffSettingsStore(options: SettingsStoreOptions) {
   }
 
   return {
+    async listAgents() {
+      const settings = await loadSettings()
+      return settings.agents.map(agent => ({ ...agent }))
+    },
+
+    async createAgent() {
+      const currentSettings = await loadSettings()
+      const nextAgent = createDefaultAgentDefinition(currentSettings.agents)
+      const persistedSettings = await persistSettings({
+        ...currentSettings,
+        agents: [...currentSettings.agents, nextAgent]
+      })
+
+      return persistedSettings.agents.find(agent => agent.id === nextAgent.id) ?? nextAgent
+    },
+
+    async updateAgent(id: string, patch: AgentUpdatePatch) {
+      const currentSettings = await loadSettings()
+      const currentAgent = currentSettings.agents.find(agent => agent.id === id)
+
+      if (!currentAgent) {
+        throw new Error("Agent not found.")
+      }
+
+      const updatedAgent = buildUpdatedAgentDefinition(currentAgent, patch)
+      const persistedSettings = await persistSettings({
+        ...currentSettings,
+        agents: currentSettings.agents.map(agent =>
+          agent.id === id ? updatedAgent : agent
+        )
+      })
+
+      return persistedSettings.agents.find(agent => agent.id === id) ?? updatedAgent
+    },
+
+    async deleteAgent(id: string): Promise<AgentDeleteResult> {
+      const currentSettings = await loadSettings()
+
+      if (!currentSettings.agents.some(agent => agent.id === id)) {
+        throw new Error("Agent not found.")
+      }
+
+      await persistSettings({
+        ...currentSettings,
+        agents: currentSettings.agents.filter(agent => agent.id !== id)
+      })
+
+      return {
+        deletedId: id
+      }
+    },
+
+    async duplicateAgent(id: string) {
+      const currentSettings = await loadSettings()
+      const sourceAgent = currentSettings.agents.find(agent => agent.id === id)
+
+      if (!sourceAgent) {
+        throw new Error("Agent not found.")
+      }
+
+      const duplicatedAgent: AgentDefinition = {
+        ...sourceAgent,
+        id: randomUUID(),
+        name: buildUniqueAgentName(currentSettings.agents, `${sourceAgent.name} copy`)
+      }
+      const persistedSettings = await persistSettings({
+        ...currentSettings,
+        agents: [...currentSettings.agents, duplicatedAgent]
+      })
+
+      return (
+        persistedSettings.agents.find(agent => agent.id === duplicatedAgent.id) ??
+        duplicatedAgent
+      )
+    },
+
     async getSnapshot(sessions: SessionListItem[]) {
       const settings = await loadSettings()
       return buildSettingsSnapshot({

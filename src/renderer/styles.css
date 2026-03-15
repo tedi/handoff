@@ -225,9 +225,10 @@ pre {
 /* ── Workspace ────────────────────────────────────────── */
 
 .workspace {
+  --section-rail-width: 76px;
   --sidebar-width: 280px;
   display: grid;
-  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  grid-template-columns: var(--section-rail-width) var(--sidebar-width) minmax(0, 1fr);
   flex: 1;
   min-height: 0;
   overflow: hidden;
@@ -236,6 +237,72 @@ pre {
 
 .workspace.is-resizing {
   transition: none;
+}
+
+.section-rail {
+  background: #191a1d;
+  border-right: 1px solid var(--pane-border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.section-rail-top {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  padding: 10px 8px 8px;
+}
+
+.section-rail-collapse-button {
+  width: 100%;
+}
+
+.section-rail-nav,
+.section-rail-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.section-rail-button {
+  width: 100%;
+  min-height: 54px;
+  border: none;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 6px;
+  background: transparent;
+  color: var(--muted);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.section-rail-button:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--ink);
+}
+
+.section-rail-button.is-active {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--accent-strong);
+}
+
+.section-rail-label {
+  font-size: 0.64rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.section-rail-footer {
+  padding: 8px;
+  border-top: 1px solid var(--pane-border);
 }
 
 /* ── Sidebar ──────────────────────────────────────────── */
@@ -254,11 +321,10 @@ pre {
 .sidebar-header {
   height: 38px;
   min-height: 38px;
-  padding: 0 12px 0 78px;
+  padding: 0 12px;
   display: flex;
   align-items: center;
   border-bottom: 1px solid var(--pane-border);
-  -webkit-app-region: drag;
 }
 
 .sidebar-header-controls {
@@ -266,6 +332,18 @@ pre {
   align-items: center;
   gap: 8px;
   -webkit-app-region: no-drag;
+}
+
+.sidebar-pane.is-collapsed {
+  border-right: none;
+  overflow: hidden;
+}
+
+.sidebar-pane.is-collapsed .sidebar-header,
+.sidebar-pane.is-collapsed .session-list,
+.sidebar-pane.is-collapsed .agent-list,
+.sidebar-pane.is-collapsed .sidebar-empty-pane {
+  display: none;
 }
 
 .sidebar-toggle-button {
@@ -614,6 +692,11 @@ pre {
   flex-direction: column;
   min-height: 0;
   position: relative;
+}
+
+.sidebar-empty-pane {
+  flex: 1;
+  min-height: 0;
 }
 
 /* ── Session list ─────────────────────────────────────── */
@@ -1121,6 +1204,53 @@ pre {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.agent-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px;
+}
+
+.agent-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.agent-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.agent-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+}
+
+.agent-list-create-row {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  background: var(--bg-sidebar);
+  padding-bottom: 6px;
+}
+
+.agent-editor-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agent-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.agent-editor-textarea {
+  min-height: 180px;
 }
 
 .new-thread-layout {
@@ -2264,7 +2394,7 @@ pre {
 
 @media (max-width: 700px) {
   .workspace {
-    grid-template-columns: 1fr;
+    grid-template-columns: var(--section-rail-width) minmax(0, 1fr);
   }
 
   .sidebar-pane {
@@ -2272,7 +2402,7 @@ pre {
   }
 
   .topbar {
-    padding-left: 78px;
+    padding-left: 16px;
   }
 
   .copy-bar {
@@ -2302,6 +2432,10 @@ pre {
   .terminal-settings-row {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .agent-editor-grid {
+    grid-template-columns: 1fr;
   }
 
   .settings-meta-grid {

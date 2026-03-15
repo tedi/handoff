@@ -13,6 +13,13 @@ const IPC_CHANNELS = {
     update: "handoff:settings:update",
     resetProvider: "handoff:settings:reset-provider"
   },
+  agents: {
+    list: "handoff:agents:list",
+    create: "handoff:agents:create",
+    update: "handoff:agents:update",
+    delete: "handoff:agents:delete",
+    duplicate: "handoff:agents:duplicate"
+  },
   sessions: {
     list: "handoff:sessions:list",
     getTranscript: "handoff:sessions:get-transcript"
@@ -76,6 +83,23 @@ contextBridge.exposeInMainWorld("handoffApp", {
     },
     resetProvider(provider) {
       return ipcRenderer.invoke(IPC_CHANNELS.settings.resetProvider, provider)
+    }
+  },
+  agents: {
+    list() {
+      return ipcRenderer.invoke(IPC_CHANNELS.agents.list)
+    },
+    create() {
+      return ipcRenderer.invoke(IPC_CHANNELS.agents.create)
+    },
+    update(id, patch) {
+      return ipcRenderer.invoke(IPC_CHANNELS.agents.update, id, patch)
+    },
+    delete(id) {
+      return ipcRenderer.invoke(IPC_CHANNELS.agents.delete, id)
+    },
+    duplicate(id) {
+      return ipcRenderer.invoke(IPC_CHANNELS.agents.duplicate, id)
     }
   },
   sessions: {

@@ -633,4 +633,61 @@ describe("handoff service", () => {
       homePath: ""
     })
   })
+
+  it("creates, updates, duplicates, and deletes persisted agents", async () => {
+    expect(await service.agents.list()).toEqual([])
+
+    const createdAgent = await service.agents.create()
+    expect(createdAgent).toMatchObject({
+      name: "New agent",
+      provider: "codex",
+      modelId: "gpt-5.4",
+      thinkingLevel: "high",
+      fast: false,
+      customInstructions: ""
+    })
+
+    const updatedAgent = await service.agents.update(createdAgent.id, {
+      name: "Claude reviewer",
+      provider: "claude",
+      modelId: "gpt-5.4",
+      thinkingLevel: "max",
+      fast: true,
+      customInstructions: "Review carefully."
+    })
+
+    expect(updatedAgent).toMatchObject({
+      name: "Claude reviewer",
+      provider: "claude",
+      modelId: "sonnet",
+      thinkingLevel: "max",
+      fast: false,
+      customInstructions: "Review carefully."
+    })
+
+    const duplicatedAgent = await service.agents.duplicate(updatedAgent.id)
+    expect(duplicatedAgent).toMatchObject({
+      name: "Claude reviewer copy",
+      provider: "claude",
+      modelId: "sonnet"
+    })
+
+    await expect(
+      service.agents.update(updatedAgent.id, {
+        name: "   "
+      })
+    ).rejects.toThrow("Agent name is required.")
+
+    await expect(service.agents.delete(updatedAgent.id)).resolves.toEqual({
+      deletedId: updatedAgent.id
+    })
+
+    const remainingAgents = await service.agents.list()
+    expect(remainingAgents).toHaveLength(1)
+    expect(remainingAgents[0]?.id).toBe(duplicatedAgent.id)
+
+    const snapshot = await service.settings.get()
+    expect(snapshot.settings.agents).toHaveLength(1)
+    expect(snapshot.settings.agents[0]?.name).toBe("Claude reviewer copy")
+  })
 })

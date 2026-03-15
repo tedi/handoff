@@ -1,11 +1,35 @@
 export type SessionProvider = "codex" | "claude"
 export type ThreadLaunchVendor = SessionProvider
+export type AppSection = "threads" | "agents" | "selector"
 export type ArchivedFilterValue = "all" | "not-archived" | "archived"
 export type ProviderFilterValue = "all" | SessionProvider
 export type DateRangeFilterValue = "24h" | "3d" | "7d" | "30d" | "all"
 export type TerminalAppId = "terminal" | "ghostty" | "warp"
 export type ThreadLaunchMode = "app" | "cli"
 export type ThinkingLevel = "low" | "medium" | "high" | "max"
+
+export interface AgentDefinition {
+  id: string
+  name: string
+  provider: SessionProvider
+  modelId: string
+  thinkingLevel: ThinkingLevel
+  fast: boolean
+  customInstructions: string
+}
+
+export interface AgentUpdatePatch {
+  name?: string
+  provider?: SessionProvider
+  modelId?: string
+  thinkingLevel?: ThinkingLevel
+  fast?: boolean
+  customInstructions?: string
+}
+
+export interface AgentDeleteResult {
+  deletedId: string
+}
 
 export interface SessionIndexEntry {
   id: string
@@ -178,6 +202,7 @@ export interface TerminalPreferences {
 export interface HandoffSettings {
   providers: Record<SessionProvider, ProviderLaunchOverrides>
   terminals: TerminalPreferences
+  agents: AgentDefinition[]
 }
 
 export interface HandoffSettingsPatch {
@@ -234,6 +259,13 @@ export interface HandoffApi {
     get(): Promise<HandoffSettingsSnapshot>
     update(patch: HandoffSettingsPatch): Promise<HandoffSettingsSnapshot>
     resetProvider(provider: SessionProvider): Promise<HandoffSettingsSnapshot>
+  }
+  agents: {
+    list(): Promise<AgentDefinition[]>
+    create(): Promise<AgentDefinition>
+    update(id: string, patch: AgentUpdatePatch): Promise<AgentDefinition>
+    delete(id: string): Promise<AgentDeleteResult>
+    duplicate(id: string): Promise<AgentDefinition>
   }
   sessions: {
     list(): Promise<SessionListItem[]>

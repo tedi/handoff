@@ -5,6 +5,7 @@ import { promisify } from "node:util"
 
 import { IPC_CHANNELS } from "../shared/channels"
 import type {
+  AgentUpdatePatch,
   HandoffSettingsSnapshot,
   NewThreadLaunchParams,
   NewThreadLaunchResult,
@@ -424,6 +425,17 @@ export function registerIpcHandlers(ipcMain: IpcMain, service: HandoffService) {
     IPC_CHANNELS.settings.resetProvider,
     (_event, provider: SessionProvider) => service.settings.resetProvider(provider)
   )
+  ipcMain.handle(IPC_CHANNELS.agents.list, () => service.agents.list())
+  ipcMain.handle(IPC_CHANNELS.agents.create, () => service.agents.create())
+  ipcMain.handle(
+    IPC_CHANNELS.agents.update,
+    (_event, id: string, patch: AgentUpdatePatch) => service.agents.update(id, patch)
+  )
+  ipcMain.handle(IPC_CHANNELS.agents.delete, (_event, id: string) => service.agents.delete(id))
+  ipcMain.handle(
+    IPC_CHANNELS.agents.duplicate,
+    (_event, id: string) => service.agents.duplicate(id)
+  )
   ipcMain.handle(
     IPC_CHANNELS.app.openSourceSession,
     async (
@@ -488,6 +500,11 @@ export function registerIpcHandlers(ipcMain: IpcMain, service: HandoffService) {
     ipcMain.removeHandler(IPC_CHANNELS.settings.get)
     ipcMain.removeHandler(IPC_CHANNELS.settings.update)
     ipcMain.removeHandler(IPC_CHANNELS.settings.resetProvider)
+    ipcMain.removeHandler(IPC_CHANNELS.agents.list)
+    ipcMain.removeHandler(IPC_CHANNELS.agents.create)
+    ipcMain.removeHandler(IPC_CHANNELS.agents.update)
+    ipcMain.removeHandler(IPC_CHANNELS.agents.delete)
+    ipcMain.removeHandler(IPC_CHANNELS.agents.duplicate)
     ipcMain.removeHandler(IPC_CHANNELS.app.openSourceSession)
     ipcMain.removeHandler(IPC_CHANNELS.app.openProjectPath)
     ipcMain.removeHandler(IPC_CHANNELS.app.startNewThread)

@@ -2,6 +2,7 @@ import type { IpcRendererEvent } from "electron"
 
 import { IPC_CHANNELS } from "../shared/channels"
 import type {
+  AgentUpdatePatch,
   ClipboardWriteResult,
   HandoffSettingsPatch,
   HandoffSettingsSnapshot,
@@ -113,6 +114,38 @@ export function createHandoffBridge(
           IPC_CHANNELS.settings.resetProvider,
           provider
         ) as Promise<HandoffSettingsSnapshot>
+      }
+    },
+
+    agents: {
+      list() {
+        return ipcRenderer.invoke(IPC_CHANNELS.agents.list) as Promise<
+          Awaited<ReturnType<HandoffApi["agents"]["list"]>>
+        >
+      },
+
+      create() {
+        return ipcRenderer.invoke(IPC_CHANNELS.agents.create) as Promise<
+          Awaited<ReturnType<HandoffApi["agents"]["create"]>>
+        >
+      },
+
+      update(id: string, patch: AgentUpdatePatch) {
+        return ipcRenderer.invoke(IPC_CHANNELS.agents.update, id, patch) as Promise<
+          Awaited<ReturnType<HandoffApi["agents"]["update"]>>
+        >
+      },
+
+      delete(id: string) {
+        return ipcRenderer.invoke(IPC_CHANNELS.agents.delete, id) as Promise<
+          Awaited<ReturnType<HandoffApi["agents"]["delete"]>>
+        >
+      },
+
+      duplicate(id: string) {
+        return ipcRenderer.invoke(IPC_CHANNELS.agents.duplicate, id) as Promise<
+          Awaited<ReturnType<HandoffApi["agents"]["duplicate"]>>
+        >
       }
     },
 

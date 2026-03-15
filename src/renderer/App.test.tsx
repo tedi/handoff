@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import type {
+  AgentDefinition,
   AppStateInfo,
   ConversationTranscript,
   HandoffApi,
@@ -17,12 +18,14 @@ import type {
 import App from "./App"
 
 function createMockApi({
+  agents = [],
   sessions,
   transcriptById,
   transcriptErrors = {},
   searchStatus,
   searchQuery
 }: {
+  agents?: AgentDefinition[]
   sessions: SessionListItem[]
   transcriptById: Record<string, ConversationTranscript>
   transcriptErrors?: Record<string, Error>
@@ -56,7 +59,8 @@ function createMockApi({
       terminals: {
         enabledTerminalIds: ["terminal", "ghostty", "warp"],
         defaultTerminalId: "terminal"
-      }
+      },
+      agents
     },
     providerInfo: {
       codex: {
@@ -100,6 +104,7 @@ function createMockApi({
   const searchStatusListeners = new Set<
     (status: import("../shared/contracts").SearchStatus) => void
   >()
+  let agentState = agents.map(agent => ({ ...agent }))
 
   const api: HandoffApi = {
     app: {
@@ -143,10 +148,59 @@ function createMockApi({
           terminals: {
             ...settingsSnapshot.settings.terminals,
             ...(patch.terminals ?? {})
-          }
+          },
+          agents: settingsSnapshot.settings.agents
         }
       })),
       resetProvider: vi.fn().mockResolvedValue(settingsSnapshot)
+    },
+    agents: {
+      list: vi.fn().mockImplementation(async () => agentState.map(agent => ({ ...agent }))),
+      create: vi.fn().mockImplementation(async () => {
+        const nextAgent: AgentDefinition = {
+          id: `agent-${agentState.length + 1}`,
+          name: `New agent${agentState.length > 0 ? ` ${agentState.length + 1}` : ""}`,
+          provider: "codex",
+          modelId: "gpt-5.4",
+          thinkingLevel: "high",
+          fast: false,
+          customInstructions: ""
+        }
+        agentState = [...agentState, nextAgent]
+        return { ...nextAgent }
+      }),
+      update: vi.fn().mockImplementation(async (id: string, patch) => {
+        const currentAgent = agentState.find(agent => agent.id === id)
+        if (!currentAgent) {
+          throw new Error("Agent not found.")
+        }
+
+        const updatedAgent = {
+          ...currentAgent,
+          ...patch,
+          name: typeof patch.name === "string" ? patch.name.trim() : currentAgent.name
+        }
+        agentState = agentState.map(agent => (agent.id === id ? updatedAgent : agent))
+        return { ...updatedAgent }
+      }),
+      delete: vi.fn().mockImplementation(async (id: string) => {
+        agentState = agentState.filter(agent => agent.id !== id)
+        return { deletedId: id }
+      }),
+      duplicate: vi.fn().mockImplementation(async (id: string) => {
+        const sourceAgent = agentState.find(agent => agent.id === id)
+        if (!sourceAgent) {
+          throw new Error("Agent not found.")
+        }
+
+        const duplicatedAgent: AgentDefinition = {
+          ...sourceAgent,
+          id: `${sourceAgent.id}-copy`,
+          name: `${sourceAgent.name} copy`
+        }
+        agentState = [...agentState, duplicatedAgent]
+        return { ...duplicatedAgent }
+      })
     },
     sessions: {
       list: vi.fn().mockResolvedValue(sessions),
@@ -772,8 +826,6 @@ describe("Handoff App", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /Collapse sidebar/i }))
     expect(screen.queryByRole("button", { name: /Sidebar session/i })).not.toBeInTheDocument()
-    await userEvent.click(screen.getByRole("button", { name: /Open filters/i }))
-    expect(await screen.findByRole("dialog", { name: /Session filters/i })).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole("button", { name: /Expand sidebar/i }))
     expect(await screen.findByRole("button", { name: /Sidebar session/i })).toBeInTheDocument()
@@ -1143,5 +1195,42 @@ describe("Handoff App", () => {
         prompt: expect.stringContaining("*** Begin Patch")
       })
     )
+  })
+
+  it("opens the agents section, creates an agent, and saves edits", async () => {
+    const { api } = createMockApi({
+      sessions: [],
+      transcriptById: {}
+    })
+
+    window.handoffApp = api
+    render(<App />)
+
+    await userEvent.click(await screen.findByRole("button", { name: "Agents" }))
+
+    expect(
+      await screen.findByText("Create an agent from the left rail to get started.")
+    ).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole("button", { name: "New agent" }))
+
+    const nameInput = await screen.findByLabelText("Name")
+    expect(nameInput).toHaveValue("New agent")
+
+    await userEvent.clear(nameInput)
+    await userEvent.type(nameInput, "Release reviewer")
+
+    await userEvent.click(screen.getByRole("button", { name: "Save" }))
+
+    expect(api.agents.create).toHaveBeenCalledTimes(1)
+    expect(api.agents.update).toHaveBeenCalledWith("agent-1", {
+      name: "Release reviewer",
+      provider: "codex",
+      modelId: "gpt-5.4",
+      thinkingLevel: "high",
+      fast: false,
+      customInstructions: ""
+    })
+    expect(await screen.findByText("Saved agent")).toBeInTheDocument()
   })
 })
