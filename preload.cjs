@@ -5,6 +5,7 @@ const IPC_CHANNELS = {
     getStateInfo: "handoff:get-state-info",
     refresh: "handoff:refresh",
     openSourceSession: "handoff:open-source-session",
+    startNewThread: "handoff:start-new-thread",
     openProjectPath: "handoff:open-project-path"
   },
   settings: {
@@ -43,6 +44,9 @@ contextBridge.exposeInMainWorld("handoffApp", {
         sessionClient,
         workingDirectory
       )
+    },
+    startNewThread(params) {
+      return ipcRenderer.invoke(IPC_CHANNELS.app.startNewThread, params)
     },
     openProjectPath(target, projectPath) {
       return ipcRenderer.invoke(

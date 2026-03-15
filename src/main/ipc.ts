@@ -6,16 +6,21 @@ import { promisify } from "node:util"
 import { IPC_CHANNELS } from "../shared/channels"
 import type {
   HandoffSettingsSnapshot,
+  NewThreadLaunchParams,
+  NewThreadLaunchResult,
   OpenActionResult,
   ProjectLocationTarget,
   SearchFilters,
   SessionClient,
   SessionProvider,
+  ThinkingLevel,
   TranscriptOptions
 } from "../shared/contracts"
 import type { HandoffService } from "./service"
 import {
+  buildClaudeStartCommand,
   buildClaudeResumeCommand,
+  buildCodexStartCommand,
   buildCodexResumeCommand,
   openProjectInTerminal,
   openShellCommandInTerminal
@@ -41,6 +46,7 @@ const EDITOR_APP_CANDIDATES = [
   }
 ] as const
 const execFileAsync = promisify(execFile)
+const DIRECT_PROMPT_BYTE_LIMIT = 8_000
 
 let cachedCodexIconDataUrl: string | null | undefined
 let cachedClaudeIconDataUrl: string | null | undefined
@@ -191,6 +197,18 @@ function getClaudeLaunchInfo(settingsSnapshot: HandoffSettingsSnapshot) {
   }
 }
 
+function mapThinkingLevelToCodexEffort(thinkingLevel: ThinkingLevel) {
+  if (thinkingLevel === "max") {
+    return "xhigh"
+  }
+
+  return thinkingLevel
+}
+
+function mapThinkingLevelToClaudeEffort(thinkingLevel: ThinkingLevel) {
+  return thinkingLevel
+}
+
 async function openCodexCliSession(params: {
   settingsSnapshot: HandoffSettingsSnapshot
   sessionId: string
@@ -251,6 +269,130 @@ async function openProjectPath(
   return { fallbackMessage: null }
 }
 
+async function openCodexAppProject(params: {
+  settingsSnapshot: HandoffSettingsSnapshot
+  projectPath: string
+}) {
+  ensureProjectPathExists(params.projectPath)
+  const launchInfo = getCodexLaunchInfo(params.settingsSnapshot)
+
+  await execFileAsync(launchInfo.binaryPath, ["app", params.projectPath], {
+    env: {
+      ...process.env,
+      CODEX_HOME: launchInfo.homePath
+    }
+  })
+}
+
+async function openClaudeAppProject(projectPath: string) {
+  ensureProjectPathExists(projectPath)
+  await execFileAsync("open", ["-a", "Claude", projectPath])
+}
+
+async function startNewThread(
+  settingsSnapshot: HandoffSettingsSnapshot,
+  params: NewThreadLaunchParams
+): Promise<NewThreadLaunchResult> {
+  if (!params.projectPath.trim()) {
+    throw new Error("A project path is required to start a thread.")
+  }
+
+  if (!params.prompt.trim()) {
+    throw new Error("A prompt is required to start a thread.")
+  }
+
+  if (params.launchMode === "app") {
+    clipboard.writeText(params.prompt)
+
+    if (params.provider === "codex") {
+      await openCodexAppProject({
+        settingsSnapshot,
+        projectPath: params.projectPath
+      })
+    } else {
+      await openClaudeAppProject(params.projectPath)
+    }
+
+    return {
+      launchMode: "app",
+      copiedPrompt: true,
+      fallbackMessage: null
+    }
+  }
+
+  const promptByteLength = Buffer.byteLength(params.prompt, "utf8")
+  const shouldFallbackToCopiedPrompt = promptByteLength > DIRECT_PROMPT_BYTE_LIMIT
+
+  if (params.provider === "codex") {
+    const terminalId = getSelectedTerminalId(settingsSnapshot)
+    const launchInfo = getCodexLaunchInfo(settingsSnapshot)
+    const command = buildCodexStartCommand({
+      projectPath: params.projectPath,
+      prompt: shouldFallbackToCopiedPrompt ? "" : params.prompt,
+      binaryPath: launchInfo.binaryPath,
+      homePath: launchInfo.homePath,
+      reasoningEffort: mapThinkingLevelToCodexEffort(params.thinkingLevel),
+      serviceTier: params.fast ? "fast" : null
+    })
+
+    if (shouldFallbackToCopiedPrompt) {
+      clipboard.writeText(params.prompt)
+    }
+
+    const result = await openShellCommandInTerminal({
+      preferredTerminalId: terminalId,
+      command
+    })
+
+    return {
+      launchMode: "cli",
+      copiedPrompt: shouldFallbackToCopiedPrompt,
+      fallbackMessage: [
+        result.fallbackMessage,
+        shouldFallbackToCopiedPrompt
+          ? "Prompt copied to clipboard and Codex was opened without an initial prompt because it exceeded the direct launch limit."
+          : null
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .trim() || null
+    }
+  }
+
+  const terminalId = getSelectedTerminalId(settingsSnapshot)
+  const launchInfo = getClaudeLaunchInfo(settingsSnapshot)
+  const command = buildClaudeStartCommand({
+    projectPath: params.projectPath,
+    prompt: shouldFallbackToCopiedPrompt ? "" : params.prompt,
+    binaryPath: launchInfo.binaryPath,
+    settingsPath: launchInfo.settingsPath,
+    effortLevel: mapThinkingLevelToClaudeEffort(params.thinkingLevel)
+  })
+
+  if (shouldFallbackToCopiedPrompt) {
+    clipboard.writeText(params.prompt)
+  }
+
+  const result = await openShellCommandInTerminal({
+    preferredTerminalId: terminalId,
+    command
+  })
+
+  return {
+    launchMode: "cli",
+    copiedPrompt: shouldFallbackToCopiedPrompt,
+    fallbackMessage: [
+      result.fallbackMessage,
+      shouldFallbackToCopiedPrompt
+        ? "Prompt copied to clipboard and Claude was opened without an initial prompt because it exceeded the direct launch limit."
+        : null
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .trim() || null
+  }
+}
+
 export function registerIpcHandlers(ipcMain: IpcMain, service: HandoffService) {
   ipcMain.handle(IPC_CHANNELS.app.getStateInfo, async () => ({
     ...(await service.app.getStateInfo()),
@@ -303,6 +445,11 @@ export function registerIpcHandlers(ipcMain: IpcMain, service: HandoffService) {
     async (_event, target: ProjectLocationTarget, projectPath: string) =>
       openProjectPath(await service.settings.get(), target, projectPath)
   )
+  ipcMain.handle(
+    IPC_CHANNELS.app.startNewThread,
+    async (_event, params: NewThreadLaunchParams) =>
+      startNewThread(await service.settings.get(), params)
+  )
   ipcMain.handle(IPC_CHANNELS.sessions.list, () => service.sessions.list())
   ipcMain.handle(
     IPC_CHANNELS.sessions.getTranscript,
@@ -328,6 +475,7 @@ export function registerIpcHandlers(ipcMain: IpcMain, service: HandoffService) {
     ipcMain.removeHandler(IPC_CHANNELS.settings.resetProvider)
     ipcMain.removeHandler(IPC_CHANNELS.app.openSourceSession)
     ipcMain.removeHandler(IPC_CHANNELS.app.openProjectPath)
+    ipcMain.removeHandler(IPC_CHANNELS.app.startNewThread)
     ipcMain.removeHandler(IPC_CHANNELS.sessions.list)
     ipcMain.removeHandler(IPC_CHANNELS.sessions.getTranscript)
     ipcMain.removeHandler(IPC_CHANNELS.search.getStatus)

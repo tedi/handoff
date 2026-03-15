@@ -31,8 +31,10 @@ import type {
   ConversationTranscript,
   DateRangeFilterValue,
   HandoffApi,
+  NewThreadDraft,
   HandoffSettingsPatch,
   HandoffSettingsSnapshot,
+  NewThreadLaunchParams,
   ProjectLocationTarget,
   ProviderLaunchOverrides,
   ProviderSettingsInfo,
@@ -40,10 +42,14 @@ import type {
   SearchFilters,
   SearchResult,
   SearchStatus,
+  SessionClient,
   SessionListItem,
   SessionProvider,
   TerminalAppId,
-  TerminalOption
+  TerminalOption,
+  ThinkingLevel,
+  ThreadLaunchMode,
+  ThreadLaunchVendor
 } from "../shared/contracts"
 import {
   detectCodeLanguage,
@@ -177,6 +183,7 @@ const MIN_SIDEBAR_WIDTH = 220
 const COLLAPSED_SIDEBAR_WIDTH = 128
 const SIDEBAR_WIDTH_STORAGE_KEY = "handoff.sidebar-width"
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "handoff.sidebar-collapsed"
+const NEW_THREAD_INCLUDE_DIFFS_STORAGE_KEY = "handoff.new-thread-include-diffs"
 
 interface ProjectFilterOption {
   path: string
@@ -239,6 +246,32 @@ const OUTPUT_FORMAT_OPTIONS: Array<{
   { key: "structured", label: "Structured" }
 ]
 
+const NEW_THREAD_VENDOR_OPTIONS: Array<{
+  value: ThreadLaunchVendor
+  label: string
+}> = [
+  { value: "codex", label: "Codex" },
+  { value: "claude", label: "Claude" }
+]
+
+const NEW_THREAD_LAUNCH_MODE_OPTIONS: Array<{
+  value: ThreadLaunchMode
+  label: string
+}> = [
+  { value: "cli", label: "CLI" },
+  { value: "app", label: "App" }
+]
+
+const THINKING_LEVEL_OPTIONS: Array<{
+  value: ThinkingLevel
+  label: string
+}> = [
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "max", label: "Max" }
+]
+
 function applySettingsPatchToSnapshot(
   snapshot: HandoffSettingsSnapshot,
   patch: HandoffSettingsPatch
@@ -270,12 +303,44 @@ function clampSidebarWidth(value: number, viewportWidth: number) {
   return Math.min(Math.max(Math.round(value), minWidth), maxWidth)
 }
 
+function readStoredNewThreadIncludeDiffs() {
+  if (typeof window === "undefined") {
+    return false
+  }
+
+  try {
+    return window.localStorage.getItem(NEW_THREAD_INCLUDE_DIFFS_STORAGE_KEY) === "true"
+  } catch {
+    return false
+  }
+}
+
 function getPathBasename(filePath: string) {
   return filePath.split(/[\\/]/).filter(Boolean).at(-1) ?? filePath
 }
 
 function formatProjectFilterLabel(projectPath: string) {
   return getPathBasename(projectPath) || projectPath
+}
+
+function formatLaunchModeLabel(launchMode: ThreadLaunchMode) {
+  return launchMode === "app" ? "App" : "CLI"
+}
+
+function getDefaultLaunchModeFromClient(sessionClient?: SessionClient) {
+  return sessionClient === "desktop" ? "app" : "cli"
+}
+
+function createDefaultNewThreadDraft(): NewThreadDraft {
+  return {
+    sourceSessionId: null,
+    includeDiffs: readStoredNewThreadIncludeDiffs(),
+    vendor: "codex",
+    launchMode: "cli",
+    thinkingLevel: "high",
+    fast: false,
+    prompt: ""
+  }
 }
 
 function getFilterOptionLabel<TValue extends string>(
@@ -308,6 +373,87 @@ function escapeStructuredValue(value: string) {
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
+}
+
+function buildNewThreadPrompt(params: {
+  session: SessionListItem
+  transcript: ConversationTranscript
+  draft: Pick<
+    NewThreadDraft,
+    "includeDiffs" | "vendor" | "launchMode" | "thinkingLevel" | "fast"
+  >
+}) {
+  const { draft, session, transcript } = params
+  const parts = [
+    `<handoff_thread_prompt>`,
+    `  <target provider="${draft.vendor}" launch_mode="${draft.launchMode}">`,
+    `    <thinking_level>${draft.thinkingLevel}</thinking_level>`,
+    `    <fast>${draft.vendor === "codex" && draft.fast ? "true" : "false"}</fast>`,
+    `  </target>`,
+    `  <source_thread provider="${transcript.provider}" archived="${transcript.archived ? "true" : "false"}">`,
+    `    <thread_name>${escapeStructuredValue(transcript.threadName)}</thread_name>`,
+    `    <updated_at>${escapeStructuredValue(transcript.updatedAt)}</updated_at>`
+  ]
+
+  const projectPath = transcript.projectPath ?? transcript.sessionCwd ?? session.projectPath
+  if (projectPath) {
+    parts.push(`    <project_path>${escapeStructuredValue(projectPath)}</project_path>`)
+  }
+
+  parts.push(`    <messages>`)
+
+  transcript.entries.forEach(entry => {
+    if (entry.kind === "thought_chain") {
+      parts.push(`      <thought_chain>`)
+      entry.messages.forEach(message => {
+        parts.push(`        <step format="markdown">`)
+        parts.push(escapeStructuredValue(message.bodyMarkdown))
+        parts.push(`        </step>`)
+      })
+      parts.push(`      </thought_chain>`)
+      return
+    }
+
+    parts.push(`      <message role="${entry.role}">`)
+    parts.push(`        <timestamp>${escapeStructuredValue(entry.timestamp)}</timestamp>`)
+    parts.push(`        <content format="markdown">`)
+    parts.push(escapeStructuredValue(entry.bodyMarkdown))
+    parts.push(`        </content>`)
+
+    if (draft.includeDiffs && entry.role === "assistant" && entry.patches.length > 0) {
+      parts.push(`        <diffs>`)
+      entry.patches.forEach(patch => {
+        parts.push(`          <diff>`)
+        parts.push(
+          `            <files>${escapeStructuredValue(
+            patch.files.length > 0 ? patch.files.join(", ") : "unknown files"
+          )}</files>`
+        )
+        parts.push(`            <patch format="diff">`)
+        parts.push(escapeStructuredValue(patch.patch))
+        parts.push(`            </patch>`)
+        parts.push(`          </diff>`)
+      })
+      parts.push(`        </diffs>`)
+    }
+
+    parts.push(`      </message>`)
+  })
+
+  parts.push(`    </messages>`)
+  parts.push(`  </source_thread>`)
+  parts.push(`</handoff_thread_prompt>`)
+
+  return `${parts.join("\n")}\n`
+}
+
+function buildNewThreadStartLabel(draft: Pick<NewThreadDraft, "launchMode" | "vendor">) {
+  const providerLabel = formatProviderLabel(draft.vendor)
+  if (draft.launchMode === "app") {
+    return `Copy + Open in ${providerLabel}`
+  }
+
+  return `Start in ${providerLabel} ${formatLaunchModeLabel(draft.launchMode)}`
 }
 
 function buildMarkdownExport(
@@ -605,6 +751,30 @@ function SearchIcon() {
         stroke="currentColor"
         strokeLinecap="round"
         strokeWidth="1.2"
+      />
+    </svg>
+  )
+}
+
+function WriteIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="sidebar-filter-icon"
+      fill="none"
+      viewBox="0 0 16 16"
+    >
+      <path
+        d="M10.85 2.35a1.2 1.2 0 0 1 1.7 0l1.1 1.1a1.2 1.2 0 0 1 0 1.7l-7.2 7.2-2.9.6.6-2.9 7.2-7.2Z"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.15"
+      />
+      <path
+        d="m9.65 3.55 2.8 2.8"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.15"
       />
     </svg>
   )
@@ -1683,19 +1853,333 @@ function SettingsPane({
   )
 }
 
+function NewThreadPane({
+  draft,
+  isLoadingSourceTranscript,
+  onCopyPrompt,
+  onDraftChange,
+  onResetPrompt,
+  onSelectSourceSession,
+  onSourceQueryChange,
+  onStartThread,
+  projectPath,
+  promptError,
+  sourceError,
+  sourceQuery,
+  sourceResults,
+  selectedSourceSession,
+  stateInfo
+}: {
+  draft: NewThreadDraft
+  isLoadingSourceTranscript: boolean
+  onCopyPrompt(): void
+  onDraftChange(patch: Partial<NewThreadDraft>): void
+  onResetPrompt(): void
+  onSelectSourceSession(session: SessionListItem): void
+  onSourceQueryChange(value: string): void
+  onStartThread(): void
+  projectPath: string | null
+  promptError: string | null
+  sourceError: string | null
+  sourceQuery: string
+  sourceResults: SessionListItem[]
+  selectedSourceSession: SessionListItem | null
+  stateInfo: AppStateInfo | null
+}) {
+  const [isSourceMenuOpen, setIsSourceMenuOpen] = useState(false)
+  const sourceInputRef = useRef<HTMLInputElement | null>(null)
+  const sourceMenuRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    sourceInputRef.current?.focus()
+  }, [])
+
+  useEffect(() => {
+    if (!isSourceMenuOpen) {
+      return () => undefined
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target
+      if (target instanceof Node && sourceMenuRef.current?.contains(target)) {
+        return
+      }
+
+      setIsSourceMenuOpen(false)
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsSourceMenuOpen(false)
+      }
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown)
+    window.addEventListener("keydown", handleKeyDown)
+
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown)
+      window.removeEventListener("keydown", handleKeyDown)
+    }
+  }, [isSourceMenuOpen])
+
+  const startButtonLabel = buildNewThreadStartLabel(draft)
+  const promptUnavailable = !draft.prompt.trim()
+  const startDisabled = promptUnavailable || !projectPath || Boolean(sourceError)
+  const startDisabledReason = promptUnavailable
+    ? "Select a source thread to generate a prompt before starting."
+    : !projectPath
+      ? "A resolved project path is required before Handoff can launch a new thread."
+      : sourceError
+        ? sourceError
+        : null
+
+  return (
+    <div className="new-thread-layout">
+      <section className="settings-card new-thread-card">
+        <div className="settings-card-copy">
+          <h2>Source</h2>
+          <p>Select an existing thread and Handoff will generate a structured handoff prompt.</p>
+        </div>
+
+        <div className="new-thread-source-picker" ref={sourceMenuRef}>
+          <label className="new-thread-source-label" htmlFor="new-thread-source-search">
+            Start from existing thread
+          </label>
+          <input
+            className="settings-input new-thread-source-input"
+            id="new-thread-source-search"
+            onChange={event => onSourceQueryChange(event.target.value)}
+            onFocus={() => setIsSourceMenuOpen(true)}
+            placeholder="Search threads"
+            ref={sourceInputRef}
+            type="text"
+            value={sourceQuery}
+          />
+
+          {isSourceMenuOpen ? (
+            <div className="new-thread-source-menu" role="listbox">
+              {sourceResults.length === 0 ? (
+                <div className="new-thread-source-empty">No matching threads.</div>
+              ) : (
+                sourceResults.map(session => (
+                  <button
+                    className={`new-thread-source-option ${
+                      session.id === selectedSourceSession?.id ? "is-selected" : ""
+                    }`}
+                    key={session.id}
+                    onClick={() => {
+                      onSelectSourceSession(session)
+                      setIsSourceMenuOpen(false)
+                    }}
+                    type="button"
+                  >
+                    <div className="new-thread-source-option-main">
+                      <span className="new-thread-source-option-title">
+                        {session.threadName}
+                      </span>
+                      <div className="new-thread-source-option-meta">
+                        <ProviderIcon provider={session.provider} stateInfo={stateInfo} />
+                        <span>{formatRelativeTimestamp(session.updatedAt)}</span>
+                      </div>
+                    </div>
+                    <span
+                      className="new-thread-source-option-subtitle"
+                      title={session.projectPath ?? undefined}
+                    >
+                      {session.projectPath ?? "No project path"}
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+          ) : null}
+        </div>
+
+        {selectedSourceSession ? (
+          <div className="new-thread-selected-source">
+            <div className="new-thread-selected-source-header">
+              <span className="new-thread-selected-source-title">
+                {selectedSourceSession.threadName}
+              </span>
+              <div className="new-thread-selected-source-meta">
+                <ProviderIcon provider={selectedSourceSession.provider} stateInfo={stateInfo} />
+                <span>{formatTimestamp(selectedSourceSession.updatedAt)}</span>
+              </div>
+            </div>
+            {selectedSourceSession.projectPath ? (
+              <span
+                className="new-thread-selected-source-path"
+                title={selectedSourceSession.projectPath}
+              >
+                {selectedSourceSession.projectPath}
+              </span>
+            ) : null}
+          </div>
+        ) : (
+          <div className="new-thread-inline-note">
+            Pick a source thread to generate the prompt.
+          </div>
+        )}
+
+        <label className="new-thread-inline-toggle">
+          <input
+            checked={draft.includeDiffs}
+            onChange={event => onDraftChange({ includeDiffs: event.target.checked })}
+            type="checkbox"
+          />
+          <span>Include diffs</span>
+        </label>
+
+        {isLoadingSourceTranscript ? (
+          <div className="new-thread-inline-note">Loading source thread…</div>
+        ) : null}
+        {sourceError ? <div className="new-thread-inline-error">{sourceError}</div> : null}
+      </section>
+
+      <section className="settings-card new-thread-card">
+        <div className="settings-card-copy">
+          <h2>Target</h2>
+          <p>Choose where Handoff should open the next thread and how much reasoning it should use.</p>
+        </div>
+
+        <div className="new-thread-field-list">
+          <div className="new-thread-field">
+            <span className="settings-field-label">Vendor</span>
+            <div className="new-thread-segmented-control">
+              {NEW_THREAD_VENDOR_OPTIONS.map(option => (
+                <button
+                  className={`new-thread-segment ${
+                    draft.vendor === option.value ? "is-selected" : ""
+                  }`}
+                  key={option.value}
+                  onClick={() => onDraftChange({ vendor: option.value, fast: option.value === "codex" ? draft.fast : false })}
+                  type="button"
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="new-thread-field">
+            <span className="settings-field-label">Launch</span>
+            <div className="new-thread-segmented-control">
+              {NEW_THREAD_LAUNCH_MODE_OPTIONS.map(option => (
+                <button
+                  className={`new-thread-segment ${
+                    draft.launchMode === option.value ? "is-selected" : ""
+                  }`}
+                  key={option.value}
+                  onClick={() => onDraftChange({ launchMode: option.value })}
+                  type="button"
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="new-thread-field">
+            <span className="settings-field-label">Thinking level</span>
+            <div className="new-thread-segmented-control">
+              {THINKING_LEVEL_OPTIONS.map(option => (
+                <button
+                  className={`new-thread-segment ${
+                    draft.thinkingLevel === option.value ? "is-selected" : ""
+                  }`}
+                  key={option.value}
+                  onClick={() => onDraftChange({ thinkingLevel: option.value })}
+                  type="button"
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {draft.vendor === "codex" ? (
+            <label className="new-thread-inline-toggle">
+              <input
+                checked={draft.fast}
+                onChange={event => onDraftChange({ fast: event.target.checked })}
+                type="checkbox"
+              />
+              <span>Fast mode</span>
+            </label>
+          ) : null}
+        </div>
+
+        <div className="new-thread-inline-note">
+          {projectPath
+            ? `Launch project: ${projectPath}`
+            : "Launching a thread requires a source thread with a resolved project path."}
+        </div>
+      </section>
+
+      <section className="settings-card new-thread-card">
+        <div className="settings-card-header">
+          <div className="settings-card-copy">
+            <h2>Prompt</h2>
+            <p>Review and edit the generated prompt before copying or starting the new thread.</p>
+          </div>
+          <button className="ghost-button settings-reset-button" onClick={onResetPrompt} type="button">
+            Reset to generated
+          </button>
+        </div>
+
+        <textarea
+          className="new-thread-prompt-input"
+          onChange={event => onDraftChange({ prompt: event.target.value })}
+          placeholder="Select a source thread to generate a prompt."
+          spellCheck={false}
+          value={draft.prompt}
+        />
+
+        {promptError ? <div className="new-thread-inline-error">{promptError}</div> : null}
+        {startDisabledReason ? (
+          <div className="new-thread-inline-note">{startDisabledReason}</div>
+        ) : null}
+
+        <div className="new-thread-actions">
+          <button
+            className="ghost-button"
+            disabled={promptUnavailable}
+            onClick={onCopyPrompt}
+            type="button"
+          >
+            Copy prompt
+          </button>
+          <button
+            className="accent-button"
+            disabled={startDisabled}
+            onClick={onStartThread}
+            type="button"
+          >
+            {startButtonLabel}
+          </button>
+        </div>
+      </section>
+    </div>
+  )
+}
+
 function getHandoffApi(): HandoffApi | null {
   return typeof window !== "undefined" ? window.handoffApp ?? null : null
 }
 
 export default function App() {
   const [rightPaneMode, setRightPaneMode] = useState<
-    "conversation" | "search" | "settings"
+    "conversation" | "search" | "settings" | "new-thread"
   >(
     "conversation"
   )
-  const [previousPaneMode, setPreviousPaneMode] = useState<"conversation" | "search">(
-    "conversation"
-  )
+  const [previousPaneMode, setPreviousPaneMode] = useState<
+    "conversation" | "search" | "new-thread"
+  >("conversation")
+  const [previousNonComposerPaneMode, setPreviousNonComposerPaneMode] = useState<
+    "conversation" | "search"
+  >("conversation")
   const [stateInfo, setStateInfo] = useState<AppStateInfo | null>(null)
   const [settingsSnapshot, setSettingsSnapshot] = useState<HandoffSettingsSnapshot | null>(
     null
@@ -1733,6 +2217,17 @@ export default function App() {
   const [searchStatus, setSearchStatus] = useState<SearchStatus | null>(null)
   const [isSearchLoading, setIsSearchLoading] = useState(false)
   const [searchReturnActive, setSearchReturnActive] = useState(false)
+  const [newThreadDraft, setNewThreadDraft] = useState<NewThreadDraft>(() =>
+    createDefaultNewThreadDraft()
+  )
+  const [newThreadSourceQuery, setNewThreadSourceQuery] = useState("")
+  const [newThreadSourceTranscript, setNewThreadSourceTranscript] =
+    useState<ConversationTranscript | null>(null)
+  const [newThreadSourceError, setNewThreadSourceError] = useState<string | null>(null)
+  const [newThreadPromptError, setNewThreadPromptError] = useState<string | null>(null)
+  const [isLoadingNewThreadSource, setIsLoadingNewThreadSource] = useState(false)
+  const [isNewThreadPromptDirty, setIsNewThreadPromptDirty] = useState(false)
+  const [hasTouchedNewThreadTarget, setHasTouchedNewThreadTarget] = useState(false)
   const [isFilterPopoverOpen, setIsFilterPopoverOpen] = useState(false)
   const [selectedOutputFormat, setSelectedOutputFormat] =
     useState<OutputFormatKey>("markdown")
@@ -1890,6 +2385,60 @@ export default function App() {
       ? activeTranscript.provider
       : activeSession?.provider ?? null
   const activeProviderLabel = activeProvider ? formatProviderLabel(activeProvider) : null
+  const selectableSourceSessions = useMemo(
+    () => sessions.filter(session => Boolean(session.sessionPath)),
+    [sessions]
+  )
+  const selectedNewThreadSourceSession = useMemo(
+    () =>
+      selectableSourceSessions.find(session => session.id === newThreadDraft.sourceSessionId) ??
+      null,
+    [newThreadDraft.sourceSessionId, selectableSourceSessions]
+  )
+  const newThreadSourceResults = useMemo(() => {
+    const normalizedQuery = newThreadSourceQuery.trim().toLowerCase()
+    const baseSessions =
+      normalizedQuery.length === 0 ? selectableSourceSessions.slice(0, 10) : selectableSourceSessions
+
+    return baseSessions
+      .filter(session => {
+        if (!normalizedQuery) {
+          return true
+        }
+
+        const haystack = [
+          session.threadName,
+          session.projectPath ?? "",
+          formatProviderLabel(session.provider)
+        ]
+          .join(" ")
+          .toLowerCase()
+
+        return haystack.includes(normalizedQuery)
+      })
+      .slice(0, 10)
+  }, [newThreadSourceQuery, selectableSourceSessions])
+  const newThreadProjectPath =
+    newThreadSourceTranscript &&
+    selectedNewThreadSourceSession &&
+    newThreadSourceTranscript.id === selectedNewThreadSourceSession.id
+      ? newThreadSourceTranscript.projectPath ?? newThreadSourceTranscript.sessionCwd ?? null
+      : selectedNewThreadSourceSession?.projectPath ?? null
+  const generatedNewThreadPrompt = useMemo(() => {
+    if (!selectedNewThreadSourceSession || !newThreadSourceTranscript) {
+      return ""
+    }
+
+    if (newThreadSourceTranscript.id !== selectedNewThreadSourceSession.id) {
+      return ""
+    }
+
+    return buildNewThreadPrompt({
+      session: selectedNewThreadSourceSession,
+      transcript: newThreadSourceTranscript,
+      draft: newThreadDraft
+    })
+  }, [newThreadDraft, newThreadSourceTranscript, selectedNewThreadSourceSession])
 
   const showToast = useCallback(
     (message: string, tone: "success" | "error" = "success") => {
@@ -2103,6 +2652,139 @@ export default function App() {
 
     await handleCopyAction("last-message")
   }, [activeTranscript, handleCopyAction])
+
+  const handleNewThreadDraftChange = useCallback((patch: Partial<NewThreadDraft>) => {
+    setNewThreadDraft(current => ({
+      ...current,
+      ...patch
+    }))
+
+    if ("prompt" in patch) {
+      setIsNewThreadPromptDirty(true)
+      setNewThreadPromptError(null)
+    }
+
+    if ("includeDiffs" in patch) {
+      try {
+        window.localStorage.setItem(
+          NEW_THREAD_INCLUDE_DIFFS_STORAGE_KEY,
+          patch.includeDiffs ? "true" : "false"
+        )
+      } catch {
+        // Ignore localStorage write failures.
+      }
+    }
+
+    if (
+      "vendor" in patch ||
+      "launchMode" in patch ||
+      "thinkingLevel" in patch ||
+      "fast" in patch
+    ) {
+      setHasTouchedNewThreadTarget(true)
+    }
+  }, [])
+
+  const handleNewThreadSourceQueryChange = useCallback((value: string) => {
+    setNewThreadSourceQuery(value)
+    setNewThreadSourceError(null)
+  }, [])
+
+  const handleSelectNewThreadSource = useCallback(
+    (session: SessionListItem) => {
+      setNewThreadSourceQuery(session.threadName)
+      setNewThreadSourceError(null)
+      setNewThreadPromptError(null)
+      setIsNewThreadPromptDirty(false)
+      setNewThreadDraft(current => ({
+        ...current,
+        sourceSessionId: session.id,
+        ...(!hasTouchedNewThreadTarget
+          ? {
+              vendor: session.provider,
+              launchMode:
+                session.id === activeTranscript?.id
+                  ? getDefaultLaunchModeFromClient(activeTranscript.sessionClient)
+                  : session.provider === "claude"
+                    ? "cli"
+                    : "cli",
+              fast: session.provider === "codex" ? current.fast : false
+            }
+          : {})
+      }))
+    },
+    [activeTranscript, hasTouchedNewThreadTarget]
+  )
+
+  const handleCopyNewThreadPrompt = useCallback(async () => {
+    if (!newThreadDraft.prompt.trim()) {
+      return
+    }
+
+    await copyMarkdown(newThreadDraft.prompt, "Copied prompt")
+  }, [copyMarkdown, newThreadDraft.prompt])
+
+  const handleResetNewThreadPrompt = useCallback(() => {
+    setNewThreadDraft(current => ({
+      ...current,
+      prompt: generatedNewThreadPrompt
+    }))
+    setIsNewThreadPromptDirty(false)
+    setNewThreadPromptError(null)
+  }, [generatedNewThreadPrompt])
+
+  const handleStartNewThread = useCallback(async () => {
+    if (!newThreadDraft.prompt.trim()) {
+      setNewThreadPromptError("Select a source thread to generate a prompt before starting.")
+      return
+    }
+
+    if (!newThreadProjectPath) {
+      setNewThreadPromptError(
+        "A resolved project path is required before Handoff can launch a new thread."
+      )
+      return
+    }
+
+    const api = getHandoffApi()
+    if (!api) {
+      showToast("Preload bridge unavailable", "error")
+      return
+    }
+
+    try {
+      setNewThreadPromptError(null)
+
+      const params: NewThreadLaunchParams = {
+        provider: newThreadDraft.vendor,
+        launchMode: newThreadDraft.launchMode,
+        projectPath: newThreadProjectPath,
+        prompt: newThreadDraft.prompt,
+        thinkingLevel: newThreadDraft.thinkingLevel,
+        fast: newThreadDraft.vendor === "codex" ? newThreadDraft.fast : false
+      }
+
+      const result = await api.app.startNewThread(params)
+      const providerLabel = formatProviderLabel(newThreadDraft.vendor)
+
+      if (result.fallbackMessage) {
+        showToast(result.fallbackMessage)
+        return
+      }
+
+      if (result.launchMode === "app") {
+        showToast(`Prompt copied and opened ${providerLabel}`)
+        return
+      }
+
+      showToast(`Started ${providerLabel} ${formatLaunchModeLabel(result.launchMode)}`)
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : "Unable to start the new thread.",
+        "error"
+      )
+    }
+  }, [newThreadDraft, newThreadProjectPath, showToast])
 
   const copyActions = useMemo(
     () => [
@@ -2391,6 +3073,136 @@ export default function App() {
   useEffect(() => {
     void loadConversation(activeSession)
   }, [activeSession, loadConversation])
+
+  useEffect(() => {
+    const session = selectedNewThreadSourceSession
+
+    if (!session) {
+      setIsLoadingNewThreadSource(false)
+      setNewThreadSourceTranscript(null)
+      setNewThreadSourceError(null)
+      return
+    }
+
+    if (!session.sessionPath) {
+      setIsLoadingNewThreadSource(false)
+      setNewThreadSourceTranscript(null)
+      setNewThreadSourceError("This thread does not have a readable session file.")
+      return
+    }
+
+    if (activeTranscript?.id === session.id) {
+      setIsLoadingNewThreadSource(false)
+      setNewThreadSourceTranscript(activeTranscript)
+      setNewThreadSourceError(null)
+      return
+    }
+
+    const api = getHandoffApi()
+    if (!api) {
+      setIsLoadingNewThreadSource(false)
+      setNewThreadSourceTranscript(null)
+      setNewThreadSourceError("The preload bridge did not load. Restart the app.")
+      return
+    }
+
+    let isCancelled = false
+    setIsLoadingNewThreadSource(true)
+
+    void api.sessions
+      .getTranscript(session.id, {
+        includeCommentary: false,
+        includeDiffs: true
+      })
+      .then(transcript => {
+        if (isCancelled) {
+          return
+        }
+
+        setNewThreadSourceTranscript(transcript)
+        setNewThreadSourceError(null)
+      })
+      .catch(error => {
+        if (isCancelled) {
+          return
+        }
+
+        setNewThreadSourceTranscript(null)
+        setNewThreadSourceError(
+          error instanceof Error ? error.message : "Unable to load the source thread."
+        )
+      })
+      .finally(() => {
+        if (!isCancelled) {
+          setIsLoadingNewThreadSource(false)
+        }
+      })
+
+    return () => {
+      isCancelled = true
+    }
+  }, [activeTranscript, selectedNewThreadSourceSession])
+
+  useEffect(() => {
+    if (!selectedNewThreadSourceSession) {
+      if (!isNewThreadPromptDirty) {
+        setNewThreadDraft(current =>
+          current.prompt ? { ...current, prompt: "" } : current
+        )
+      }
+      return
+    }
+
+    if (!generatedNewThreadPrompt || isNewThreadPromptDirty) {
+      return
+    }
+
+    setNewThreadDraft(current =>
+      current.prompt === generatedNewThreadPrompt
+        ? current
+        : {
+            ...current,
+            prompt: generatedNewThreadPrompt
+          }
+    )
+  }, [generatedNewThreadPrompt, isNewThreadPromptDirty, selectedNewThreadSourceSession])
+
+  useEffect(() => {
+    if (
+      hasTouchedNewThreadTarget ||
+      !selectedNewThreadSourceSession ||
+      !newThreadSourceTranscript ||
+      newThreadSourceTranscript.id !== selectedNewThreadSourceSession.id
+    ) {
+      return
+    }
+
+    const nextLaunchMode =
+      selectedNewThreadSourceSession.provider === "claude"
+        ? "cli"
+        : getDefaultLaunchModeFromClient(newThreadSourceTranscript.sessionClient)
+
+    setNewThreadDraft(current => {
+      if (
+        current.vendor === selectedNewThreadSourceSession.provider &&
+        current.launchMode === nextLaunchMode &&
+        (selectedNewThreadSourceSession.provider === "codex" || current.fast === false)
+      ) {
+        return current
+      }
+
+      return {
+        ...current,
+        vendor: selectedNewThreadSourceSession.provider,
+        launchMode: nextLaunchMode,
+        fast: selectedNewThreadSourceSession.provider === "codex" ? current.fast : false
+      }
+    })
+  }, [
+    hasTouchedNewThreadTarget,
+    newThreadSourceTranscript,
+    selectedNewThreadSourceSession
+  ])
 
   useEffect(() => {
     if (rightPaneMode !== "search") {
@@ -2736,6 +3548,51 @@ export default function App() {
     setRightPaneMode("search")
   }, [])
 
+  const handleOpenNewThread = useCallback(() => {
+    const nextPreviousPaneMode =
+      rightPaneMode === "settings"
+        ? previousPaneMode
+        : rightPaneMode === "new-thread"
+          ? previousPaneMode
+          : rightPaneMode
+
+    setPreviousPaneMode(nextPreviousPaneMode)
+    setPreviousNonComposerPaneMode(
+      nextPreviousPaneMode === "new-thread" ? previousNonComposerPaneMode : nextPreviousPaneMode
+    )
+
+    const nextDraft = createDefaultNewThreadDraft()
+    const seedTranscript =
+      activeSession && activeTranscript?.id === activeSession.id ? activeTranscript : null
+
+    if (activeSession) {
+      nextDraft.sourceSessionId = activeSession.id
+      nextDraft.vendor = activeSession.provider
+      nextDraft.launchMode =
+        activeSession.provider === "claude"
+          ? "cli"
+          : getDefaultLaunchModeFromClient(seedTranscript?.sessionClient)
+      nextDraft.fast = activeSession.provider === "codex" ? nextDraft.fast : false
+      setNewThreadSourceQuery(activeSession.threadName)
+    } else {
+      setNewThreadSourceQuery("")
+    }
+
+    setHasTouchedNewThreadTarget(false)
+    setIsNewThreadPromptDirty(false)
+    setNewThreadPromptError(null)
+    setNewThreadSourceError(null)
+    setNewThreadSourceTranscript(seedTranscript)
+    setNewThreadDraft(nextDraft)
+    setRightPaneMode("new-thread")
+  }, [
+    activeSession,
+    activeTranscript,
+    previousNonComposerPaneMode,
+    previousPaneMode,
+    rightPaneMode
+  ])
+
   const handleOpenSettings = useCallback(() => {
     if (rightPaneMode !== "settings") {
       setPreviousPaneMode(rightPaneMode)
@@ -2747,6 +3604,10 @@ export default function App() {
     setRightPaneMode(previousPaneMode)
   }, [previousPaneMode])
 
+  const handleCloseNewThread = useCallback(() => {
+    setRightPaneMode(previousNonComposerPaneMode)
+  }, [previousNonComposerPaneMode])
+
   const handleReturnToSearch = useCallback(() => {
     setRightPaneMode("search")
   }, [])
@@ -2755,6 +3616,7 @@ export default function App() {
     setActiveSessionId(sessionId)
     setRightPaneMode("conversation")
     setSearchReturnActive(false)
+    setIsFilterPopoverOpen(false)
   }, [])
 
   const handleSelectSearchResult = useCallback((result: SearchResult) => {
@@ -2822,59 +3684,74 @@ export default function App() {
               </button>
 
               <button
-                aria-expanded={isFilterPopoverOpen}
-                aria-haspopup="dialog"
-                aria-label={isFilterPopoverOpen ? "Close filters" : "Open filters"}
-                aria-pressed={hasActiveSidebarFilters}
+                aria-label="Open new thread"
+                aria-pressed={rightPaneMode === "new-thread"}
                 className={`sidebar-filter-button ${
-                  hasActiveSidebarFilters ? "is-active" : ""
+                  rightPaneMode === "new-thread" ? "is-active" : ""
                 }`}
-                onClick={handleFilterPopoverToggle}
-                ref={filterButtonRef}
+                onClick={handleOpenNewThread}
                 type="button"
               >
-                <FilterIcon />
+                <WriteIcon />
                 {!isSidebarCollapsed ? (
-                  <span className="sidebar-filter-button-label">Filter</span>
-                ) : null}
-                {hasActiveSidebarFilters ? (
-                  <span aria-hidden="true" className="sidebar-filter-button-dot" />
+                  <span className="sidebar-filter-button-label">New</span>
                 ) : null}
               </button>
             </div>
           </div>
 
-          {isFilterPopoverOpen ? (
-            <div
-              aria-label="Session filters"
-              className="sidebar-filter-popover"
-              ref={filterPopoverRef}
-              role="dialog"
-            >
-              <div className="sidebar-filter-popover-header">
-                <span className="sidebar-filter-popover-title">Filters</span>
-                <button
-                  aria-label="Dismiss filter panel"
-                  className="sidebar-filter-close-button"
-                  onClick={() => setIsFilterPopoverOpen(false)}
-                  type="button"
-                >
-                  ×
-                </button>
-              </div>
-              <SidebarFilterContent
-                filters={sidebarFilters}
-                onArchivedChange={handleArchivedFilterChange}
-                onDateChange={handleDateFilterChange}
-                onProjectToggle={handleProjectFilterToggle}
-                onProviderChange={handleProviderFilterChange}
-                projectOptions={projectOptions}
-              />
-            </div>
-          ) : null}
-
           {!isSidebarCollapsed ? (
             <div className="session-list" role="list">
+              <div className="sidebar-filter-list-row">
+                <button
+                  aria-expanded={isFilterPopoverOpen}
+                  aria-haspopup="dialog"
+                  aria-label={isFilterPopoverOpen ? "Close filters" : "Open filters"}
+                  aria-pressed={hasActiveSidebarFilters}
+                  className={`sidebar-filter-button sidebar-filter-list-button ${
+                    hasActiveSidebarFilters ? "is-active" : ""
+                  }`}
+                  onClick={handleFilterPopoverToggle}
+                  ref={filterButtonRef}
+                  type="button"
+                >
+                  <FilterIcon />
+                  <span className="sidebar-filter-button-label">Filter</span>
+                  {hasActiveSidebarFilters ? (
+                    <span aria-hidden="true" className="sidebar-filter-button-dot" />
+                  ) : null}
+                </button>
+
+                {isFilterPopoverOpen ? (
+                  <div
+                    aria-label="Session filters"
+                    className="sidebar-filter-popover"
+                    ref={filterPopoverRef}
+                    role="dialog"
+                  >
+                    <div className="sidebar-filter-popover-header">
+                      <span className="sidebar-filter-popover-title">Filters</span>
+                      <button
+                        aria-label="Dismiss filter panel"
+                        className="sidebar-filter-close-button"
+                        onClick={() => setIsFilterPopoverOpen(false)}
+                        type="button"
+                      >
+                        ×
+                      </button>
+                    </div>
+                    <SidebarFilterContent
+                      filters={sidebarFilters}
+                      onArchivedChange={handleArchivedFilterChange}
+                      onDateChange={handleDateFilterChange}
+                      onProjectToggle={handleProjectFilterToggle}
+                      onProviderChange={handleProviderFilterChange}
+                      projectOptions={projectOptions}
+                    />
+                  </div>
+                ) : null}
+              </div>
+
               {isLoadingSessions && sessions.length === 0 ? (
                   <EmptyState
                     title="Loading sessions"
@@ -2927,7 +3804,56 @@ export default function App() {
               )}
             </div>
           ) : (
-            <div className="sidebar-collapsed-spacer" />
+            <>
+              <div className="sidebar-collapsed-filters">
+                <button
+                  aria-expanded={isFilterPopoverOpen}
+                  aria-haspopup="dialog"
+                  aria-label={isFilterPopoverOpen ? "Close filters" : "Open filters"}
+                  aria-pressed={hasActiveSidebarFilters}
+                  className={`sidebar-filter-button ${hasActiveSidebarFilters ? "is-active" : ""}`}
+                  onClick={handleFilterPopoverToggle}
+                  ref={filterButtonRef}
+                  type="button"
+                >
+                  <FilterIcon />
+                  {hasActiveSidebarFilters ? (
+                    <span aria-hidden="true" className="sidebar-filter-button-dot" />
+                  ) : null}
+                </button>
+
+                {isFilterPopoverOpen ? (
+                  <div
+                    aria-label="Session filters"
+                    className="sidebar-filter-popover"
+                    ref={filterPopoverRef}
+                    role="dialog"
+                  >
+                    <div className="sidebar-filter-popover-header">
+                      <span className="sidebar-filter-popover-title">Filters</span>
+                      <button
+                        aria-label="Dismiss filter panel"
+                        className="sidebar-filter-close-button"
+                        onClick={() => setIsFilterPopoverOpen(false)}
+                        type="button"
+                      >
+                        ×
+                      </button>
+                    </div>
+                    <SidebarFilterContent
+                      filters={sidebarFilters}
+                      onArchivedChange={handleArchivedFilterChange}
+                      onDateChange={handleDateFilterChange}
+                      onProjectToggle={handleProjectFilterToggle}
+                      onProviderChange={handleProviderFilterChange}
+                      projectOptions={projectOptions}
+                    />
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="sidebar-collapsed-spacer" />
+            </>
           )}
 
           <div className="sidebar-footer">
@@ -2975,6 +3901,8 @@ export default function App() {
             <div className="topbar-left">
               {rightPaneMode === "settings" ? (
                 <span className="topbar-thread">Settings</span>
+              ) : rightPaneMode === "new-thread" ? (
+                <span className="topbar-thread">New Thread</span>
               ) : rightPaneMode === "search" ? (
                 <span className="topbar-thread">Search</span>
               ) : activeSession ? (
@@ -3001,7 +3929,15 @@ export default function App() {
             </div>
 
             <div className="toolbar">
-              {rightPaneMode === "conversation" && searchReturnActive ? (
+              {rightPaneMode === "new-thread" ? (
+                <button
+                  className="topbar-button"
+                  onClick={handleCloseNewThread}
+                  type="button"
+                >
+                  Cancel
+                </button>
+              ) : rightPaneMode === "conversation" && searchReturnActive ? (
                 <button
                   className="topbar-button"
                   onClick={handleReturnToSearch}
@@ -3010,7 +3946,7 @@ export default function App() {
                   Back to results
                 </button>
               ) : null}
-              {rightPaneMode !== "settings" ? (
+              {rightPaneMode !== "settings" && rightPaneMode !== "new-thread" ? (
                 <button
                   className="topbar-button"
                   onClick={() => {
@@ -3044,6 +3980,24 @@ export default function App() {
                 onTerminalToggle={handleTerminalToggle}
                 settingsError={settingsError}
                 settingsSnapshot={settingsSnapshot}
+              />
+            ) : rightPaneMode === "new-thread" ? (
+              <NewThreadPane
+                draft={newThreadDraft}
+                isLoadingSourceTranscript={isLoadingNewThreadSource}
+                onCopyPrompt={() => void handleCopyNewThreadPrompt()}
+                onDraftChange={handleNewThreadDraftChange}
+                onResetPrompt={handleResetNewThreadPrompt}
+                onSelectSourceSession={handleSelectNewThreadSource}
+                onSourceQueryChange={handleNewThreadSourceQueryChange}
+                onStartThread={() => void handleStartNewThread()}
+                projectPath={newThreadProjectPath}
+                promptError={newThreadPromptError}
+                selectedSourceSession={selectedNewThreadSourceSession}
+                sourceError={newThreadSourceError}
+                sourceQuery={newThreadSourceQuery}
+                sourceResults={newThreadSourceResults}
+                stateInfo={stateInfo}
               />
             ) : rightPaneMode === "search" ? (
               <div className="search-layout">

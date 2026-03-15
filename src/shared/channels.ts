@@ -3,6 +3,7 @@ export const IPC_CHANNELS = {
     getStateInfo: "handoff:get-state-info",
     refresh: "handoff:refresh",
     openSourceSession: "handoff:open-source-session",
+    startNewThread: "handoff:start-new-thread",
     openProjectPath: "handoff:open-project-path"
   },
   settings: {

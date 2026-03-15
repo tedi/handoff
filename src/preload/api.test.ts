@@ -40,6 +40,14 @@ describe("createHandoffBridge", () => {
     })
     await bridge.settings.resetProvider("claude")
     await bridge.app.openSourceSession("claude", "session-1", "cli", "/tmp/project")
+    await bridge.app.startNewThread({
+      provider: "codex",
+      launchMode: "cli",
+      projectPath: "/tmp/project",
+      prompt: "hello",
+      thinkingLevel: "high",
+      fast: true
+    })
     await bridge.app.openProjectPath("editor", "/tmp/project")
     await bridge.clipboard.writeText("copied")
 
@@ -98,12 +106,24 @@ describe("createHandoffBridge", () => {
     )
     expect(invoke).toHaveBeenNthCalledWith(
       9,
+      IPC_CHANNELS.app.startNewThread,
+      {
+        provider: "codex",
+        launchMode: "cli",
+        projectPath: "/tmp/project",
+        prompt: "hello",
+        thinkingLevel: "high",
+        fast: true
+      }
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      10,
       IPC_CHANNELS.app.openProjectPath,
       "editor",
       "/tmp/project"
     )
     expect(invoke).toHaveBeenNthCalledWith(
-      10,
+      11,
       IPC_CHANNELS.clipboard.writeText,
       "copied"
     )

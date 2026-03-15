@@ -8,7 +8,9 @@ const terminalMocks = vi.hoisted(() => ({
   openShellCommandInTerminal: vi.fn().mockResolvedValue({ fallbackMessage: null }),
   openProjectInTerminal: vi.fn().mockResolvedValue({ fallbackMessage: null }),
   buildCodexResumeCommand: vi.fn().mockReturnValue("codex-launch-command"),
-  buildClaudeResumeCommand: vi.fn().mockReturnValue("claude-launch-command")
+  buildClaudeResumeCommand: vi.fn().mockReturnValue("claude-launch-command"),
+  buildCodexStartCommand: vi.fn().mockReturnValue("codex-start-command"),
+  buildClaudeStartCommand: vi.fn().mockReturnValue("claude-start-command")
 }))
 
 vi.mock("electron", () => ({
@@ -35,7 +37,9 @@ vi.mock("./terminal", () => ({
   openShellCommandInTerminal: terminalMocks.openShellCommandInTerminal,
   openProjectInTerminal: terminalMocks.openProjectInTerminal,
   buildCodexResumeCommand: terminalMocks.buildCodexResumeCommand,
-  buildClaudeResumeCommand: terminalMocks.buildClaudeResumeCommand
+  buildClaudeResumeCommand: terminalMocks.buildClaudeResumeCommand,
+  buildCodexStartCommand: terminalMocks.buildCodexStartCommand,
+  buildClaudeStartCommand: terminalMocks.buildClaudeStartCommand
 }))
 
 import { registerIpcHandlers } from "./ipc"
@@ -224,6 +228,77 @@ describe("registerIpcHandlers", () => {
     expect(terminalMocks.openProjectInTerminal).toHaveBeenCalledWith({
       preferredTerminalId: "ghostty",
       projectPath: os.tmpdir()
+    })
+  })
+
+  it("starts new CLI threads with provider-specific launch options", async () => {
+    const ipcMain = createIpcMainStub()
+    const service = {
+      app: {
+        getStateInfo: vi.fn(),
+        refresh: vi.fn()
+      },
+      settings: {
+        get: vi.fn().mockResolvedValue(settingsSnapshot),
+        update: vi.fn(),
+        resetProvider: vi.fn()
+      },
+      sessions: {
+        list: vi.fn(),
+        getTranscript: vi.fn()
+      },
+      search: {
+        getStatus: vi.fn(),
+        query: vi.fn()
+      },
+      startWatching: vi.fn(),
+      onStateChanged: vi.fn(),
+      onSearchStatusChanged: vi.fn(),
+      dispose: vi.fn()
+    } as any
+
+    registerIpcHandlers(ipcMain as any, service)
+
+    await ipcMain.invoke(IPC_CHANNELS.app.startNewThread, {
+      provider: "codex",
+      launchMode: "cli",
+      projectPath: "/tmp/project",
+      prompt: "codex prompt",
+      thinkingLevel: "max",
+      fast: true
+    })
+
+    await ipcMain.invoke(IPC_CHANNELS.app.startNewThread, {
+      provider: "claude",
+      launchMode: "cli",
+      projectPath: "/tmp/claude-project",
+      prompt: "claude prompt",
+      thinkingLevel: "high",
+      fast: false
+    })
+
+    expect(terminalMocks.buildCodexStartCommand).toHaveBeenCalledWith({
+      projectPath: "/tmp/project",
+      prompt: "codex prompt",
+      binaryPath: "/custom/bin/codex",
+      homePath: "/custom/.codex",
+      reasoningEffort: "xhigh",
+      serviceTier: "fast"
+    })
+    expect(terminalMocks.buildClaudeStartCommand).toHaveBeenCalledWith({
+      projectPath: "/tmp/claude-project",
+      prompt: "claude prompt",
+      binaryPath: "/custom/bin/claude",
+      settingsPath: "/custom/.claude/settings.json",
+      effortLevel: "high"
+    })
+    expect(terminalMocks.openShellCommandInTerminal).toHaveBeenNthCalledWith(1, {
+      preferredTerminalId: "ghostty",
+      command: "codex-start-command"
+    })
+    expect(terminalMocks.openShellCommandInTerminal).toHaveBeenNthCalledWith(2, {
+      preferredTerminalId: "ghostty",
+      command: "claude-start-command"
     })
   })
 })

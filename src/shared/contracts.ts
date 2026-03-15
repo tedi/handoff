@@ -1,8 +1,11 @@
 export type SessionProvider = "codex" | "claude"
+export type ThreadLaunchVendor = SessionProvider
 export type ArchivedFilterValue = "all" | "not-archived" | "archived"
 export type ProviderFilterValue = "all" | SessionProvider
 export type DateRangeFilterValue = "24h" | "3d" | "7d" | "30d" | "all"
 export type TerminalAppId = "terminal" | "ghostty" | "warp"
+export type ThreadLaunchMode = "app" | "cli"
+export type ThinkingLevel = "low" | "medium" | "high" | "max"
 
 export interface SessionIndexEntry {
   id: string
@@ -116,6 +119,30 @@ export interface OpenActionResult {
   fallbackMessage?: string | null
 }
 
+export interface NewThreadDraft {
+  sourceSessionId: string | null
+  includeDiffs: boolean
+  vendor: ThreadLaunchVendor
+  launchMode: ThreadLaunchMode
+  thinkingLevel: ThinkingLevel
+  fast: boolean
+  prompt: string
+}
+
+export interface NewThreadLaunchParams {
+  provider: ThreadLaunchVendor
+  launchMode: ThreadLaunchMode
+  projectPath: string
+  prompt: string
+  thinkingLevel: ThinkingLevel
+  fast: boolean
+}
+
+export interface NewThreadLaunchResult extends OpenActionResult {
+  launchMode: ThreadLaunchMode
+  copiedPrompt: boolean
+}
+
 export interface SearchFilters {
   archived: ArchivedFilterValue
   provider: ProviderFilterValue
@@ -193,6 +220,7 @@ export interface HandoffApi {
       sessionClient?: SessionClient,
       workingDirectory?: string | null
     ): Promise<OpenActionResult>
+    startNewThread(params: NewThreadLaunchParams): Promise<NewThreadLaunchResult>
     openProjectPath(
       target: ProjectLocationTarget,
       projectPath: string

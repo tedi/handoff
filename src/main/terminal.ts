@@ -165,3 +165,47 @@ export function buildClaudeResumeCommand(params: {
 
   return segments.join(" && ")
 }
+
+export function buildCodexStartCommand(params: {
+  projectPath: string
+  prompt?: string
+  binaryPath: string
+  homePath: string
+  reasoningEffort: string
+  serviceTier?: string | null
+}) {
+  const configSegments = [
+    `-c model_reasoning_effort=${shellEscape(params.reasoningEffort)}`,
+    params.serviceTier ? `-c service_tier=${shellEscape(params.serviceTier)}` : null
+  ].filter((segment): segment is string => Boolean(segment))
+
+  const promptSegment = params.prompt?.trim() ? shellEscape(params.prompt) : null
+
+  const segments = [
+    `cd ${shellEscape(params.projectPath)}`,
+    `export CODEX_HOME=${shellEscape(params.homePath)}`,
+    `exec ${shellEscape(params.binaryPath)} ${configSegments.join(" ")}${promptSegment ? ` ${promptSegment}` : ""}`
+  ]
+
+  return segments.join(" && ")
+}
+
+export function buildClaudeStartCommand(params: {
+  projectPath: string
+  prompt?: string
+  binaryPath: string
+  settingsPath?: string | null
+  effortLevel: string
+}) {
+  const promptSegment = params.prompt?.trim() ? ` ${shellEscape(params.prompt)}` : ""
+  const settingsArg = params.settingsPath
+    ? ` --settings ${shellEscape(params.settingsPath)}`
+    : ""
+
+  const segments = [
+    `cd ${shellEscape(params.projectPath)}`,
+    `exec ${shellEscape(params.binaryPath)}${settingsArg} --effort ${shellEscape(params.effortLevel)}${promptSegment}`
+  ]
+
+  return segments.join(" && ")
+}

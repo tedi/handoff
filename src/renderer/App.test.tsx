@@ -110,6 +110,11 @@ function createMockApi({
         changedPath: null
       }),
       openSourceSession: vi.fn().mockResolvedValue({ fallbackMessage: null }),
+      startNewThread: vi.fn().mockResolvedValue({
+        launchMode: "cli",
+        copiedPrompt: false,
+        fallbackMessage: null
+      }),
       openProjectPath: vi.fn().mockResolvedValue({ fallbackMessage: null }),
       onStateChanged(listener) {
         listeners.add(listener)
@@ -1019,5 +1024,121 @@ describe("Handoff App", () => {
 
     expect(await screen.findByText("Unable to parse conversation")).toBeInTheDocument()
     expect(screen.getByText("Invalid JSON on line 2")).toBeInTheDocument()
+  })
+
+  it("opens the new-thread composer, seeds from the active thread, and starts with the selected target", async () => {
+    const { api } = createMockApi({
+      sessions: [
+        {
+          id: "codex:gesture",
+          sourceSessionId: "gesture",
+          provider: "codex",
+          archived: false,
+          threadName: "Gesture regression",
+          updatedAt: "2026-03-14T01:00:00.000Z",
+          projectPath: "/tmp/project",
+          sessionPath: "/tmp/session-1.jsonl"
+        }
+      ],
+      transcriptById: {
+        "codex:gesture": {
+          id: "codex:gesture",
+          sourceSessionId: "gesture",
+          provider: "codex",
+          archived: false,
+          threadName: "Gesture regression",
+          updatedAt: "2026-03-14T01:00:00.000Z",
+          projectPath: "/tmp/project",
+          sessionPath: "/tmp/session-1.jsonl",
+          sessionClient: "desktop",
+          sessionCwd: "/tmp/project",
+          entries: [
+            {
+              id: "gesture-user",
+              kind: "message",
+              role: "user",
+              timestamp: "2026-03-14T01:00:01.000Z",
+              bodyMarkdown: "The gesture handler upgrade broke the carousel swipe."
+            },
+            {
+              id: "gesture-thoughts",
+              kind: "thought_chain",
+              role: "assistant",
+              timestamp: "2026-03-14T01:00:02.000Z",
+              collapsedByDefault: true,
+              messageCount: 1,
+              messages: [
+                {
+                  id: "gesture-thought-step",
+                  bodyMarkdown: "Tracing the swipe path."
+                }
+              ]
+            },
+            {
+              id: "gesture-assistant",
+              kind: "message",
+              role: "assistant",
+              timestamp: "2026-03-14T01:00:03.000Z",
+              bodyMarkdown: "The regression is inside highlights.tsx.",
+              patches: [
+                {
+                  id: "gesture-patch",
+                  files: ["/tmp/highlights.tsx"],
+                  patch: [
+                    "*** Begin Patch",
+                    "*** Update File: /tmp/highlights.tsx",
+                    "@@ -1,1 +1,1 @@",
+                    "-const broken = true",
+                    "+const broken = false",
+                    "*** End Patch"
+                  ].join("\n")
+                }
+              ]
+            }
+          ],
+          markdown: "## User\nGesture issue\n\n## Assistant\nFound it\n",
+          lastAssistantMarkdown: "The regression is inside highlights.tsx.",
+          hasDiffs: true
+        }
+      }
+    })
+
+    window.handoffApp = api
+    render(<App />)
+
+    expect(await screen.findByText("The regression is inside highlights.tsx.")).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole("button", { name: /Open new thread/i }))
+
+    expect(await screen.findByText("Start from existing thread")).toBeInTheDocument()
+    expect(screen.getAllByText("Gesture regression").length).toBeGreaterThan(0)
+    expect(screen.getByRole("button", { name: "Copy + Open in Codex" })).toBeInTheDocument()
+
+    const promptInput = screen.getByPlaceholderText(
+      "Select a source thread to generate a prompt."
+    ) as HTMLTextAreaElement
+
+    await waitFor(() => {
+      expect(promptInput.value).toContain("<thread_name>Gesture regression</thread_name>")
+    })
+    expect(promptInput.value).toContain("The gesture handler upgrade broke the carousel swipe.")
+    expect(promptInput.value).not.toContain("*** Begin Patch")
+
+    await userEvent.click(screen.getByLabelText("Include diffs"))
+
+    await waitFor(() => {
+      expect(promptInput.value).toContain("*** Begin Patch")
+    })
+
+    await userEvent.click(screen.getByRole("button", { name: "Copy + Open in Codex" }))
+
+    expect(api.app.startNewThread).toHaveBeenCalledWith({
+      provider: "codex",
+      launchMode: "app",
+      projectPath: "/tmp/project",
+      prompt: expect.stringContaining("*** Begin Patch"),
+      thinkingLevel: "high",
+      fast: false
+    })
   })
 })

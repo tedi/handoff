@@ -6,6 +6,8 @@ import type {
   HandoffSettingsPatch,
   HandoffSettingsSnapshot,
   HandoffApi,
+  NewThreadLaunchParams,
+  NewThreadLaunchResult,
   OpenActionResult,
   ProjectLocationTarget,
   SearchFilters,
@@ -64,6 +66,13 @@ export function createHandoffBridge(
           sessionClient,
           workingDirectory
         ) as Promise<OpenActionResult>
+      },
+
+      startNewThread(params: NewThreadLaunchParams) {
+        return ipcRenderer.invoke(
+          IPC_CHANNELS.app.startNewThread,
+          params
+        ) as Promise<NewThreadLaunchResult>
       },
 
       openProjectPath(target: ProjectLocationTarget, projectPath: string) {
