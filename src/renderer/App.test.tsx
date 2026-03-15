@@ -1113,6 +1113,7 @@ describe("Handoff App", () => {
     expect(await screen.findByText("Start from existing thread")).toBeInTheDocument()
     expect(screen.getAllByText("Gesture regression").length).toBeGreaterThan(0)
     expect(screen.getByRole("button", { name: "Copy + Open in Codex" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /GPT-5\.4/i })).toBeInTheDocument()
 
     const promptInput = screen.getByPlaceholderText(
       "Select a source thread to generate a prompt."
@@ -1121,6 +1122,7 @@ describe("Handoff App", () => {
     await waitFor(() => {
       expect(promptInput.value).toContain("<thread_name>Gesture regression</thread_name>")
     })
+    expect(promptInput.value).toContain("<model>gpt-5.4</model>")
     expect(promptInput.value).toContain("The gesture handler upgrade broke the carousel swipe.")
     expect(promptInput.value).not.toContain("*** Begin Patch")
 
@@ -1135,6 +1137,7 @@ describe("Handoff App", () => {
     expect(api.app.startNewThread).toHaveBeenCalledWith({
       provider: "codex",
       launchMode: "app",
+      modelId: "gpt-5.4",
       projectPath: "/tmp/project",
       prompt: expect.stringContaining("*** Begin Patch"),
       thinkingLevel: "high",

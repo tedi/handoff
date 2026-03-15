@@ -262,6 +262,7 @@ describe("registerIpcHandlers", () => {
     await ipcMain.invoke(IPC_CHANNELS.app.startNewThread, {
       provider: "codex",
       launchMode: "cli",
+      modelId: "gpt-5.4",
       projectPath: "/tmp/project",
       prompt: "codex prompt",
       thinkingLevel: "max",
@@ -271,6 +272,7 @@ describe("registerIpcHandlers", () => {
     await ipcMain.invoke(IPC_CHANNELS.app.startNewThread, {
       provider: "claude",
       launchMode: "cli",
+      modelId: "sonnet",
       projectPath: "/tmp/claude-project",
       prompt: "claude prompt",
       thinkingLevel: "high",
@@ -282,6 +284,7 @@ describe("registerIpcHandlers", () => {
       prompt: "codex prompt",
       binaryPath: "/custom/bin/codex",
       homePath: "/custom/.codex",
+      modelId: "gpt-5.4",
       reasoningEffort: "xhigh",
       serviceTier: "fast"
     })
@@ -290,6 +293,7 @@ describe("registerIpcHandlers", () => {
       prompt: "claude prompt",
       binaryPath: "/custom/bin/claude",
       settingsPath: "/custom/.claude/settings.json",
+      modelId: "sonnet",
       effortLevel: "high"
     })
     expect(terminalMocks.openShellCommandInTerminal).toHaveBeenNthCalledWith(1, {

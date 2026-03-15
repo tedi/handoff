@@ -43,6 +43,7 @@ describe("createHandoffBridge", () => {
     await bridge.app.startNewThread({
       provider: "codex",
       launchMode: "cli",
+      modelId: "gpt-5.4",
       projectPath: "/tmp/project",
       prompt: "hello",
       thinkingLevel: "high",
@@ -110,6 +111,7 @@ describe("createHandoffBridge", () => {
       {
         provider: "codex",
         launchMode: "cli",
+        modelId: "gpt-5.4",
         projectPath: "/tmp/project",
         prompt: "hello",
         thinkingLevel: "high",

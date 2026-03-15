@@ -171,6 +171,7 @@ export function buildCodexStartCommand(params: {
   prompt?: string
   binaryPath: string
   homePath: string
+  modelId: string
   reasoningEffort: string
   serviceTier?: string | null
 }) {
@@ -184,7 +185,7 @@ export function buildCodexStartCommand(params: {
   const segments = [
     `cd ${shellEscape(params.projectPath)}`,
     `export CODEX_HOME=${shellEscape(params.homePath)}`,
-    `exec ${shellEscape(params.binaryPath)} ${configSegments.join(" ")}${promptSegment ? ` ${promptSegment}` : ""}`
+    `exec ${shellEscape(params.binaryPath)} -m ${shellEscape(params.modelId)} ${configSegments.join(" ")}${promptSegment ? ` ${promptSegment}` : ""}`
   ]
 
   return segments.join(" && ")
@@ -195,6 +196,7 @@ export function buildClaudeStartCommand(params: {
   prompt?: string
   binaryPath: string
   settingsPath?: string | null
+  modelId: string
   effortLevel: string
 }) {
   const promptSegment = params.prompt?.trim() ? ` ${shellEscape(params.prompt)}` : ""
@@ -204,7 +206,7 @@ export function buildClaudeStartCommand(params: {
 
   const segments = [
     `cd ${shellEscape(params.projectPath)}`,
-    `exec ${shellEscape(params.binaryPath)}${settingsArg} --effort ${shellEscape(params.effortLevel)}${promptSegment}`
+    `exec ${shellEscape(params.binaryPath)}${settingsArg} --model ${shellEscape(params.modelId)} --effort ${shellEscape(params.effortLevel)}${promptSegment}`
   ]
 
   return segments.join(" && ")

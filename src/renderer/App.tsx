@@ -52,6 +52,16 @@ import type {
   ThreadLaunchVendor
 } from "../shared/contracts"
 import {
+  getComposerModelLabel,
+  getComposerModelOptions,
+  getComposerProviderConfig,
+  getDefaultComposerLaunchMode,
+  getDefaultComposerModelId,
+  isComposerLaunchModeSupported,
+  normalizeComposerTarget,
+  THINKING_LEVEL_OPTIONS
+} from "../shared/provider-config"
+import {
   detectCodeLanguage,
   parseApplyPatches,
   type ParsedPatchFile,
@@ -191,6 +201,7 @@ interface ProjectFilterOption {
 }
 
 type FilterMenuKey = "archived" | "provider" | "project" | "date"
+type NewThreadTargetMenuKey = "vendor" | "launchMode" | "model" | "options"
 type CopyActionKey = "chat" | "chat-with-diffs" | "last-message"
 type OutputFormatKey = "markdown" | "json" | "structured"
 
@@ -251,7 +262,7 @@ const NEW_THREAD_VENDOR_OPTIONS: Array<{
   label: string
 }> = [
   { value: "codex", label: "Codex" },
-  { value: "claude", label: "Claude" }
+  { value: "claude", label: "Claude Code" }
 ]
 
 const NEW_THREAD_LAUNCH_MODE_OPTIONS: Array<{
@@ -260,16 +271,6 @@ const NEW_THREAD_LAUNCH_MODE_OPTIONS: Array<{
 }> = [
   { value: "cli", label: "CLI" },
   { value: "app", label: "App" }
-]
-
-const THINKING_LEVEL_OPTIONS: Array<{
-  value: ThinkingLevel
-  label: string
-}> = [
-  { value: "low", label: "Low" },
-  { value: "medium", label: "Medium" },
-  { value: "high", label: "High" },
-  { value: "max", label: "Max" }
 ]
 
 function applySettingsPatchToSnapshot(
@@ -323,6 +324,10 @@ function formatProjectFilterLabel(projectPath: string) {
   return getPathBasename(projectPath) || projectPath
 }
 
+function formatComposerProviderLabel(provider: ThreadLaunchVendor) {
+  return getComposerProviderConfig(provider).label
+}
+
 function formatLaunchModeLabel(launchMode: ThreadLaunchMode) {
   return launchMode === "app" ? "App" : "CLI"
 }
@@ -331,16 +336,49 @@ function getDefaultLaunchModeFromClient(sessionClient?: SessionClient) {
   return sessionClient === "desktop" ? "app" : "cli"
 }
 
+function formatThinkingLevelLabel(thinkingLevel: ThinkingLevel) {
+  return (
+    THINKING_LEVEL_OPTIONS.find(option => option.value === thinkingLevel)?.label ??
+    thinkingLevel
+  )
+}
+
+function formatComposerOptionsSummary(
+  draft: Pick<NewThreadDraft, "vendor" | "thinkingLevel" | "fast">
+) {
+  const thinkingLabel = formatThinkingLevelLabel(draft.thinkingLevel)
+  return draft.vendor === "codex" && draft.fast
+    ? `${thinkingLabel} · Fast`
+    : thinkingLabel
+}
+
 function createDefaultNewThreadDraft(): NewThreadDraft {
   return {
     sourceSessionId: null,
     includeDiffs: readStoredNewThreadIncludeDiffs(),
     vendor: "codex",
-    launchMode: "cli",
+    launchMode: getDefaultComposerLaunchMode("codex"),
+    modelId: getDefaultComposerModelId("codex"),
     thinkingLevel: "high",
     fast: false,
     prompt: ""
   }
+}
+
+function getSeededNewThreadTarget(params: {
+  provider: ThreadLaunchVendor
+  sessionClient?: SessionClient
+  fast: boolean
+}) {
+  return normalizeComposerTarget({
+    provider: params.provider,
+    launchMode:
+      params.provider === "codex"
+        ? getDefaultLaunchModeFromClient(params.sessionClient)
+        : getDefaultComposerLaunchMode(params.provider),
+    modelId: getDefaultComposerModelId(params.provider),
+    fast: params.fast
+  })
 }
 
 function getFilterOptionLabel<TValue extends string>(
@@ -380,13 +418,14 @@ function buildNewThreadPrompt(params: {
   transcript: ConversationTranscript
   draft: Pick<
     NewThreadDraft,
-    "includeDiffs" | "vendor" | "launchMode" | "thinkingLevel" | "fast"
+    "includeDiffs" | "vendor" | "launchMode" | "modelId" | "thinkingLevel" | "fast"
   >
 }) {
   const { draft, session, transcript } = params
   const parts = [
     `<handoff_thread_prompt>`,
     `  <target provider="${draft.vendor}" launch_mode="${draft.launchMode}">`,
+    `    <model>${escapeStructuredValue(draft.modelId)}</model>`,
     `    <thinking_level>${draft.thinkingLevel}</thinking_level>`,
     `    <fast>${draft.vendor === "codex" && draft.fast ? "true" : "false"}</fast>`,
     `  </target>`,
@@ -448,7 +487,11 @@ function buildNewThreadPrompt(params: {
 }
 
 function buildNewThreadStartLabel(draft: Pick<NewThreadDraft, "launchMode" | "vendor">) {
-  const providerLabel = formatProviderLabel(draft.vendor)
+  const providerLabel = formatComposerProviderLabel(draft.vendor)
+  if (draft.vendor === "claude") {
+    return `Start in ${providerLabel}`
+  }
+
   if (draft.launchMode === "app") {
     return `Copy + Open in ${providerLabel}`
   }
@@ -1887,8 +1930,18 @@ function NewThreadPane({
   stateInfo: AppStateInfo | null
 }) {
   const [isSourceMenuOpen, setIsSourceMenuOpen] = useState(false)
+  const [openTargetMenuKey, setOpenTargetMenuKey] =
+    useState<NewThreadTargetMenuKey | null>(null)
   const sourceInputRef = useRef<HTMLInputElement | null>(null)
   const sourceMenuRef = useRef<HTMLDivElement | null>(null)
+  const targetMenuRef = useRef<HTMLDivElement | null>(null)
+
+  const activeProviderConfig = getComposerProviderConfig(draft.vendor)
+  const launchModeOptions = NEW_THREAD_LAUNCH_MODE_OPTIONS.filter(option =>
+    isComposerLaunchModeSupported(draft.vendor, option.value)
+  )
+  const selectedModelLabel = getComposerModelLabel(draft.vendor, draft.modelId)
+  const optionsSummary = formatComposerOptionsSummary(draft)
 
   useEffect(() => {
     sourceInputRef.current?.focus()
@@ -1923,6 +1976,35 @@ function NewThreadPane({
     }
   }, [isSourceMenuOpen])
 
+  useEffect(() => {
+    if (!openTargetMenuKey) {
+      return () => undefined
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target
+      if (target instanceof Node && targetMenuRef.current?.contains(target)) {
+        return
+      }
+
+      setOpenTargetMenuKey(null)
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpenTargetMenuKey(null)
+      }
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown)
+    window.addEventListener("keydown", handleKeyDown)
+
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown)
+      window.removeEventListener("keydown", handleKeyDown)
+    }
+  }, [openTargetMenuKey])
+
   const startButtonLabel = buildNewThreadStartLabel(draft)
   const promptUnavailable = !draft.prompt.trim()
   const startDisabled = promptUnavailable || !projectPath || Boolean(sourceError)
@@ -1933,6 +2015,173 @@ function NewThreadPane({
       : sourceError
         ? sourceError
         : null
+
+  function renderTargetMenuPanel() {
+    if (openTargetMenuKey === "vendor") {
+      return (
+        <div aria-label="Provider options" className="new-thread-target-panel" role="menu">
+          {NEW_THREAD_VENDOR_OPTIONS.map(option => (
+            <button
+              aria-checked={draft.vendor === option.value}
+              className={`new-thread-target-option ${
+                draft.vendor === option.value ? "is-selected" : ""
+              }`}
+              key={option.value}
+              onClick={() => {
+                onDraftChange({
+                  vendor: option.value
+                })
+                setOpenTargetMenuKey(null)
+              }}
+              role="menuitemradio"
+              type="button"
+            >
+              <span className="new-thread-target-option-main">
+                <ProviderIcon provider={option.value} stateInfo={stateInfo} />
+                <span>{getComposerProviderConfig(option.value).label}</span>
+              </span>
+              {draft.vendor === option.value ? (
+                <span aria-hidden="true" className="new-thread-target-check">
+                  ✓
+                </span>
+              ) : null}
+            </button>
+          ))}
+        </div>
+      )
+    }
+
+    if (openTargetMenuKey === "launchMode") {
+      return (
+        <div aria-label="Launch options" className="new-thread-target-panel" role="menu">
+          {launchModeOptions.map(option => (
+            <button
+              aria-checked={draft.launchMode === option.value}
+              className={`new-thread-target-option ${
+                draft.launchMode === option.value ? "is-selected" : ""
+              }`}
+              key={option.value}
+              onClick={() => {
+                onDraftChange({ launchMode: option.value })
+                setOpenTargetMenuKey(null)
+              }}
+              role="menuitemradio"
+              type="button"
+            >
+              <span>{option.label}</span>
+              {draft.launchMode === option.value ? (
+                <span aria-hidden="true" className="new-thread-target-check">
+                  ✓
+                </span>
+              ) : null}
+            </button>
+          ))}
+        </div>
+      )
+    }
+
+    if (openTargetMenuKey === "model") {
+      return (
+        <div
+          aria-label="Model options"
+          className="new-thread-target-panel new-thread-target-model-panel"
+          role="menu"
+        >
+          {getComposerModelOptions(draft.vendor).map(option => (
+            <button
+              aria-checked={draft.modelId === option.id}
+              className={`new-thread-target-option ${
+                draft.modelId === option.id ? "is-selected" : ""
+              }`}
+              key={option.id}
+              onClick={() => {
+                onDraftChange({ modelId: option.id })
+                setOpenTargetMenuKey(null)
+              }}
+              role="menuitemradio"
+              type="button"
+            >
+              <span>{option.label}</span>
+              {draft.modelId === option.id ? (
+                <span aria-hidden="true" className="new-thread-target-check">
+                  ✓
+                </span>
+              ) : null}
+            </button>
+          ))}
+        </div>
+      )
+    }
+
+    if (openTargetMenuKey === "options") {
+      return (
+        <div
+          aria-label="Thinking and fast mode options"
+          className="new-thread-target-panel new-thread-target-options-panel"
+          role="menu"
+        >
+          <div className="new-thread-target-group">
+            <span className="new-thread-target-group-label">Reasoning</span>
+            {THINKING_LEVEL_OPTIONS.map(option => (
+              <button
+                aria-checked={draft.thinkingLevel === option.value}
+                className={`new-thread-target-option ${
+                  draft.thinkingLevel === option.value ? "is-selected" : ""
+                }`}
+                key={option.value}
+                onClick={() => {
+                  onDraftChange({ thinkingLevel: option.value })
+                  setOpenTargetMenuKey(null)
+                }}
+                role="menuitemradio"
+                type="button"
+              >
+                <span>{option.label}</span>
+                {draft.thinkingLevel === option.value ? (
+                  <span aria-hidden="true" className="new-thread-target-check">
+                    ✓
+                  </span>
+                ) : null}
+              </button>
+            ))}
+          </div>
+
+          {draft.vendor === "codex" ? (
+            <div className="new-thread-target-group">
+              <span className="new-thread-target-group-label">Fast Mode</span>
+              {[
+                { label: "Off", value: false },
+                { label: "On", value: true }
+              ].map(option => (
+                <button
+                  aria-checked={draft.fast === option.value}
+                  className={`new-thread-target-option ${
+                    draft.fast === option.value ? "is-selected" : ""
+                  }`}
+                  key={option.label}
+                  onClick={() => {
+                    onDraftChange({ fast: option.value })
+                    setOpenTargetMenuKey(null)
+                  }}
+                  role="menuitemradio"
+                  type="button"
+                >
+                  <span>{option.label}</span>
+                  {draft.fast === option.value ? (
+                    <span aria-hidden="true" className="new-thread-target-check">
+                      ✓
+                    </span>
+                  ) : null}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      )
+    }
+
+    return null
+  }
 
   return (
     <div className="new-thread-layout">
@@ -2040,74 +2289,80 @@ function NewThreadPane({
       <section className="settings-card new-thread-card">
         <div className="settings-card-copy">
           <h2>Target</h2>
-          <p>Choose where Handoff should open the next thread and how much reasoning it should use.</p>
+          <p>
+            Choose the provider, model, and launch behavior for the next thread.
+          </p>
         </div>
 
-        <div className="new-thread-field-list">
-          <div className="new-thread-field">
-            <span className="settings-field-label">Vendor</span>
-            <div className="new-thread-segmented-control">
-              {NEW_THREAD_VENDOR_OPTIONS.map(option => (
-                <button
-                  className={`new-thread-segment ${
-                    draft.vendor === option.value ? "is-selected" : ""
-                  }`}
-                  key={option.value}
-                  onClick={() => onDraftChange({ vendor: option.value, fast: option.value === "codex" ? draft.fast : false })}
-                  type="button"
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
+        <div className="new-thread-target-picker" ref={targetMenuRef}>
+          <div className="new-thread-target-row">
+            <button
+              aria-expanded={openTargetMenuKey === "vendor"}
+              aria-haspopup="menu"
+              className={`new-thread-target-trigger ${
+                openTargetMenuKey === "vendor" ? "is-open" : ""
+              }`}
+              onClick={() =>
+                setOpenTargetMenuKey(current => (current === "vendor" ? null : "vendor"))
+              }
+              type="button"
+            >
+              <ProviderIcon provider={draft.vendor} stateInfo={stateInfo} />
+              <span>{activeProviderConfig.label}</span>
+              <ChevronDownIcon isOpen={openTargetMenuKey === "vendor"} />
+            </button>
+
+            {draft.vendor === "codex" ? (
+              <button
+                aria-expanded={openTargetMenuKey === "launchMode"}
+                aria-haspopup="menu"
+                className={`new-thread-target-trigger ${
+                  openTargetMenuKey === "launchMode" ? "is-open" : ""
+                }`}
+                onClick={() =>
+                  setOpenTargetMenuKey(current =>
+                    current === "launchMode" ? null : "launchMode"
+                  )
+                }
+                type="button"
+              >
+                <span>{formatLaunchModeLabel(draft.launchMode)}</span>
+                <ChevronDownIcon isOpen={openTargetMenuKey === "launchMode"} />
+              </button>
+            ) : null}
+
+            <button
+              aria-expanded={openTargetMenuKey === "model"}
+              aria-haspopup="menu"
+              className={`new-thread-target-trigger ${
+                openTargetMenuKey === "model" ? "is-open" : ""
+              }`}
+              onClick={() =>
+                setOpenTargetMenuKey(current => (current === "model" ? null : "model"))
+              }
+              type="button"
+            >
+              <span>{selectedModelLabel}</span>
+              <ChevronDownIcon isOpen={openTargetMenuKey === "model"} />
+            </button>
+
+            <button
+              aria-expanded={openTargetMenuKey === "options"}
+              aria-haspopup="menu"
+              className={`new-thread-target-trigger ${
+                openTargetMenuKey === "options" ? "is-open" : ""
+              }`}
+              onClick={() =>
+                setOpenTargetMenuKey(current => (current === "options" ? null : "options"))
+              }
+              type="button"
+            >
+              <span>{optionsSummary}</span>
+              <ChevronDownIcon isOpen={openTargetMenuKey === "options"} />
+            </button>
           </div>
 
-          <div className="new-thread-field">
-            <span className="settings-field-label">Launch</span>
-            <div className="new-thread-segmented-control">
-              {NEW_THREAD_LAUNCH_MODE_OPTIONS.map(option => (
-                <button
-                  className={`new-thread-segment ${
-                    draft.launchMode === option.value ? "is-selected" : ""
-                  }`}
-                  key={option.value}
-                  onClick={() => onDraftChange({ launchMode: option.value })}
-                  type="button"
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="new-thread-field">
-            <span className="settings-field-label">Thinking level</span>
-            <div className="new-thread-segmented-control">
-              {THINKING_LEVEL_OPTIONS.map(option => (
-                <button
-                  className={`new-thread-segment ${
-                    draft.thinkingLevel === option.value ? "is-selected" : ""
-                  }`}
-                  key={option.value}
-                  onClick={() => onDraftChange({ thinkingLevel: option.value })}
-                  type="button"
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {draft.vendor === "codex" ? (
-            <label className="new-thread-inline-toggle">
-              <input
-                checked={draft.fast}
-                onChange={event => onDraftChange({ fast: event.target.checked })}
-                type="checkbox"
-              />
-              <span>Fast mode</span>
-            </label>
-          ) : null}
+          {renderTargetMenuPanel()}
         </div>
 
         <div className="new-thread-inline-note">
@@ -2655,8 +2910,16 @@ export default function App() {
 
   const handleNewThreadDraftChange = useCallback((patch: Partial<NewThreadDraft>) => {
     setNewThreadDraft(current => ({
-      ...current,
-      ...patch
+      ...{
+        ...current,
+        ...patch
+      },
+      ...normalizeComposerTarget({
+        provider: patch.vendor ?? current.vendor,
+        launchMode: patch.launchMode ?? current.launchMode,
+        modelId: patch.modelId ?? current.modelId,
+        fast: patch.fast ?? current.fast
+      })
     }))
 
     if ("prompt" in patch) {
@@ -2677,6 +2940,7 @@ export default function App() {
 
     if (
       "vendor" in patch ||
+      "modelId" in patch ||
       "launchMode" in patch ||
       "thinkingLevel" in patch ||
       "fast" in patch
@@ -2692,6 +2956,12 @@ export default function App() {
 
   const handleSelectNewThreadSource = useCallback(
     (session: SessionListItem) => {
+      const seededTarget = getSeededNewThreadTarget({
+        provider: session.provider,
+        sessionClient: activeTranscript?.id === session.id ? activeTranscript.sessionClient : undefined,
+        fast: false
+      })
+
       setNewThreadSourceQuery(session.threadName)
       setNewThreadSourceError(null)
       setNewThreadPromptError(null)
@@ -2702,13 +2972,7 @@ export default function App() {
         ...(!hasTouchedNewThreadTarget
           ? {
               vendor: session.provider,
-              launchMode:
-                session.id === activeTranscript?.id
-                  ? getDefaultLaunchModeFromClient(activeTranscript.sessionClient)
-                  : session.provider === "claude"
-                    ? "cli"
-                    : "cli",
-              fast: session.provider === "codex" ? current.fast : false
+              ...seededTarget
             }
           : {})
       }))
@@ -2758,6 +3022,7 @@ export default function App() {
       const params: NewThreadLaunchParams = {
         provider: newThreadDraft.vendor,
         launchMode: newThreadDraft.launchMode,
+        modelId: newThreadDraft.modelId,
         projectPath: newThreadProjectPath,
         prompt: newThreadDraft.prompt,
         thinkingLevel: newThreadDraft.thinkingLevel,
@@ -2765,7 +3030,7 @@ export default function App() {
       }
 
       const result = await api.app.startNewThread(params)
-      const providerLabel = formatProviderLabel(newThreadDraft.vendor)
+      const providerLabel = formatComposerProviderLabel(newThreadDraft.vendor)
 
       if (result.fallbackMessage) {
         showToast(result.fallbackMessage)
@@ -2777,7 +3042,11 @@ export default function App() {
         return
       }
 
-      showToast(`Started ${providerLabel} ${formatLaunchModeLabel(result.launchMode)}`)
+      showToast(
+        newThreadDraft.vendor === "claude"
+          ? `Started ${providerLabel}`
+          : `Started ${providerLabel} ${formatLaunchModeLabel(result.launchMode)}`
+      )
     } catch (error) {
       showToast(
         error instanceof Error ? error.message : "Unable to start the new thread.",
@@ -3177,16 +3446,18 @@ export default function App() {
       return
     }
 
-    const nextLaunchMode =
-      selectedNewThreadSourceSession.provider === "claude"
-        ? "cli"
-        : getDefaultLaunchModeFromClient(newThreadSourceTranscript.sessionClient)
+    const seededTarget = getSeededNewThreadTarget({
+      provider: selectedNewThreadSourceSession.provider,
+      sessionClient: newThreadSourceTranscript.sessionClient,
+      fast: false
+    })
 
     setNewThreadDraft(current => {
       if (
         current.vendor === selectedNewThreadSourceSession.provider &&
-        current.launchMode === nextLaunchMode &&
-        (selectedNewThreadSourceSession.provider === "codex" || current.fast === false)
+        current.launchMode === seededTarget.launchMode &&
+        current.modelId === seededTarget.modelId &&
+        current.fast === seededTarget.fast
       ) {
         return current
       }
@@ -3194,8 +3465,7 @@ export default function App() {
       return {
         ...current,
         vendor: selectedNewThreadSourceSession.provider,
-        launchMode: nextLaunchMode,
-        fast: selectedNewThreadSourceSession.provider === "codex" ? current.fast : false
+        ...seededTarget
       }
     })
   }, [
@@ -3566,13 +3836,17 @@ export default function App() {
       activeSession && activeTranscript?.id === activeSession.id ? activeTranscript : null
 
     if (activeSession) {
+      const seededTarget = getSeededNewThreadTarget({
+        provider: activeSession.provider,
+        sessionClient: seedTranscript?.sessionClient,
+        fast: false
+      })
+
       nextDraft.sourceSessionId = activeSession.id
       nextDraft.vendor = activeSession.provider
-      nextDraft.launchMode =
-        activeSession.provider === "claude"
-          ? "cli"
-          : getDefaultLaunchModeFromClient(seedTranscript?.sessionClient)
-      nextDraft.fast = activeSession.provider === "codex" ? nextDraft.fast : false
+      nextDraft.launchMode = seededTarget.launchMode
+      nextDraft.modelId = seededTarget.modelId
+      nextDraft.fast = seededTarget.fast
       setNewThreadSourceQuery(activeSession.threadName)
     } else {
       setNewThreadSourceQuery("")

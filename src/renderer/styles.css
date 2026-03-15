@@ -1423,43 +1423,121 @@ pre {
   background: rgba(255, 255, 255, 0.025);
 }
 
-.new-thread-field-list {
+.new-thread-target-picker {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
-.new-thread-field {
+.new-thread-target-row {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  flex-wrap: nowrap;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
 }
 
-.new-thread-segmented-control {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.new-thread-segment {
+.new-thread-target-trigger {
+  flex-shrink: 0;
+  min-width: 0;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.04);
-  color: var(--muted);
-  padding: 7px 10px;
-  border-radius: 8px;
-  font-size: 0.72rem;
-  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
-}
-
-.new-thread-segment:hover {
-  background: rgba(255, 255, 255, 0.08);
   color: var(--ink);
+  padding: 8px 10px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.74rem;
+  font-weight: 500;
+  transition: background-color 120ms ease, border-color 120ms ease;
 }
 
-.new-thread-segment.is-selected {
-  color: var(--accent-strong);
-  border-color: rgba(168, 85, 247, 0.28);
+.new-thread-target-trigger:hover,
+.new-thread-target-trigger.is-open {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.new-thread-target-trigger .filter-menu-chevron {
+  width: 13px;
+  height: 13px;
+  margin-left: auto;
+}
+
+.new-thread-target-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: #24252c;
+  box-shadow: 0 20px 42px rgba(0, 0, 0, 0.34);
+}
+
+.new-thread-target-model-panel {
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.new-thread-target-options-panel {
+  gap: 10px;
+}
+
+.new-thread-target-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.new-thread-target-group + .new-thread-target-group {
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.new-thread-target-group-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 2px 4px 6px;
+}
+
+.new-thread-target-option {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 0.74rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.new-thread-target-option:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.new-thread-target-option.is-selected {
   background: rgba(168, 85, 247, 0.12);
+  color: var(--accent-strong);
+}
+
+.new-thread-target-option-main {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.new-thread-target-check {
+  flex-shrink: 0;
+  font-size: 0.78rem;
 }
 
 .new-thread-inline-toggle {

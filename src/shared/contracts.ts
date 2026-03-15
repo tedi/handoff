@@ -124,6 +124,7 @@ export interface NewThreadDraft {
   includeDiffs: boolean
   vendor: ThreadLaunchVendor
   launchMode: ThreadLaunchMode
+  modelId: string
   thinkingLevel: ThinkingLevel
   fast: boolean
   prompt: string
@@ -132,6 +133,7 @@ export interface NewThreadDraft {
 export interface NewThreadLaunchParams {
   provider: ThreadLaunchVendor
   launchMode: ThreadLaunchMode
+  modelId: string
   projectPath: string
   prompt: string
   thinkingLevel: ThinkingLevel

@@ -16,6 +16,10 @@ import type {
   ThinkingLevel,
   TranscriptOptions
 } from "../shared/contracts"
+import {
+  getComposerProviderConfig,
+  normalizeComposerTarget
+} from "../shared/provider-config"
 import type { HandoffService } from "./service"
 import {
   buildClaudeStartCommand,
@@ -284,11 +288,6 @@ async function openCodexAppProject(params: {
   })
 }
 
-async function openClaudeAppProject(projectPath: string) {
-  ensureProjectPathExists(projectPath)
-  await execFileAsync("open", ["-a", "Claude", projectPath])
-}
-
 async function startNewThread(
   settingsSnapshot: HandoffSettingsSnapshot,
   params: NewThreadLaunchParams
@@ -301,7 +300,23 @@ async function startNewThread(
     throw new Error("A prompt is required to start a thread.")
   }
 
+  const normalizedTarget = normalizeComposerTarget({
+    provider: params.provider,
+    launchMode: params.launchMode,
+    modelId: params.modelId,
+    fast: params.fast
+  })
+  const providerConfig = getComposerProviderConfig(params.provider)
+
+  if (params.provider === "claude" && normalizedTarget.launchMode !== "cli") {
+    throw new Error("Claude starts only support Claude Code.")
+  }
+
   if (params.launchMode === "app") {
+    if (!providerConfig.launchModes.includes("app")) {
+      throw new Error(`${providerConfig.label} does not support app launches.`)
+    }
+
     clipboard.writeText(params.prompt)
 
     if (params.provider === "codex") {
@@ -309,8 +324,6 @@ async function startNewThread(
         settingsSnapshot,
         projectPath: params.projectPath
       })
-    } else {
-      await openClaudeAppProject(params.projectPath)
     }
 
     return {
@@ -331,8 +344,9 @@ async function startNewThread(
       prompt: shouldFallbackToCopiedPrompt ? "" : params.prompt,
       binaryPath: launchInfo.binaryPath,
       homePath: launchInfo.homePath,
+      modelId: normalizedTarget.modelId,
       reasoningEffort: mapThinkingLevelToCodexEffort(params.thinkingLevel),
-      serviceTier: params.fast ? "fast" : null
+      serviceTier: normalizedTarget.fast ? "fast" : null
     })
 
     if (shouldFallbackToCopiedPrompt) {
@@ -366,6 +380,7 @@ async function startNewThread(
     prompt: shouldFallbackToCopiedPrompt ? "" : params.prompt,
     binaryPath: launchInfo.binaryPath,
     settingsPath: launchInfo.settingsPath,
+    modelId: normalizedTarget.modelId,
     effortLevel: mapThinkingLevelToClaudeEffort(params.thinkingLevel)
   })
 
