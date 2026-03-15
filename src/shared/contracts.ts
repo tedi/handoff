@@ -121,6 +121,7 @@ export interface OpenActionResult {
 
 export interface NewThreadDraft {
   sourceSessionId: string | null
+  projectPath: string | null
   includeDiffs: boolean
   vendor: ThreadLaunchVendor
   launchMode: ThreadLaunchMode

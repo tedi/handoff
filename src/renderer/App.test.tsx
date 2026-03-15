@@ -1110,27 +1110,22 @@ describe("Handoff App", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /Open new thread/i }))
 
-    expect(await screen.findByText("Start from existing thread")).toBeInTheDocument()
+    await waitFor(() => {
+      expect(
+        screen.getAllByRole("button", { name: /Gesture regression/i }).length
+      ).toBeGreaterThan(0)
+    })
     expect(screen.getAllByText("Gesture regression").length).toBeGreaterThan(0)
     expect(screen.getByRole("button", { name: "Copy + Open in Codex" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: /GPT-5\.4/i })).toBeInTheDocument()
 
     const promptInput = screen.getByPlaceholderText(
-      "Select a source thread to generate a prompt."
+      "Add custom instructions"
     ) as HTMLTextAreaElement
 
-    await waitFor(() => {
-      expect(promptInput.value).toContain("<thread_name>Gesture regression</thread_name>")
-    })
-    expect(promptInput.value).toContain("<model>gpt-5.4</model>")
-    expect(promptInput.value).toContain("The gesture handler upgrade broke the carousel swipe.")
-    expect(promptInput.value).not.toContain("*** Begin Patch")
+    expect(promptInput.value).toBe("")
 
     await userEvent.click(screen.getByLabelText("Include diffs"))
-
-    await waitFor(() => {
-      expect(promptInput.value).toContain("*** Begin Patch")
-    })
 
     await userEvent.click(screen.getByRole("button", { name: "Copy + Open in Codex" }))
 
@@ -1139,9 +1134,14 @@ describe("Handoff App", () => {
       launchMode: "app",
       modelId: "gpt-5.4",
       projectPath: "/tmp/project",
-      prompt: expect.stringContaining("*** Begin Patch"),
+      prompt: expect.stringContaining("<thread_name>Gesture regression</thread_name>"),
       thinkingLevel: "high",
       fast: false
     })
+    expect(api.app.startNewThread).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: expect.stringContaining("*** Begin Patch")
+      })
+    )
   })
 })

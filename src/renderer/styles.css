@@ -1330,10 +1330,40 @@ pre {
   gap: 6px;
 }
 
+.new-thread-source-project-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
 .new-thread-source-label {
   font-size: 0.78rem;
   font-weight: 600;
   color: var(--ink);
+}
+
+.new-thread-picker-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  text-align: left;
+}
+
+.new-thread-picker-trigger.is-open {
+  border-color: rgba(168, 85, 247, 0.38);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.new-thread-picker-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.new-thread-picker-value.is-placeholder {
+  color: var(--muted);
 }
 
 .new-thread-source-menu {
@@ -1352,6 +1382,10 @@ pre {
   flex-direction: column;
   gap: 4px;
   z-index: 10;
+}
+
+.new-thread-source-menu .settings-input {
+  margin-bottom: 4px;
 }
 
 .new-thread-source-empty {
@@ -1412,15 +1446,6 @@ pre {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.new-thread-selected-source {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.025);
 }
 
 .new-thread-target-picker {
@@ -1588,6 +1613,12 @@ pre {
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
+}
+
+@media (max-width: 920px) {
+  .new-thread-source-project-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ── Conversation entries ─────────────────────────────── */

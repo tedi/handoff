@@ -355,6 +355,7 @@ function formatComposerOptionsSummary(
 function createDefaultNewThreadDraft(): NewThreadDraft {
   return {
     sourceSessionId: null,
+    projectPath: null,
     includeDiffs: readStoredNewThreadIncludeDiffs(),
     vendor: "codex",
     launchMode: getDefaultComposerLaunchMode("codex"),
@@ -414,75 +415,82 @@ function escapeStructuredValue(value: string) {
 }
 
 function buildNewThreadPrompt(params: {
-  session: SessionListItem
-  transcript: ConversationTranscript
-  draft: Pick<
-    NewThreadDraft,
-    "includeDiffs" | "vendor" | "launchMode" | "modelId" | "thinkingLevel" | "fast"
-  >
+  projectPath: string | null
+  session: SessionListItem | null
+  transcript: ConversationTranscript | null
+  draft: Pick<NewThreadDraft, "includeDiffs" | "prompt">
 }) {
-  const { draft, session, transcript } = params
-  const parts = [
-    `<handoff_thread_prompt>`,
-    `  <target provider="${draft.vendor}" launch_mode="${draft.launchMode}">`,
-    `    <model>${escapeStructuredValue(draft.modelId)}</model>`,
-    `    <thinking_level>${draft.thinkingLevel}</thinking_level>`,
-    `    <fast>${draft.vendor === "codex" && draft.fast ? "true" : "false"}</fast>`,
-    `  </target>`,
-    `  <source_thread provider="${transcript.provider}" archived="${transcript.archived ? "true" : "false"}">`,
-    `    <thread_name>${escapeStructuredValue(transcript.threadName)}</thread_name>`,
-    `    <updated_at>${escapeStructuredValue(transcript.updatedAt)}</updated_at>`
-  ]
+  const { draft, projectPath, session, transcript } = params
+  const trimmedInstructions = draft.prompt.trim()
+  const parts = [`<handoff_thread_prompt>`]
 
-  const projectPath = transcript.projectPath ?? transcript.sessionCwd ?? session.projectPath
   if (projectPath) {
-    parts.push(`    <project_path>${escapeStructuredValue(projectPath)}</project_path>`)
+    parts.push(`  <project_path>${escapeStructuredValue(projectPath)}</project_path>`)
   }
 
-  parts.push(`    <messages>`)
+  if (session && transcript) {
+    parts.push(
+      `  <source_thread provider="${transcript.provider}" archived="${
+        transcript.archived ? "true" : "false"
+      }">`
+    )
+    parts.push(`    <thread_name>${escapeStructuredValue(transcript.threadName)}</thread_name>`)
+    parts.push(`    <updated_at>${escapeStructuredValue(transcript.updatedAt)}</updated_at>`)
+    parts.push(`    <messages>`)
 
-  transcript.entries.forEach(entry => {
-    if (entry.kind === "thought_chain") {
-      parts.push(`      <thought_chain>`)
-      entry.messages.forEach(message => {
-        parts.push(`        <step format="markdown">`)
-        parts.push(escapeStructuredValue(message.bodyMarkdown))
-        parts.push(`        </step>`)
-      })
-      parts.push(`      </thought_chain>`)
-      return
-    }
+    transcript.entries.forEach(entry => {
+      if (entry.kind === "thought_chain") {
+        parts.push(`      <thought_chain>`)
+        entry.messages.forEach(message => {
+          parts.push(`        <step format="markdown">`)
+          parts.push(escapeStructuredValue(message.bodyMarkdown))
+          parts.push(`        </step>`)
+        })
+        parts.push(`      </thought_chain>`)
+        return
+      }
 
-    parts.push(`      <message role="${entry.role}">`)
-    parts.push(`        <timestamp>${escapeStructuredValue(entry.timestamp)}</timestamp>`)
-    parts.push(`        <content format="markdown">`)
-    parts.push(escapeStructuredValue(entry.bodyMarkdown))
-    parts.push(`        </content>`)
+      parts.push(`      <message role="${entry.role}">`)
+      parts.push(`        <timestamp>${escapeStructuredValue(entry.timestamp)}</timestamp>`)
+      parts.push(`        <content format="markdown">`)
+      parts.push(escapeStructuredValue(entry.bodyMarkdown))
+      parts.push(`        </content>`)
 
-    if (draft.includeDiffs && entry.role === "assistant" && entry.patches.length > 0) {
-      parts.push(`        <diffs>`)
-      entry.patches.forEach(patch => {
-        parts.push(`          <diff>`)
-        parts.push(
-          `            <files>${escapeStructuredValue(
-            patch.files.length > 0 ? patch.files.join(", ") : "unknown files"
-          )}</files>`
-        )
-        parts.push(`            <patch format="diff">`)
-        parts.push(escapeStructuredValue(patch.patch))
-        parts.push(`            </patch>`)
-        parts.push(`          </diff>`)
-      })
-      parts.push(`        </diffs>`)
-    }
+      if (draft.includeDiffs && entry.role === "assistant" && entry.patches.length > 0) {
+        parts.push(`        <diffs>`)
+        entry.patches.forEach(patch => {
+          parts.push(`          <diff>`)
+          parts.push(
+            `            <files>${escapeStructuredValue(
+              patch.files.length > 0 ? patch.files.join(", ") : "unknown files"
+            )}</files>`
+          )
+          parts.push(`            <patch format="diff">`)
+          parts.push(escapeStructuredValue(patch.patch))
+          parts.push(`            </patch>`)
+          parts.push(`          </diff>`)
+        })
+        parts.push(`        </diffs>`)
+      }
 
-    parts.push(`      </message>`)
-  })
+      parts.push(`      </message>`)
+    })
 
-  parts.push(`    </messages>`)
-  parts.push(`  </source_thread>`)
+    parts.push(`    </messages>`)
+    parts.push(`  </source_thread>`)
+  }
+
+  if (trimmedInstructions) {
+    parts.push(`  <additional_instructions format="markdown">`)
+    parts.push(escapeStructuredValue(trimmedInstructions))
+    parts.push(`  </additional_instructions>`)
+  }
+
+  if (parts.length === 1) {
+    return ""
+  }
+
   parts.push(`</handoff_thread_prompt>`)
-
   return `${parts.join("\n")}\n`
 }
 
@@ -1898,15 +1906,17 @@ function SettingsPane({
 
 function NewThreadPane({
   draft,
+  generatedPrompt,
   isLoadingSourceTranscript,
   onCopyPrompt,
   onDraftChange,
-  onResetPrompt,
+  onProjectPathChange,
   onSelectSourceSession,
   onSourceQueryChange,
   onStartThread,
-  projectPath,
   promptError,
+  projectOptions,
+  projectPath,
   sourceError,
   sourceQuery,
   sourceResults,
@@ -1914,15 +1924,17 @@ function NewThreadPane({
   stateInfo
 }: {
   draft: NewThreadDraft
+  generatedPrompt: string
   isLoadingSourceTranscript: boolean
   onCopyPrompt(): void
   onDraftChange(patch: Partial<NewThreadDraft>): void
-  onResetPrompt(): void
-  onSelectSourceSession(session: SessionListItem): void
+  onProjectPathChange(projectPath: string | null): void
+  onSelectSourceSession(session: SessionListItem | null): void
   onSourceQueryChange(value: string): void
   onStartThread(): void
-  projectPath: string | null
   promptError: string | null
+  projectOptions: ProjectFilterOption[]
+  projectPath: string | null
   sourceError: string | null
   sourceQuery: string
   sourceResults: SessionListItem[]
@@ -1930,10 +1942,14 @@ function NewThreadPane({
   stateInfo: AppStateInfo | null
 }) {
   const [isSourceMenuOpen, setIsSourceMenuOpen] = useState(false)
+  const [isProjectMenuOpen, setIsProjectMenuOpen] = useState(false)
   const [openTargetMenuKey, setOpenTargetMenuKey] =
     useState<NewThreadTargetMenuKey | null>(null)
+  const [projectQuery, setProjectQuery] = useState("")
   const sourceInputRef = useRef<HTMLInputElement | null>(null)
+  const projectInputRef = useRef<HTMLInputElement | null>(null)
   const sourceMenuRef = useRef<HTMLDivElement | null>(null)
+  const projectMenuRef = useRef<HTMLDivElement | null>(null)
   const targetMenuRef = useRef<HTMLDivElement | null>(null)
 
   const activeProviderConfig = getComposerProviderConfig(draft.vendor)
@@ -1942,10 +1958,35 @@ function NewThreadPane({
   )
   const selectedModelLabel = getComposerModelLabel(draft.vendor, draft.modelId)
   const optionsSummary = formatComposerOptionsSummary(draft)
+  const filteredProjectOptions = useMemo(() => {
+    const normalizedQuery = projectQuery.trim().toLowerCase()
+
+    return projectOptions
+      .filter(option => {
+        if (!normalizedQuery) {
+          return true
+        }
+
+        return [option.label, option.path].join(" ").toLowerCase().includes(normalizedQuery)
+      })
+      .slice(0, 12)
+  }, [projectOptions, projectQuery])
 
   useEffect(() => {
+    if (!isSourceMenuOpen) {
+      return
+    }
+
     sourceInputRef.current?.focus()
-  }, [])
+  }, [isSourceMenuOpen])
+
+  useEffect(() => {
+    if (!isProjectMenuOpen) {
+      return
+    }
+
+    projectInputRef.current?.focus()
+  }, [isProjectMenuOpen])
 
   useEffect(() => {
     if (!isSourceMenuOpen) {
@@ -1959,11 +2000,13 @@ function NewThreadPane({
       }
 
       setIsSourceMenuOpen(false)
+      onSourceQueryChange("")
     }
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         setIsSourceMenuOpen(false)
+        onSourceQueryChange("")
       }
     }
 
@@ -1974,7 +2017,38 @@ function NewThreadPane({
       window.removeEventListener("pointerdown", handlePointerDown)
       window.removeEventListener("keydown", handleKeyDown)
     }
-  }, [isSourceMenuOpen])
+  }, [isSourceMenuOpen, onSourceQueryChange])
+
+  useEffect(() => {
+    if (!isProjectMenuOpen) {
+      return () => undefined
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target
+      if (target instanceof Node && projectMenuRef.current?.contains(target)) {
+        return
+      }
+
+      setIsProjectMenuOpen(false)
+      setProjectQuery("")
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsProjectMenuOpen(false)
+        setProjectQuery("")
+      }
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown)
+    window.addEventListener("keydown", handleKeyDown)
+
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown)
+      window.removeEventListener("keydown", handleKeyDown)
+    }
+  }, [isProjectMenuOpen])
 
   useEffect(() => {
     if (!openTargetMenuKey) {
@@ -2006,12 +2080,18 @@ function NewThreadPane({
   }, [openTargetMenuKey])
 
   const startButtonLabel = buildNewThreadStartLabel(draft)
-  const promptUnavailable = !draft.prompt.trim()
-  const startDisabled = promptUnavailable || !projectPath || Boolean(sourceError)
-  const startDisabledReason = promptUnavailable
-    ? "Select a source thread to generate a prompt before starting."
+  const promptUnavailable = !generatedPrompt.trim()
+  const startDisabled =
+    promptUnavailable ||
+    !projectPath ||
+    Boolean(sourceError) ||
+    (Boolean(selectedSourceSession) && isLoadingSourceTranscript)
+  const startDisabledReason = selectedSourceSession && isLoadingSourceTranscript
+    ? "Loading source thread…"
+    : promptUnavailable
+      ? "Select a source thread or add custom instructions before starting."
     : !projectPath
-      ? "A resolved project path is required before Handoff can launch a new thread."
+      ? "Select a project before starting."
       : sourceError
         ? sourceError
         : null
@@ -2186,99 +2266,165 @@ function NewThreadPane({
   return (
     <div className="new-thread-layout">
       <section className="settings-card new-thread-card">
-        <div className="settings-card-copy">
-          <h2>Source</h2>
-          <p>Select an existing thread and Handoff will generate a structured handoff prompt.</p>
-        </div>
+        <div className="new-thread-source-project-row">
+          <div className="new-thread-source-picker" ref={sourceMenuRef}>
+            <button
+              className={`settings-input new-thread-picker-trigger ${
+                isSourceMenuOpen ? "is-open" : ""
+              }`}
+              onClick={() => {
+                setIsProjectMenuOpen(false)
+                setIsSourceMenuOpen(true)
+              }}
+              type="button"
+            >
+              <span
+                className={`new-thread-picker-value ${
+                  selectedSourceSession ? "" : "is-placeholder"
+                }`}
+              >
+                {selectedSourceSession?.threadName ?? "Not starting from a previous thread"}
+              </span>
+              <ChevronDownIcon isOpen={isSourceMenuOpen} />
+            </button>
 
-        <div className="new-thread-source-picker" ref={sourceMenuRef}>
-          <label className="new-thread-source-label" htmlFor="new-thread-source-search">
-            Start from existing thread
-          </label>
-          <input
-            className="settings-input new-thread-source-input"
-            id="new-thread-source-search"
-            onChange={event => onSourceQueryChange(event.target.value)}
-            onFocus={() => setIsSourceMenuOpen(true)}
-            placeholder="Search threads"
-            ref={sourceInputRef}
-            type="text"
-            value={sourceQuery}
-          />
+            {isSourceMenuOpen ? (
+              <div className="new-thread-source-menu" role="listbox">
+                <input
+                  className="settings-input new-thread-source-input"
+                  onChange={event => onSourceQueryChange(event.target.value)}
+                  placeholder="Search threads"
+                  ref={sourceInputRef}
+                  type="text"
+                  value={sourceQuery}
+                />
 
-          {isSourceMenuOpen ? (
-            <div className="new-thread-source-menu" role="listbox">
-              {sourceResults.length === 0 ? (
-                <div className="new-thread-source-empty">No matching threads.</div>
-              ) : (
-                sourceResults.map(session => (
-                  <button
-                    className={`new-thread-source-option ${
-                      session.id === selectedSourceSession?.id ? "is-selected" : ""
-                    }`}
-                    key={session.id}
-                    onClick={() => {
-                      onSelectSourceSession(session)
-                      setIsSourceMenuOpen(false)
-                    }}
-                    type="button"
-                  >
-                    <div className="new-thread-source-option-main">
-                      <span className="new-thread-source-option-title">
-                        {session.threadName}
-                      </span>
-                      <div className="new-thread-source-option-meta">
-                        <ProviderIcon provider={session.provider} stateInfo={stateInfo} />
-                        <span>{formatRelativeTimestamp(session.updatedAt)}</span>
-                      </div>
-                    </div>
-                    <span
-                      className="new-thread-source-option-subtitle"
-                      title={session.projectPath ?? undefined}
+                <button
+                  className={`new-thread-source-option ${
+                    selectedSourceSession ? "" : "is-selected"
+                  }`}
+                  onClick={() => {
+                    onSelectSourceSession(null)
+                    setIsSourceMenuOpen(false)
+                    onSourceQueryChange("")
+                  }}
+                  type="button"
+                >
+                  <span className="new-thread-source-option-title">
+                    Not starting from a previous thread
+                  </span>
+                </button>
+
+                {sourceResults.length === 0 ? (
+                  <div className="new-thread-source-empty">No matching threads.</div>
+                ) : (
+                  sourceResults.map(session => (
+                    <button
+                      className={`new-thread-source-option ${
+                        session.id === selectedSourceSession?.id ? "is-selected" : ""
+                      }`}
+                      key={session.id}
+                      onClick={() => {
+                        onSelectSourceSession(session)
+                        setIsSourceMenuOpen(false)
+                        onSourceQueryChange("")
+                      }}
+                      type="button"
                     >
-                      {session.projectPath ?? "No project path"}
-                    </span>
-                  </button>
-                ))
-              )}
-            </div>
-          ) : null}
+                      <div className="new-thread-source-option-main">
+                        <span className="new-thread-source-option-title">
+                          {session.threadName}
+                        </span>
+                        <div className="new-thread-source-option-meta">
+                          <ProviderIcon provider={session.provider} stateInfo={stateInfo} />
+                          <span>{formatRelativeTimestamp(session.updatedAt)}</span>
+                        </div>
+                      </div>
+                      <span
+                        className="new-thread-source-option-subtitle"
+                        title={session.projectPath ?? undefined}
+                      >
+                        {session.projectPath ?? "No project path"}
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="new-thread-source-picker" ref={projectMenuRef}>
+            <button
+              className={`settings-input new-thread-picker-trigger ${
+                isProjectMenuOpen ? "is-open" : ""
+              }`}
+              onClick={() => {
+                setIsSourceMenuOpen(false)
+                onSourceQueryChange("")
+                setIsProjectMenuOpen(true)
+              }}
+              type="button"
+            >
+              <span
+                className={`new-thread-picker-value ${projectPath ? "" : "is-placeholder"}`}
+                title={projectPath ?? undefined}
+              >
+                {projectPath ? formatProjectFilterLabel(projectPath) : "Select project"}
+              </span>
+              <ChevronDownIcon isOpen={isProjectMenuOpen} />
+            </button>
+
+            {isProjectMenuOpen ? (
+              <div className="new-thread-source-menu" role="listbox">
+                <input
+                  className="settings-input new-thread-source-input"
+                  onChange={event => setProjectQuery(event.target.value)}
+                  placeholder="Search projects"
+                  ref={projectInputRef}
+                  type="text"
+                  value={projectQuery}
+                />
+
+                {filteredProjectOptions.length === 0 ? (
+                  <div className="new-thread-source-empty">No matching projects.</div>
+                ) : (
+                  filteredProjectOptions.map(option => (
+                    <button
+                      className={`new-thread-source-option ${
+                        option.path === projectPath ? "is-selected" : ""
+                      }`}
+                      key={option.path}
+                      onClick={() => {
+                        onProjectPathChange(option.path)
+                        setIsProjectMenuOpen(false)
+                        setProjectQuery("")
+                      }}
+                      type="button"
+                    >
+                      <div className="new-thread-source-option-main">
+                        <span className="new-thread-source-option-title">{option.label}</span>
+                      </div>
+                      <span className="new-thread-source-option-subtitle" title={option.path}>
+                        {option.path}
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            ) : null}
+          </div>
         </div>
 
         {selectedSourceSession ? (
-          <div className="new-thread-selected-source">
-            <div className="new-thread-selected-source-header">
-              <span className="new-thread-selected-source-title">
-                {selectedSourceSession.threadName}
-              </span>
-              <div className="new-thread-selected-source-meta">
-                <ProviderIcon provider={selectedSourceSession.provider} stateInfo={stateInfo} />
-                <span>{formatTimestamp(selectedSourceSession.updatedAt)}</span>
-              </div>
-            </div>
-            {selectedSourceSession.projectPath ? (
-              <span
-                className="new-thread-selected-source-path"
-                title={selectedSourceSession.projectPath}
-              >
-                {selectedSourceSession.projectPath}
-              </span>
-            ) : null}
-          </div>
-        ) : (
-          <div className="new-thread-inline-note">
-            Pick a source thread to generate the prompt.
-          </div>
-        )}
-
-        <label className="new-thread-inline-toggle">
-          <input
-            checked={draft.includeDiffs}
-            onChange={event => onDraftChange({ includeDiffs: event.target.checked })}
-            type="checkbox"
-          />
-          <span>Include diffs</span>
-        </label>
+          <label className="new-thread-inline-toggle">
+            <input
+              checked={draft.includeDiffs}
+              onChange={event => onDraftChange({ includeDiffs: event.target.checked })}
+              type="checkbox"
+            />
+            <span>Include diffs</span>
+          </label>
+        ) : null}
 
         {isLoadingSourceTranscript ? (
           <div className="new-thread-inline-note">Loading source thread…</div>
@@ -2373,20 +2519,15 @@ function NewThreadPane({
       </section>
 
       <section className="settings-card new-thread-card">
-        <div className="settings-card-header">
-          <div className="settings-card-copy">
-            <h2>Prompt</h2>
-            <p>Review and edit the generated prompt before copying or starting the new thread.</p>
-          </div>
-          <button className="ghost-button settings-reset-button" onClick={onResetPrompt} type="button">
-            Reset to generated
-          </button>
+        <div className="settings-card-copy">
+          <h2>Custom instructions</h2>
+          <p>Anything entered here is appended to the final prompt that Handoff copies or sends.</p>
         </div>
 
         <textarea
           className="new-thread-prompt-input"
           onChange={event => onDraftChange({ prompt: event.target.value })}
-          placeholder="Select a source thread to generate a prompt."
+          placeholder="Add custom instructions"
           spellCheck={false}
           value={draft.prompt}
         />
@@ -2481,7 +2622,6 @@ export default function App() {
   const [newThreadSourceError, setNewThreadSourceError] = useState<string | null>(null)
   const [newThreadPromptError, setNewThreadPromptError] = useState<string | null>(null)
   const [isLoadingNewThreadSource, setIsLoadingNewThreadSource] = useState(false)
-  const [isNewThreadPromptDirty, setIsNewThreadPromptDirty] = useState(false)
   const [hasTouchedNewThreadTarget, setHasTouchedNewThreadTarget] = useState(false)
   const [isFilterPopoverOpen, setIsFilterPopoverOpen] = useState(false)
   const [selectedOutputFormat, setSelectedOutputFormat] =
@@ -2644,6 +2784,34 @@ export default function App() {
     () => sessions.filter(session => Boolean(session.sessionPath)),
     [sessions]
   )
+  const newThreadProjectOptions = useMemo(() => {
+    const optionsByPath = new Map<string, ProjectFilterOption>()
+
+    for (const session of sessions) {
+      if (!session.projectPath) {
+        continue
+      }
+
+      if (!optionsByPath.has(session.projectPath)) {
+        optionsByPath.set(session.projectPath, {
+          path: session.projectPath,
+          label: formatProjectFilterLabel(session.projectPath)
+        })
+      }
+    }
+
+    if (newThreadDraft.projectPath && !optionsByPath.has(newThreadDraft.projectPath)) {
+      optionsByPath.set(newThreadDraft.projectPath, {
+        path: newThreadDraft.projectPath,
+        label: formatProjectFilterLabel(newThreadDraft.projectPath)
+      })
+    }
+
+    return [...optionsByPath.values()].sort(
+      (left, right) =>
+        left.label.localeCompare(right.label) || left.path.localeCompare(right.path)
+    )
+  }, [newThreadDraft.projectPath, sessions])
   const selectedNewThreadSourceSession = useMemo(
     () =>
       selectableSourceSessions.find(session => session.id === newThreadDraft.sourceSessionId) ??
@@ -2673,24 +2841,21 @@ export default function App() {
       })
       .slice(0, 10)
   }, [newThreadSourceQuery, selectableSourceSessions])
-  const newThreadProjectPath =
-    newThreadSourceTranscript &&
-    selectedNewThreadSourceSession &&
-    newThreadSourceTranscript.id === selectedNewThreadSourceSession.id
-      ? newThreadSourceTranscript.projectPath ?? newThreadSourceTranscript.sessionCwd ?? null
-      : selectedNewThreadSourceSession?.projectPath ?? null
   const generatedNewThreadPrompt = useMemo(() => {
-    if (!selectedNewThreadSourceSession || !newThreadSourceTranscript) {
-      return ""
-    }
-
-    if (newThreadSourceTranscript.id !== selectedNewThreadSourceSession.id) {
-      return ""
-    }
-
     return buildNewThreadPrompt({
-      session: selectedNewThreadSourceSession,
-      transcript: newThreadSourceTranscript,
+      projectPath: newThreadDraft.projectPath,
+      session:
+        selectedNewThreadSourceSession &&
+        newThreadSourceTranscript &&
+        newThreadSourceTranscript.id === selectedNewThreadSourceSession.id
+          ? selectedNewThreadSourceSession
+          : null,
+      transcript:
+        selectedNewThreadSourceSession &&
+        newThreadSourceTranscript &&
+        newThreadSourceTranscript.id === selectedNewThreadSourceSession.id
+          ? newThreadSourceTranscript
+          : null,
       draft: newThreadDraft
     })
   }, [newThreadDraft, newThreadSourceTranscript, selectedNewThreadSourceSession])
@@ -2923,7 +3088,6 @@ export default function App() {
     }))
 
     if ("prompt" in patch) {
-      setIsNewThreadPromptDirty(true)
       setNewThreadPromptError(null)
     }
 
@@ -2955,20 +3119,33 @@ export default function App() {
   }, [])
 
   const handleSelectNewThreadSource = useCallback(
-    (session: SessionListItem) => {
+    (session: SessionListItem | null) => {
+      setNewThreadSourceError(null)
+      setNewThreadPromptError(null)
+
+      if (!session) {
+        setNewThreadSourceQuery("")
+        setNewThreadSourceTranscript(null)
+        setNewThreadDraft(current => ({
+          ...current,
+          sourceSessionId: null,
+          includeDiffs: false
+        }))
+        return
+      }
+
       const seededTarget = getSeededNewThreadTarget({
         provider: session.provider,
-        sessionClient: activeTranscript?.id === session.id ? activeTranscript.sessionClient : undefined,
+        sessionClient:
+          activeTranscript?.id === session.id ? activeTranscript.sessionClient : undefined,
         fast: false
       })
 
-      setNewThreadSourceQuery(session.threadName)
-      setNewThreadSourceError(null)
-      setNewThreadPromptError(null)
-      setIsNewThreadPromptDirty(false)
+      setNewThreadSourceQuery("")
       setNewThreadDraft(current => ({
         ...current,
         sourceSessionId: session.id,
+        projectPath: session.projectPath ?? null,
         ...(!hasTouchedNewThreadTarget
           ? {
               vendor: session.provider,
@@ -2981,32 +3158,23 @@ export default function App() {
   )
 
   const handleCopyNewThreadPrompt = useCallback(async () => {
-    if (!newThreadDraft.prompt.trim()) {
+    if (!generatedNewThreadPrompt.trim()) {
       return
     }
 
-    await copyMarkdown(newThreadDraft.prompt, "Copied prompt")
-  }, [copyMarkdown, newThreadDraft.prompt])
-
-  const handleResetNewThreadPrompt = useCallback(() => {
-    setNewThreadDraft(current => ({
-      ...current,
-      prompt: generatedNewThreadPrompt
-    }))
-    setIsNewThreadPromptDirty(false)
-    setNewThreadPromptError(null)
-  }, [generatedNewThreadPrompt])
+    await copyMarkdown(generatedNewThreadPrompt, "Copied prompt")
+  }, [copyMarkdown, generatedNewThreadPrompt])
 
   const handleStartNewThread = useCallback(async () => {
-    if (!newThreadDraft.prompt.trim()) {
-      setNewThreadPromptError("Select a source thread to generate a prompt before starting.")
+    if (!generatedNewThreadPrompt.trim()) {
+      setNewThreadPromptError(
+        "Select a source thread or add custom instructions before starting."
+      )
       return
     }
 
-    if (!newThreadProjectPath) {
-      setNewThreadPromptError(
-        "A resolved project path is required before Handoff can launch a new thread."
-      )
+    if (!newThreadDraft.projectPath) {
+      setNewThreadPromptError("Select a project before starting.")
       return
     }
 
@@ -3023,8 +3191,8 @@ export default function App() {
         provider: newThreadDraft.vendor,
         launchMode: newThreadDraft.launchMode,
         modelId: newThreadDraft.modelId,
-        projectPath: newThreadProjectPath,
-        prompt: newThreadDraft.prompt,
+        projectPath: newThreadDraft.projectPath,
+        prompt: generatedNewThreadPrompt,
         thinkingLevel: newThreadDraft.thinkingLevel,
         fast: newThreadDraft.vendor === "codex" ? newThreadDraft.fast : false
       }
@@ -3053,7 +3221,7 @@ export default function App() {
         "error"
       )
     }
-  }, [newThreadDraft, newThreadProjectPath, showToast])
+  }, [generatedNewThreadPrompt, newThreadDraft, showToast])
 
   const copyActions = useMemo(
     () => [
@@ -3413,28 +3581,40 @@ export default function App() {
   }, [activeTranscript, selectedNewThreadSourceSession])
 
   useEffect(() => {
-    if (!selectedNewThreadSourceSession) {
-      if (!isNewThreadPromptDirty) {
-        setNewThreadDraft(current =>
-          current.prompt ? { ...current, prompt: "" } : current
-        )
+    if (
+      !selectedNewThreadSourceSession ||
+      !newThreadSourceTranscript ||
+      newThreadSourceTranscript.id !== selectedNewThreadSourceSession.id
+    ) {
+      return
+    }
+
+    const resolvedProjectPath =
+      newThreadSourceTranscript.projectPath ??
+      newThreadSourceTranscript.sessionCwd ??
+      selectedNewThreadSourceSession.projectPath
+
+    if (!resolvedProjectPath) {
+      return
+    }
+
+    setNewThreadDraft(current => {
+      if (
+        current.projectPath &&
+        current.projectPath !== selectedNewThreadSourceSession.projectPath &&
+        current.projectPath !== resolvedProjectPath
+      ) {
+        return current
       }
-      return
-    }
 
-    if (!generatedNewThreadPrompt || isNewThreadPromptDirty) {
-      return
-    }
-
-    setNewThreadDraft(current =>
-      current.prompt === generatedNewThreadPrompt
+      return current.projectPath === resolvedProjectPath
         ? current
         : {
             ...current,
-            prompt: generatedNewThreadPrompt
+            projectPath: resolvedProjectPath
           }
-    )
-  }, [generatedNewThreadPrompt, isNewThreadPromptDirty, selectedNewThreadSourceSession])
+    })
+  }, [newThreadSourceTranscript, selectedNewThreadSourceSession])
 
   useEffect(() => {
     if (
@@ -3843,17 +4023,18 @@ export default function App() {
       })
 
       nextDraft.sourceSessionId = activeSession.id
+      nextDraft.projectPath =
+        seedTranscript?.projectPath ?? seedTranscript?.sessionCwd ?? activeSession.projectPath
       nextDraft.vendor = activeSession.provider
       nextDraft.launchMode = seededTarget.launchMode
       nextDraft.modelId = seededTarget.modelId
       nextDraft.fast = seededTarget.fast
-      setNewThreadSourceQuery(activeSession.threadName)
+      setNewThreadSourceQuery("")
     } else {
       setNewThreadSourceQuery("")
     }
 
     setHasTouchedNewThreadTarget(false)
-    setIsNewThreadPromptDirty(false)
     setNewThreadPromptError(null)
     setNewThreadSourceError(null)
     setNewThreadSourceTranscript(seedTranscript)
@@ -4258,14 +4439,18 @@ export default function App() {
             ) : rightPaneMode === "new-thread" ? (
               <NewThreadPane
                 draft={newThreadDraft}
+                generatedPrompt={generatedNewThreadPrompt}
                 isLoadingSourceTranscript={isLoadingNewThreadSource}
                 onCopyPrompt={() => void handleCopyNewThreadPrompt()}
                 onDraftChange={handleNewThreadDraftChange}
-                onResetPrompt={handleResetNewThreadPrompt}
+                onProjectPathChange={projectPath =>
+                  handleNewThreadDraftChange({ projectPath })
+                }
                 onSelectSourceSession={handleSelectNewThreadSource}
                 onSourceQueryChange={handleNewThreadSourceQueryChange}
                 onStartThread={() => void handleStartNewThread()}
-                projectPath={newThreadProjectPath}
+                projectOptions={newThreadProjectOptions}
+                projectPath={newThreadDraft.projectPath}
                 promptError={newThreadPromptError}
                 selectedSourceSession={selectedNewThreadSourceSession}
                 sourceError={newThreadSourceError}
