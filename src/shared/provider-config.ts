@@ -3,10 +3,16 @@ import type {
   ThinkingLevel,
   ThreadLaunchMode
 } from "./contracts"
+import providerModels from "./provider-models.json"
 
 export interface ProviderModelOption {
   id: string
   label: string
+}
+
+interface ProviderModelConfig {
+  defaultModelId: string
+  models: ProviderModelOption[]
 }
 
 export interface ComposerProviderConfig {
@@ -36,17 +42,8 @@ export const COMPOSER_PROVIDER_CONFIG: Record<SessionProvider, ComposerProviderC
     launchModes: ["cli", "app"],
     defaultLaunchMode: "cli",
     supportsFastMode: true,
-    defaultModelId: "gpt-5.4",
-    models: [
-      { id: "gpt-5.4", label: "GPT-5.4" },
-      { id: "gpt-5-codex", label: "GPT-5-Codex" },
-      { id: "gpt-5.3-codex", label: "GPT-5.3-Codex" },
-      { id: "gpt-5.2-codex", label: "GPT-5.2-Codex" },
-      { id: "gpt-5.1-codex-max", label: "GPT-5.1-Codex Max" },
-      { id: "gpt-5.1-codex", label: "GPT-5.1-Codex" },
-      { id: "gpt-5.1-codex-mini", label: "GPT-5.1-Codex Mini" },
-      { id: "codex-mini-latest", label: "Codex Mini Latest" }
-    ]
+    defaultModelId: (providerModels.codex as ProviderModelConfig).defaultModelId,
+    models: (providerModels.codex as ProviderModelConfig).models
   },
   claude: {
     provider: "claude",
@@ -54,15 +51,8 @@ export const COMPOSER_PROVIDER_CONFIG: Record<SessionProvider, ComposerProviderC
     launchModes: ["cli"],
     defaultLaunchMode: "cli",
     supportsFastMode: false,
-    defaultModelId: "sonnet",
-    models: [
-      { id: "default", label: "Default" },
-      { id: "sonnet", label: "Sonnet" },
-      { id: "opus", label: "Opus" },
-      { id: "haiku", label: "Haiku" },
-      { id: "sonnet[1m]", label: "Sonnet (1M)" },
-      { id: "opusplan", label: "Opus Plan" }
-    ]
+    defaultModelId: (providerModels.claude as ProviderModelConfig).defaultModelId,
+    models: (providerModels.claude as ProviderModelConfig).models
   }
 }
 

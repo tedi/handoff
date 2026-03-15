@@ -826,7 +826,7 @@ describe("handoff service", () => {
     expect(updatedAgent).toMatchObject({
       name: "Claude reviewer",
       provider: "claude",
-      modelId: "sonnet",
+      modelId: "opus",
       thinkingLevel: "max",
       fast: false,
       customInstructions: "Review carefully."
@@ -836,7 +836,7 @@ describe("handoff service", () => {
     expect(duplicatedAgent).toMatchObject({
       name: "Claude reviewer copy",
       provider: "claude",
-      modelId: "sonnet"
+      modelId: "opus"
     })
 
     await expect(
