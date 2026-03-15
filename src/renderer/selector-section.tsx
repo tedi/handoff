@@ -1228,6 +1228,9 @@ export function SelectorSidebarPane({
   if (controller.isOverviewLoading && controller.manifests.length === 0) {
     return (
       <div className="selector-sidebar">
+        <div className="selector-sidebar-header">
+          <span className="selector-sidebar-title">Selected bundles</span>
+        </div>
         <SectionEmptyState
           title="Loading bundles"
           detail="Reading Selector state and manifest summaries."
@@ -1239,6 +1242,9 @@ export function SelectorSidebarPane({
   if (!controller.hasManifests) {
     return (
       <div className="selector-sidebar">
+        <div className="selector-sidebar-header">
+          <span className="selector-sidebar-title">Selected bundles</span>
+        </div>
         <SectionEmptyState
           title="No manifests found"
           detail="No manifests were found in the Selector state directory."
@@ -1248,106 +1254,111 @@ export function SelectorSidebarPane({
   }
 
   return (
-    <div className="selector-sidebar" role="list">
-      {sortManifestSummaries(controller.manifests).map(manifest => {
-        const isMenuOpen = controller.openManifestMenuName === manifest.name
+    <div className="selector-sidebar">
+      <div className="selector-sidebar-header">
+        <span className="selector-sidebar-title">Selected bundles</span>
+      </div>
+      <div className="selector-sidebar-list" role="list">
+        {sortManifestSummaries(controller.manifests).map(manifest => {
+          const isMenuOpen = controller.openManifestMenuName === manifest.name
 
-        return (
-          <div
-            className={`selector-manifest-row ${
-              manifest.name === controller.activeManifestName ? "is-active" : ""
-            }`}
-            data-selector-manifest-menu
-            key={manifest.name}
-          >
-            <button
-              className="selector-manifest-button"
-              onClick={() => {
-                controller.setOpenManifestMenuName(null)
-                controller.startTransition(() => {
-                  controller.setActiveManifestName(manifest.name)
-                })
-              }}
-              type="button"
+          return (
+            <div
+              className={`selector-manifest-row ${
+                manifest.name === controller.activeManifestName ? "is-active" : ""
+              }`}
+              data-selector-manifest-menu
+              key={manifest.name}
             >
-              <div className="session-row-main">
-                <div className="session-title-group">
-                  <span className="session-title">{manifest.name}</span>
-                </div>
-                <div className="session-row-meta">
-                  <span className="session-time">
-                    {formatTimestamp(manifest.updated_at)}
-                  </span>
-                </div>
-              </div>
-              <span className="session-subtitle">{buildManifestMeta(manifest)}</span>
-            </button>
-
-            <div className="selector-manifest-menu">
               <button
-                aria-expanded={isMenuOpen}
-                aria-haspopup="menu"
-                aria-label="Bundle actions"
-                className="selector-manifest-menu-button"
-                onClick={event => {
-                  event.stopPropagation()
-                  controller.setOpenManifestMenuName(current =>
-                    current === manifest.name ? null : manifest.name
-                  )
+                className="selector-manifest-button"
+                onClick={() => {
+                  controller.setOpenManifestMenuName(null)
+                  controller.startTransition(() => {
+                    controller.setActiveManifestName(manifest.name)
+                  })
                 }}
                 type="button"
               >
-                <EllipsisIcon />
-              </button>
-              {isMenuOpen ? (
-                <div className="selector-manifest-menu-popover" role="menu">
-                  <button
-                    className="selector-manifest-menu-item"
-                    onClick={() => {
-                      controller.setBundleDialog({
-                        kind: "rename",
-                        manifestName: manifest.name,
-                        value: manifest.name
-                      })
-                    }}
-                    role="menuitem"
-                    type="button"
-                  >
-                    Rename
-                  </button>
-                  <button
-                    className="selector-manifest-menu-item"
-                    onClick={() => {
-                      controller.setBundleDialog({
-                        kind: "duplicate",
-                        manifestName: manifest.name,
-                        value: `${manifest.name}-copy`
-                      })
-                    }}
-                    role="menuitem"
-                    type="button"
-                  >
-                    Duplicate
-                  </button>
-                  <button
-                    className="selector-manifest-menu-item is-danger"
-                    onClick={() => {
-                      controller.setBundleDialog({
-                        kind: "delete",
-                        manifestName: manifest.name
-                      })
-                    }}
-                    role="menuitem"
-                    type="button"
-                  >
-                    Delete
-                  </button>
+                <div className="session-row-main">
+                  <div className="session-title-group">
+                    <span className="session-title">{manifest.name}</span>
+                  </div>
+                  <div className="session-row-meta">
+                    <span className="session-time">
+                      {formatTimestamp(manifest.updated_at)}
+                    </span>
+                  </div>
                 </div>
-              ) : null}
+                <span className="session-subtitle">{buildManifestMeta(manifest)}</span>
+              </button>
+
+              <div className="selector-manifest-menu">
+                <button
+                  aria-expanded={isMenuOpen}
+                  aria-haspopup="menu"
+                  aria-label="Bundle actions"
+                  className="selector-manifest-menu-button"
+                  onClick={event => {
+                    event.stopPropagation()
+                    controller.setOpenManifestMenuName(current =>
+                      current === manifest.name ? null : manifest.name
+                    )
+                  }}
+                  type="button"
+                >
+                  <EllipsisIcon />
+                </button>
+                {isMenuOpen ? (
+                  <div className="selector-manifest-menu-popover" role="menu">
+                    <button
+                      className="selector-manifest-menu-item"
+                      onClick={() => {
+                        controller.setBundleDialog({
+                          kind: "rename",
+                          manifestName: manifest.name,
+                          value: manifest.name
+                        })
+                      }}
+                      role="menuitem"
+                      type="button"
+                    >
+                      Rename
+                    </button>
+                    <button
+                      className="selector-manifest-menu-item"
+                      onClick={() => {
+                        controller.setBundleDialog({
+                          kind: "duplicate",
+                          manifestName: manifest.name,
+                          value: `${manifest.name}-copy`
+                        })
+                      }}
+                      role="menuitem"
+                      type="button"
+                    >
+                      Duplicate
+                    </button>
+                    <button
+                      className="selector-manifest-menu-item is-danger"
+                      onClick={() => {
+                        controller.setBundleDialog({
+                          kind: "delete",
+                          manifestName: manifest.name
+                        })
+                      }}
+                      role="menuitem"
+                      type="button"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             </div>
-          </div>
-        )
-      })}
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -1622,102 +1633,6 @@ export function SelectorDetailPane({
       </div>
 
       <div className="export-card selector-export-card">
-        <div className="selector-export-header">
-          <div className="summary-copy">
-            <strong>
-              {controller.isEstimating
-                ? "Estimating…"
-                : formatEstimatedTokens(controller.estimateResult)}
-            </strong>
-            <span>
-              {controller.selectedFileCount} selected file
-              {controller.selectedFileCount === 1 ? "" : "s"}
-              {controller.estimateResult?.skipped_files.length
-                ? `, ${controller.estimateResult.skipped_files.length} skipped`
-                : ""}
-            </span>
-          </div>
-          <button
-            className="accent-button"
-            disabled={!controller.activeManifest || controller.isExporting || controller.isBundleMutating}
-            onClick={() => {
-              void controller.regenerateExport()
-            }}
-            type="button"
-          >
-            {controller.isExporting ? "Regenerating…" : "Regenerate + Copy"}
-          </button>
-        </div>
-
-        <div className="summary-actions selector-summary-actions">
-          <label className="summary-toggle">
-            <input
-              checked={controller.isModifiedOrNewOnlySelected}
-              disabled={
-                controller.isApplyingChangedSelection ||
-                (controller.modifiedOrNewPaths.length === 0 &&
-                  !controller.isModifiedOrNewOnlySelected)
-              }
-              onChange={event => {
-                void controller.setChangedSelectionOnly(event.target.checked)
-              }}
-              type="checkbox"
-            />
-            <span>Only modified/new</span>
-          </label>
-          <label className="summary-toggle">
-            <input
-              checked={controller.stripCommentsDraft}
-              disabled={controller.isSavingExportSettings}
-              onChange={event => {
-                const nextStripComments = event.target.checked
-                controller.setStripCommentsDraft(nextStripComments)
-                void controller.saveExportSettings(false, {
-                  stripComments: nextStripComments
-                })
-              }}
-              type="checkbox"
-            />
-            <span>Strip comments</span>
-          </label>
-          <label className="summary-toggle">
-            <input
-              checked={controller.useGitDiffsDraft}
-              disabled={controller.isSavingExportSettings}
-              onChange={event => {
-                const nextGitDiffMode = event.target.checked
-                  ? GIT_DIFF_MODE_DIFF_ONLY
-                  : GIT_DIFF_MODE_OFF
-                controller.setGitDiffModeDraft(nextGitDiffMode)
-                void controller.saveExportSettings(false, {
-                  gitDiffMode: nextGitDiffMode
-                })
-              }}
-              type="checkbox"
-            />
-            <span>Use git diffs</span>
-          </label>
-          {controller.useGitDiffsDraft ? (
-            <label className="summary-toggle">
-              <input
-                checked={controller.includeFullFileWithDiffsDraft}
-                disabled={controller.isSavingExportSettings}
-                onChange={event => {
-                  const nextGitDiffMode = event.target.checked
-                    ? GIT_DIFF_MODE_FULL_FILE_PLUS_DIFF
-                    : GIT_DIFF_MODE_DIFF_ONLY
-                  controller.setGitDiffModeDraft(nextGitDiffMode)
-                  void controller.saveExportSettings(false, {
-                    gitDiffMode: nextGitDiffMode
-                  })
-                }}
-                type="checkbox"
-              />
-              <span>Include full file with diffs</span>
-            </label>
-          ) : null}
-        </div>
-
         <div>
           <p className="pane-label">Latest export</p>
           <h3>{renderExportSummary(controller.exportResult)}</h3>
@@ -1783,6 +1698,105 @@ export function SelectorDetailPane({
             ) : null}
           </>
         ) : null}
+      </div>
+
+      <div className="selector-summary-bar">
+        <div className="selector-summary-bar-inner">
+          <div className="selector-summary-bar-row">
+            <div className="summary-copy">
+              <strong>
+                {controller.isEstimating
+                  ? "Estimating…"
+                  : formatEstimatedTokens(controller.estimateResult)}
+              </strong>
+              <span>
+                {controller.selectedFileCount} selected file
+                {controller.selectedFileCount === 1 ? "" : "s"}
+                {controller.estimateResult?.skipped_files.length
+                  ? `, ${controller.estimateResult.skipped_files.length} skipped`
+                  : ""}
+              </span>
+            </div>
+            <div className="summary-actions selector-summary-actions">
+              <label className="summary-toggle">
+                <input
+                  checked={controller.isModifiedOrNewOnlySelected}
+                  disabled={
+                    controller.isApplyingChangedSelection ||
+                    (controller.modifiedOrNewPaths.length === 0 &&
+                      !controller.isModifiedOrNewOnlySelected)
+                  }
+                  onChange={event => {
+                    void controller.setChangedSelectionOnly(event.target.checked)
+                  }}
+                  type="checkbox"
+                />
+                <span>Only modified/new</span>
+              </label>
+              <label className="summary-toggle">
+                <input
+                  checked={controller.stripCommentsDraft}
+                  disabled={controller.isSavingExportSettings}
+                  onChange={event => {
+                    const nextStripComments = event.target.checked
+                    controller.setStripCommentsDraft(nextStripComments)
+                    void controller.saveExportSettings(false, {
+                      stripComments: nextStripComments
+                    })
+                  }}
+                  type="checkbox"
+                />
+                <span>Strip comments</span>
+              </label>
+              <label className="summary-toggle">
+                <input
+                  checked={controller.useGitDiffsDraft}
+                  disabled={controller.isSavingExportSettings}
+                  onChange={event => {
+                    const nextGitDiffMode = event.target.checked
+                      ? GIT_DIFF_MODE_DIFF_ONLY
+                      : GIT_DIFF_MODE_OFF
+                    controller.setGitDiffModeDraft(nextGitDiffMode)
+                    void controller.saveExportSettings(false, {
+                      gitDiffMode: nextGitDiffMode
+                    })
+                  }}
+                  type="checkbox"
+                />
+                <span>Use git diffs</span>
+              </label>
+              {controller.useGitDiffsDraft ? (
+                <label className="summary-toggle">
+                  <input
+                    checked={controller.includeFullFileWithDiffsDraft}
+                    disabled={controller.isSavingExportSettings}
+                    onChange={event => {
+                      const nextGitDiffMode = event.target.checked
+                        ? GIT_DIFF_MODE_FULL_FILE_PLUS_DIFF
+                        : GIT_DIFF_MODE_DIFF_ONLY
+                      controller.setGitDiffModeDraft(nextGitDiffMode)
+                      void controller.saveExportSettings(false, {
+                        gitDiffMode: nextGitDiffMode
+                      })
+                    }}
+                    type="checkbox"
+                  />
+                  <span>Include full file with diffs</span>
+                </label>
+              ) : null}
+              <button
+                className="accent-button"
+                disabled={!controller.activeManifest || controller.isExporting || controller.isBundleMutating}
+                onClick={() => {
+                  void controller.regenerateExport()
+                }}
+                type="button"
+              >
+                {controller.isExporting ? "Regenerating…" : "Regenerate + Copy"}
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   )
