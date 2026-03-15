@@ -46,6 +46,14 @@ describe("createHandoffBridge", () => {
     })
     await bridge.agents.delete("agent-1")
     await bridge.agents.duplicate("agent-2")
+    await bridge.bridge.getStatus()
+    await bridge.bridge.getConfigSnippets()
+    await bridge.bridge.listRuns("agent-1", 25)
+    await bridge.bridge.getRun("run-1")
+    await bridge.skills.getStatus()
+    await bridge.skills.install("both")
+    await bridge.skills.exportPackage()
+    await bridge.skills.copySetupInstructions("claude")
     await bridge.app.openSourceSession("claude", "session-1", "cli", "/tmp/project")
     await bridge.app.startNewThread({
       provider: "codex",
@@ -132,6 +140,43 @@ describe("createHandoffBridge", () => {
     )
     expect(invoke).toHaveBeenNthCalledWith(
       13,
+      IPC_CHANNELS.bridge.getStatus
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      14,
+      IPC_CHANNELS.bridge.getConfigSnippets
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      15,
+      IPC_CHANNELS.bridge.listRuns,
+      "agent-1",
+      25
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      16,
+      IPC_CHANNELS.bridge.getRun,
+      "run-1"
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      17,
+      IPC_CHANNELS.skills.getStatus
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      18,
+      IPC_CHANNELS.skills.install,
+      "both"
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      19,
+      IPC_CHANNELS.skills.exportPackage
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      20,
+      IPC_CHANNELS.skills.copySetupInstructions,
+      "claude"
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      21,
       IPC_CHANNELS.app.openSourceSession,
       "claude",
       "session-1",
@@ -139,7 +184,7 @@ describe("createHandoffBridge", () => {
       "/tmp/project"
     )
     expect(invoke).toHaveBeenNthCalledWith(
-      14,
+      22,
       IPC_CHANNELS.app.startNewThread,
       {
         provider: "codex",
@@ -152,13 +197,13 @@ describe("createHandoffBridge", () => {
       }
     )
     expect(invoke).toHaveBeenNthCalledWith(
-      15,
+      23,
       IPC_CHANNELS.app.openProjectPath,
       "editor",
       "/tmp/project"
     )
     expect(invoke).toHaveBeenNthCalledWith(
-      16,
+      24,
       IPC_CHANNELS.clipboard.writeText,
       "copied"
     )

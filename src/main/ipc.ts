@@ -437,6 +437,31 @@ export function registerIpcHandlers(ipcMain: IpcMain, service: HandoffService) {
     IPC_CHANNELS.agents.duplicate,
     (_event, id: string) => service.agents.duplicate(id)
   )
+  ipcMain.handle(IPC_CHANNELS.bridge.getStatus, () => service.bridge.getStatus())
+  ipcMain.handle(IPC_CHANNELS.bridge.getConfigSnippets, () =>
+    service.bridge.getConfigSnippets()
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.bridge.listRuns,
+    (_event, agentId?: string, limit?: number) => service.bridge.listRuns(agentId, limit)
+  )
+  ipcMain.handle(IPC_CHANNELS.bridge.getRun, (_event, runId: string) =>
+    service.bridge.getRun(runId)
+  )
+  ipcMain.handle(IPC_CHANNELS.skills.getStatus, () => service.skills.getStatus())
+  ipcMain.handle(
+    IPC_CHANNELS.skills.install,
+    (_event, target: import("../shared/contracts").SkillInstallTarget) =>
+      service.skills.install(target)
+  )
+  ipcMain.handle(IPC_CHANNELS.skills.exportPackage, () => service.skills.exportPackage())
+  ipcMain.handle(
+    IPC_CHANNELS.skills.copySetupInstructions,
+    async (_event, target: import("../shared/contracts").SkillInstallTarget) => {
+      clipboard.writeText(await service.skills.getSetupInstructions(target))
+      return { copied: true }
+    }
+  )
   ipcMain.handle(IPC_CHANNELS.selector.app.getStateInfo, () =>
     service.selector.app.getStateInfo()
   )

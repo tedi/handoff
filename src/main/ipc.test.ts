@@ -411,4 +411,98 @@ describe("registerIpcHandlers", () => {
     expect(selectorService.files.search).toHaveBeenCalledWith("app", "demo", 20)
     expect(selectorService.exports.regenerateAndCopy).toHaveBeenCalledWith("alpha")
   })
+
+  it("forwards bridge ipc calls to the bridge service", async () => {
+    const ipcMain = createIpcMainStub()
+    const service = {
+      app: {
+        getStateInfo: vi.fn(),
+        refresh: vi.fn()
+      },
+      settings: {
+        get: vi.fn().mockResolvedValue(settingsSnapshot),
+        update: vi.fn(),
+        resetProvider: vi.fn()
+      },
+      agents: {
+        list: vi.fn().mockResolvedValue([]),
+        create: vi.fn(),
+        update: vi.fn(),
+        delete: vi.fn(),
+        duplicate: vi.fn()
+      },
+      bridge: {
+        getStatus: vi.fn().mockResolvedValue({ status: "ready" }),
+        getConfigSnippets: vi.fn().mockResolvedValue({
+          codexCommand: "codex mcp add handoff-agent-bridge -- ...",
+          claudeConfigJson: "{}"
+        }),
+        listRuns: vi.fn().mockResolvedValue([]),
+        getRun: vi.fn().mockResolvedValue(null)
+      },
+      skills: {
+        getStatus: vi.fn().mockResolvedValue({ skillName: "handoff-agent-bridge" }),
+        install: vi.fn().mockResolvedValue({ skillName: "handoff-agent-bridge" }),
+        exportPackage: vi.fn().mockResolvedValue({ exportPath: "/tmp/export" }),
+        getSetupInstructions: vi.fn().mockResolvedValue("manual setup")
+      },
+      sessions: {
+        list: vi.fn(),
+        getTranscript: vi.fn()
+      },
+      search: {
+        getStatus: vi.fn(),
+        query: vi.fn()
+      },
+      selector: {
+        app: {
+          getStateInfo: vi.fn(),
+          openPath: vi.fn(),
+          refresh: vi.fn(),
+          onStateChanged: vi.fn()
+        },
+        roots: { list: vi.fn() },
+        git: { diffStats: vi.fn(), status: vi.fn() },
+        manifests: {
+          list: vi.fn(),
+          get: vi.fn(),
+          addFiles: vi.fn(),
+          duplicate: vi.fn(),
+          deleteBundle: vi.fn(),
+          rename: vi.fn(),
+          setComment: vi.fn(),
+          setExportText: vi.fn(),
+          setSelected: vi.fn(),
+          setSelectedPaths: vi.fn(),
+          removeFiles: vi.fn()
+        },
+        files: { search: vi.fn(), preview: vi.fn() },
+        exports: { estimate: vi.fn(), regenerateAndCopy: vi.fn() }
+      },
+      startWatching: vi.fn(),
+      onStateChanged: vi.fn(),
+      onSearchStatusChanged: vi.fn(),
+      dispose: vi.fn()
+    } as any
+
+    registerIpcHandlers(ipcMain as any, service)
+
+    await ipcMain.invoke(IPC_CHANNELS.bridge.getStatus)
+    await ipcMain.invoke(IPC_CHANNELS.bridge.getConfigSnippets)
+    await ipcMain.invoke(IPC_CHANNELS.bridge.listRuns, "agent-1", 25)
+    await ipcMain.invoke(IPC_CHANNELS.bridge.getRun, "run-1")
+    await ipcMain.invoke(IPC_CHANNELS.skills.getStatus)
+    await ipcMain.invoke(IPC_CHANNELS.skills.install, "both")
+    await ipcMain.invoke(IPC_CHANNELS.skills.exportPackage)
+    await ipcMain.invoke(IPC_CHANNELS.skills.copySetupInstructions, "claude")
+
+    expect(service.bridge.getStatus).toHaveBeenCalled()
+    expect(service.bridge.getConfigSnippets).toHaveBeenCalled()
+    expect(service.bridge.listRuns).toHaveBeenCalledWith("agent-1", 25)
+    expect(service.bridge.getRun).toHaveBeenCalledWith("run-1")
+    expect(service.skills.getStatus).toHaveBeenCalled()
+    expect(service.skills.install).toHaveBeenCalledWith("both")
+    expect(service.skills.exportPackage).toHaveBeenCalled()
+    expect(service.skills.getSetupInstructions).toHaveBeenCalledWith("claude")
+  })
 })

@@ -25,6 +25,7 @@ export type ThinkingLevel = "low" | "medium" | "high" | "max"
 export interface AgentDefinition {
   id: string
   name: string
+  specialty?: string
   provider: SessionProvider
   modelId: string
   thinkingLevel: ThinkingLevel
@@ -34,6 +35,7 @@ export interface AgentDefinition {
 
 export interface AgentUpdatePatch {
   name?: string
+  specialty?: string
   provider?: SessionProvider
   modelId?: string
   thinkingLevel?: ThinkingLevel
@@ -43,6 +45,100 @@ export interface AgentUpdatePatch {
 
 export interface AgentDeleteResult {
   deletedId: string
+}
+
+export type AgentRunStatus = "running" | "completed" | "failed"
+
+export type AgentCallerMetadata = string | Record<string, unknown> | null
+
+export interface AgentRunRecord {
+  runId: string
+  agentId: string
+  agentName: string
+  status: AgentRunStatus
+  provider: SessionProvider
+  modelId: string
+  thinkingLevel: ThinkingLevel
+  fast: boolean
+  projectPath: string
+  message: string
+  context: string | null
+  caller: AgentCallerMetadata
+  prompt: string
+  answer: string | null
+  error: string | null
+  stdout: string | null
+  stderr: string | null
+  exitCode: number | null
+  startedAt: string
+  finishedAt: string | null
+}
+
+export interface AskAgentParams {
+  agentId?: string
+  agentName?: string
+  message: string
+  projectPath: string
+  context?: string
+  timeoutSec?: number
+  caller?: AgentCallerMetadata
+}
+
+export interface AskAgentResult {
+  runId: string
+  status: Extract<AgentRunStatus, "completed" | "failed">
+  answer: string | null
+  agentId: string
+  provider: SessionProvider
+  modelId: string
+  thinkingLevel: ThinkingLevel
+  fast: boolean
+  projectPath: string
+  startedAt: string
+  finishedAt: string
+}
+
+export interface AgentBridgeHealth {
+  status: "ready" | "error"
+  message: string | null
+  command: string
+  args: string[]
+  entrypointLabel: string
+  stateDir: string
+  runsLogPath: string
+  locksDir: string
+}
+
+export interface AgentBridgeConfigSnippets {
+  codexCommand: string
+  claudeConfigJson: string
+}
+
+export type SkillInstallTarget = SessionProvider | "both"
+
+export interface HandoffSkillProviderStatus {
+  provider: SessionProvider
+  configPath: string
+  configExists: boolean
+  skillPath: string
+  skillInstalled: boolean
+  mcpInstalled: boolean
+  managedConfigBlock: boolean
+  error: string | null
+}
+
+export interface HandoffSkillsStatus {
+  skillName: string
+  managedRoot: string
+  exportRoot: string
+  providers: Record<SessionProvider, HandoffSkillProviderStatus>
+}
+
+export interface HandoffSkillsExportResult {
+  exportPath: string
+  codexPath: string
+  claudePath: string
+  claudePluginPath: string
 }
 
 export interface SessionIndexEntry {
@@ -308,6 +404,18 @@ export interface HandoffApi {
     update(id: string, patch: AgentUpdatePatch): Promise<AgentDefinition>
     delete(id: string): Promise<AgentDeleteResult>
     duplicate(id: string): Promise<AgentDefinition>
+  }
+  bridge: {
+    getStatus(): Promise<AgentBridgeHealth>
+    getConfigSnippets(): Promise<AgentBridgeConfigSnippets>
+    listRuns(agentId?: string, limit?: number): Promise<AgentRunRecord[]>
+    getRun(runId: string): Promise<AgentRunRecord | null>
+  }
+  skills: {
+    getStatus(): Promise<HandoffSkillsStatus>
+    install(target: SkillInstallTarget): Promise<HandoffSkillsStatus>
+    exportPackage(): Promise<HandoffSkillsExportResult>
+    copySetupInstructions(target: SkillInstallTarget): Promise<ClipboardWriteResult>
   }
   selector: {
     app: {

@@ -20,6 +20,18 @@ const IPC_CHANNELS = {
     delete: "handoff:agents:delete",
     duplicate: "handoff:agents:duplicate"
   },
+  bridge: {
+    getStatus: "handoff:bridge:get-status",
+    getConfigSnippets: "handoff:bridge:get-config-snippets",
+    listRuns: "handoff:bridge:list-runs",
+    getRun: "handoff:bridge:get-run"
+  },
+  skills: {
+    getStatus: "handoff:skills:get-status",
+    install: "handoff:skills:install",
+    exportPackage: "handoff:skills:export-package",
+    copySetupInstructions: "handoff:skills:copy-setup-instructions"
+  },
   selector: {
     app: {
       getStateInfo: "handoff:selector:get-state-info",
@@ -136,6 +148,34 @@ contextBridge.exposeInMainWorld("handoffApp", {
     },
     duplicate(id) {
       return ipcRenderer.invoke(IPC_CHANNELS.agents.duplicate, id)
+    }
+  },
+  bridge: {
+    getStatus() {
+      return ipcRenderer.invoke(IPC_CHANNELS.bridge.getStatus)
+    },
+    getConfigSnippets() {
+      return ipcRenderer.invoke(IPC_CHANNELS.bridge.getConfigSnippets)
+    },
+    listRuns(agentId, limit) {
+      return ipcRenderer.invoke(IPC_CHANNELS.bridge.listRuns, agentId, limit)
+    },
+    getRun(runId) {
+      return ipcRenderer.invoke(IPC_CHANNELS.bridge.getRun, runId)
+    }
+  },
+  skills: {
+    getStatus() {
+      return ipcRenderer.invoke(IPC_CHANNELS.skills.getStatus)
+    },
+    install(target) {
+      return ipcRenderer.invoke(IPC_CHANNELS.skills.install, target)
+    },
+    exportPackage() {
+      return ipcRenderer.invoke(IPC_CHANNELS.skills.exportPackage)
+    },
+    copySetupInstructions(target) {
+      return ipcRenderer.invoke(IPC_CHANNELS.skills.copySetupInstructions, target)
     }
   },
   selector: {

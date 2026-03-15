@@ -8,9 +8,13 @@ import chokidar from "chokidar"
 import { buildConversationTranscript } from "../shared/parser"
 import type {
   AgentDefinition,
+  AgentBridgeConfigSnippets,
+  AgentBridgeHealth,
   AgentDeleteResult,
+  AgentRunRecord,
   AgentUpdatePatch,
   AppStateInfo,
+  AskAgentResult,
   ConversationTranscript,
   HandoffSettingsPatch,
   HandoffSettingsSnapshot,
@@ -25,10 +29,15 @@ import type {
   SessionProvider,
   TranscriptOptions
 } from "../shared/contracts"
+import { createAgentBridgeService, type AgentBridgeService } from "./bridge"
 import {
   createHandoffSearchService,
   type HandoffSearchService
 } from "./search"
+import {
+  createHandoffSkillsService,
+  type HandoffSkillsService
+} from "./skills"
 import {
   createSelectorService,
   type HandoffSelectorService
@@ -52,6 +61,10 @@ export interface HandoffServiceOptions {
   selectorStateDir?: string
   searchEnabled?: boolean
   searchService?: HandoffSearchService
+  bridgeCommand?: {
+    command: string
+    args: string[]
+  }
 }
 
 export interface HandoffService {
@@ -70,6 +83,22 @@ export interface HandoffService {
     update(id: string, patch: AgentUpdatePatch): Promise<AgentDefinition>
     delete(id: string): Promise<AgentDeleteResult>
     duplicate(id: string): Promise<AgentDefinition>
+  }
+  bridge: {
+    getStatus(): Promise<AgentBridgeHealth>
+    getConfigSnippets(): Promise<AgentBridgeConfigSnippets>
+    listRuns(agentId?: string, limit?: number): Promise<AgentRunRecord[]>
+    getRun(runId: string): Promise<AgentRunRecord | null>
+  }
+  skills: {
+    getStatus(): Promise<import("../shared/contracts").HandoffSkillsStatus>
+    install(
+      target: import("../shared/contracts").SkillInstallTarget
+    ): Promise<import("../shared/contracts").HandoffSkillsStatus>
+    exportPackage(): Promise<import("../shared/contracts").HandoffSkillsExportResult>
+    getSetupInstructions(
+      target: import("../shared/contracts").SkillInstallTarget
+    ): Promise<string>
   }
   selector: HandoffSelectorService
   sessions: {
@@ -716,6 +745,27 @@ export function createHandoffService(
     cwd: appDir,
     stateDir: options.selectorStateDir
   })
+  const bridgeService =
+    createAgentBridgeService({
+      dataDir,
+      codexHome,
+      claudeHome,
+      bridgeCommand:
+        options.bridgeCommand ?? {
+          command: process.execPath,
+          args: [appDir, "--agent-bridge-mcp"]
+        }
+    })
+  const skillsService: HandoffSkillsService = createHandoffSkillsService({
+    dataDir,
+    codexHome,
+    claudeHome,
+    bridgeCommand:
+      options.bridgeCommand ?? {
+        command: process.execPath,
+        args: [appDir, "--agent-bridge-mcp"]
+      }
+  })
   const normalizedIndexPath = indexPath.replaceAll("\\", "/")
   const normalizedArchivedSessionsRoot = archivedSessionsRoot.replaceAll("\\", "/")
   const normalizedClaudeProjectsRoot = claudeProjectsRoot.replaceAll("\\", "/")
@@ -907,6 +957,42 @@ export function createHandoffService(
 
       async duplicate(id) {
         return settingsStore.duplicateAgent(id)
+      }
+    },
+
+    bridge: {
+      async getStatus() {
+        return bridgeService.getStatus()
+      },
+
+      async getConfigSnippets() {
+        return bridgeService.getConfigSnippets()
+      },
+
+      async listRuns(agentId, limit) {
+        return bridgeService.listRuns(agentId, limit)
+      },
+
+      async getRun(runId) {
+        return bridgeService.getRun(runId)
+      }
+    },
+
+    skills: {
+      async getStatus() {
+        return skillsService.getStatus()
+      },
+
+      async install(target) {
+        return skillsService.install(target)
+      },
+
+      async exportPackage() {
+        return skillsService.exportPackage()
+      },
+
+      async getSetupInstructions(target) {
+        return skillsService.getSetupInstructions(target)
       }
     },
 

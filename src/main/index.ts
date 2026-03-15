@@ -4,14 +4,28 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { IPC_CHANNELS } from "../shared/channels"
+import { AGENT_BRIDGE_MODE_ARG } from "./bridge"
+import { runAgentBridgeMcpServer } from "./bridge-server"
 import { registerIpcHandlers } from "./ipc"
 import { createHandoffService } from "./service"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const service = createHandoffService({
-  appDir: app.getAppPath(),
-  dataDir: app.getPath("userData")
-})
+const isBridgeMode = process.argv.includes(AGENT_BRIDGE_MODE_ARG)
+const service = isBridgeMode
+  ? null
+  : createHandoffService({
+      appDir: app.getAppPath(),
+      dataDir: app.getPath("userData"),
+      bridgeCommand: app.isPackaged
+        ? {
+            command: process.execPath,
+            args: [AGENT_BRIDGE_MODE_ARG]
+          }
+        : {
+            command: process.execPath,
+            args: [app.getAppPath(), AGENT_BRIDGE_MODE_ARG]
+          }
+    })
 
 let disposeIpcHandlers: (() => void) | null = null
 let disposeStateSubscription: (() => void) | null = null
@@ -48,6 +62,15 @@ async function createMainWindow() {
 }
 
 app.whenReady().then(async () => {
+  if (isBridgeMode) {
+    await runAgentBridgeMcpServer()
+    return
+  }
+
+  if (!service) {
+    throw new Error("Handoff service was not initialized.")
+  }
+
   const iconPath = resolveAppIconPath()
 
   if (process.platform === "darwin" && iconPath) {
@@ -102,5 +125,5 @@ app.on("window-all-closed", () => {
 app.on("before-quit", async () => {
   disposeIpcHandlers?.()
   disposeStateSubscription?.()
-  await service.dispose()
+  await service?.dispose()
 })

@@ -174,6 +174,8 @@ function normalizeAgentDefinition(
   return {
     id: nextId,
     name: requestedName || buildUniqueAgentName(existingAgents, fallbackName),
+    specialty:
+      typeof candidate.specialty === "string" ? candidate.specialty : "",
     provider,
     modelId: normalizedTarget.modelId,
     thinkingLevel: normalizeThinkingLevel(candidate.thinkingLevel),
@@ -313,6 +315,7 @@ function createDefaultAgentDefinition(existingAgents: AgentDefinition[]): AgentD
   return {
     id: randomUUID(),
     name: buildUniqueAgentName(existingAgents, "New agent"),
+    specialty: "",
     provider: "codex",
     modelId: getDefaultComposerModelId("codex"),
     thinkingLevel: "high",
@@ -341,6 +344,7 @@ function buildUpdatedAgentDefinition(
   return {
     ...currentAgent,
     name: nextName,
+    specialty: (patch.specialty ?? currentAgent.specialty ?? "").trim(),
     provider,
     modelId: normalizedTarget.modelId,
     thinkingLevel: normalizeThinkingLevel(patch.thinkingLevel ?? currentAgent.thinkingLevel),
@@ -559,6 +563,21 @@ export function createHandoffSettingsStore(options: SettingsStoreOptions) {
   }
 
   return {
+    async getSettings() {
+      const settings = await loadSettings()
+      return {
+        providers: {
+          codex: { ...settings.providers.codex },
+          claude: { ...settings.providers.claude }
+        },
+        terminals: {
+          enabledTerminalIds: [...settings.terminals.enabledTerminalIds],
+          defaultTerminalId: settings.terminals.defaultTerminalId
+        },
+        agents: settings.agents.map(agent => ({ ...agent }))
+      }
+    },
+
     async listAgents() {
       const settings = await loadSettings()
       return settings.agents.map(agent => ({ ...agent }))

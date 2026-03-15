@@ -9,6 +9,7 @@ import type {
   AppStateInfo,
   ConversationTranscript,
   HandoffApi,
+  HandoffSkillsStatus,
   HandoffSettingsSnapshot,
   HandoffStateChangeEvent,
   SearchResult,
@@ -108,6 +109,34 @@ function createMockApi({
     (event: import("../shared/contracts").SelectorAppStateChangeEvent) => void
   >()
   let agentState = agents.map(agent => ({ ...agent }))
+  let skillsStatusState: HandoffSkillsStatus = {
+    skillName: "handoff-agent-bridge",
+    managedRoot: "/Users/tedikonda/Library/Application Support/Handoff/skills",
+    exportRoot: "/Users/tedikonda/Library/Application Support/Handoff/skill-exports",
+    providers: {
+      codex: {
+        provider: "codex",
+        configPath: "/Users/tedikonda/.codex/config.toml",
+        configExists: true,
+        skillPath:
+          "/Users/tedikonda/Library/Application Support/Handoff/skills/codex/handoff-agent-bridge/SKILL.md",
+        skillInstalled: false,
+        mcpInstalled: false,
+        managedConfigBlock: false,
+        error: null
+      },
+      claude: {
+        provider: "claude",
+        configPath: "/Users/tedikonda/.claude/settings.json",
+        configExists: true,
+        skillPath: "/Users/tedikonda/.claude/skills/handoff-agent-bridge/SKILL.md",
+        skillInstalled: false,
+        mcpInstalled: false,
+        managedConfigBlock: false,
+        error: null
+      }
+    }
+  }
 
   const api: HandoffApi = {
     app: {
@@ -163,6 +192,7 @@ function createMockApi({
         const nextAgent: AgentDefinition = {
           id: `agent-${agentState.length + 1}`,
           name: `New agent${agentState.length > 0 ? ` ${agentState.length + 1}` : ""}`,
+          specialty: "",
           provider: "codex",
           modelId: "gpt-5.4",
           thinkingLevel: "high",
@@ -204,6 +234,73 @@ function createMockApi({
         agentState = [...agentState, duplicatedAgent]
         return { ...duplicatedAgent }
       })
+    },
+    bridge: {
+      getStatus: vi.fn().mockResolvedValue({
+        status: "ready",
+        message: "Stateless stdio agent bridge is available.",
+        command: "/Applications/Handoff.app/Contents/MacOS/Handoff",
+        args: ["--agent-bridge-mcp"],
+        entrypointLabel: "handoff-agent-bridge",
+        stateDir: "/Users/tedikonda/Library/Application Support/Handoff/agent-bridge",
+        runsLogPath:
+          "/Users/tedikonda/Library/Application Support/Handoff/agent-bridge/runs.jsonl",
+        locksDir:
+          "/Users/tedikonda/Library/Application Support/Handoff/agent-bridge/locks"
+      }),
+      getConfigSnippets: vi.fn().mockResolvedValue({
+        codexCommand:
+          "codex mcp add handoff-agent-bridge -- '/Applications/Handoff.app/Contents/MacOS/Handoff' '--agent-bridge-mcp'",
+        claudeConfigJson: JSON.stringify(
+          {
+            mcpServers: {
+              "handoff-agent-bridge": {
+                command: "/Applications/Handoff.app/Contents/MacOS/Handoff",
+                args: ["--agent-bridge-mcp"]
+              }
+            }
+          },
+          null,
+          2
+        )
+      }),
+      listRuns: vi.fn().mockResolvedValue([]),
+      getRun: vi.fn().mockResolvedValue(null)
+    },
+    skills: {
+      getStatus: vi.fn().mockImplementation(async () => ({ ...skillsStatusState })),
+      install: vi.fn().mockImplementation(async target => {
+        skillsStatusState = {
+          ...skillsStatusState,
+          providers: {
+            codex:
+              target === "codex" || target === "both"
+                ? {
+                    ...skillsStatusState.providers.codex,
+                    skillInstalled: true,
+                    mcpInstalled: true,
+                    managedConfigBlock: true
+                  }
+                : skillsStatusState.providers.codex,
+            claude:
+              target === "claude" || target === "both"
+                ? {
+                    ...skillsStatusState.providers.claude,
+                    skillInstalled: true,
+                    mcpInstalled: true
+                  }
+                : skillsStatusState.providers.claude
+          }
+        }
+        return { ...skillsStatusState }
+      }),
+      exportPackage: vi.fn().mockResolvedValue({
+        exportPath: "/tmp/handoff-skill-export",
+        codexPath: "/tmp/handoff-skill-export/codex/handoff-agent-bridge",
+        claudePath: "/tmp/handoff-skill-export/claude/handoff-agent-bridge",
+        claudePluginPath: "/tmp/handoff-skill-export/.claude-plugin/marketplace.json"
+      }),
+      copySetupInstructions: vi.fn().mockResolvedValue({ copied: true })
     },
     sessions: {
       list: vi.fn().mockResolvedValue(sessions),
@@ -1360,6 +1457,7 @@ describe("Handoff App", () => {
     expect(api.agents.create).toHaveBeenCalledTimes(1)
     expect(api.agents.update).toHaveBeenCalledWith("agent-1", {
       name: "Release reviewer",
+      specialty: "",
       provider: "codex",
       modelId: "gpt-5.4",
       thinkingLevel: "high",
@@ -1367,5 +1465,109 @@ describe("Handoff App", () => {
       customInstructions: ""
     })
     expect(await screen.findByText("Saved agent")).toBeInTheDocument()
+  })
+
+  it("shows automation setup actions for the selected agent", async () => {
+    const agent: AgentDefinition = {
+      id: "agent-1",
+      name: "Release reviewer",
+      specialty: "Use for release planning and ship reviews.",
+      provider: "codex",
+      modelId: "gpt-5.4",
+      thinkingLevel: "high",
+      fast: false,
+      customInstructions: ""
+    }
+    const { api } = createMockApi({
+      agents: [agent],
+      sessions: [],
+      transcriptById: {}
+    })
+
+    window.handoffApp = api
+    render(<App />)
+
+    await userEvent.click(await screen.findByRole("button", { name: "Agents" }))
+
+    expect(await screen.findByText("Automation / Skills")).toBeInTheDocument()
+    expect(screen.getByDisplayValue("Use for release planning and ship reviews.")).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole("button", { name: "Install both" }))
+    expect(api.skills.install).toHaveBeenCalledWith("both")
+
+    await userEvent.click(screen.getByRole("button", { name: "Copy setup instructions" }))
+    expect(api.skills.copySetupInstructions).toHaveBeenCalledWith("both")
+  })
+
+  it("shows the agent bridge settings card and copy actions", async () => {
+    const { api } = createMockApi({
+      sessions: [],
+      transcriptById: {}
+    })
+
+    window.handoffApp = api
+    render(<App />)
+
+    await userEvent.click(await screen.findByRole("button", { name: /Open settings/i }))
+
+    expect(await screen.findByText("Agent bridge")).toBeInTheDocument()
+    expect(screen.getByText("Codex MCP command")).toBeInTheDocument()
+    expect(screen.getByText("Claude MCP config")).toBeInTheDocument()
+
+    await userEvent.click(screen.getAllByRole("button", { name: "Copy" })[0])
+
+    expect(api.clipboard.writeText).toHaveBeenCalled()
+  })
+
+  it("shows persisted bridge runs under the selected agent", async () => {
+    const agent: AgentDefinition = {
+      id: "agent-1",
+      name: "Release reviewer",
+      provider: "codex",
+      modelId: "gpt-5.4",
+      thinkingLevel: "high",
+      fast: false,
+      customInstructions: ""
+    }
+    const { api } = createMockApi({
+      agents: [agent],
+      sessions: [],
+      transcriptById: {}
+    })
+
+    ;(api.bridge.listRuns as ReturnType<typeof vi.fn>).mockResolvedValue([
+      {
+        runId: "run-1",
+        agentId: "agent-1",
+        agentName: "Release reviewer",
+        status: "completed",
+        provider: "codex",
+        modelId: "gpt-5.4",
+        thinkingLevel: "high",
+        fast: false,
+        projectPath: "/tmp/project",
+        message: "Review this release plan.",
+        context: "Ship this week.",
+        caller: "claude-code",
+        prompt: "prompt",
+        answer: "Looks ready.",
+        error: null,
+        stdout: null,
+        stderr: null,
+        exitCode: 0,
+        startedAt: "2026-03-14T00:20:00.000Z",
+        finishedAt: "2026-03-14T00:20:10.000Z"
+      }
+    ])
+
+    window.handoffApp = api
+    render(<App />)
+
+    await userEvent.click(await screen.findByRole("button", { name: "Agents" }))
+
+    expect(await screen.findByText("Agent runs")).toBeInTheDocument()
+    expect(screen.getAllByText("Completed").length).toBeGreaterThan(0)
+    expect(screen.getByDisplayValue("Review this release plan.")).toBeInTheDocument()
+    expect(screen.getByDisplayValue("Looks ready.")).toBeInTheDocument()
   })
 })

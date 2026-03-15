@@ -4,7 +4,12 @@ import type { SelectorGitDiffMode } from "selector"
 import { IPC_CHANNELS } from "../shared/channels"
 import type {
   AgentUpdatePatch,
+  AgentBridgeConfigSnippets,
+  AgentBridgeHealth,
+  AgentRunRecord,
   ClipboardWriteResult,
+  HandoffSkillsExportResult,
+  HandoffSkillsStatus,
   HandoffSettingsPatch,
   HandoffSettingsSnapshot,
   HandoffApi,
@@ -17,6 +22,7 @@ import type {
   SearchStatus,
   SessionClient,
   SessionProvider,
+  SkillInstallTarget,
   HandoffStateChangeEvent,
   TranscriptOptions
 } from "../shared/contracts"
@@ -148,6 +154,59 @@ export function createHandoffBridge(
         return ipcRenderer.invoke(IPC_CHANNELS.agents.duplicate, id) as Promise<
           Awaited<ReturnType<HandoffApi["agents"]["duplicate"]>>
         >
+      }
+    },
+
+    bridge: {
+      getStatus() {
+        return ipcRenderer.invoke(IPC_CHANNELS.bridge.getStatus) as Promise<AgentBridgeHealth>
+      },
+
+      getConfigSnippets() {
+        return ipcRenderer.invoke(
+          IPC_CHANNELS.bridge.getConfigSnippets
+        ) as Promise<AgentBridgeConfigSnippets>
+      },
+
+      listRuns(agentId?: string, limit?: number) {
+        return ipcRenderer.invoke(
+          IPC_CHANNELS.bridge.listRuns,
+          agentId,
+          limit
+        ) as Promise<AgentRunRecord[]>
+      },
+
+      getRun(runId: string) {
+        return ipcRenderer.invoke(
+          IPC_CHANNELS.bridge.getRun,
+          runId
+        ) as Promise<AgentRunRecord | null>
+      }
+    },
+
+    skills: {
+      getStatus() {
+        return ipcRenderer.invoke(IPC_CHANNELS.skills.getStatus) as Promise<HandoffSkillsStatus>
+      },
+
+      install(target: SkillInstallTarget) {
+        return ipcRenderer.invoke(
+          IPC_CHANNELS.skills.install,
+          target
+        ) as Promise<HandoffSkillsStatus>
+      },
+
+      exportPackage() {
+        return ipcRenderer.invoke(
+          IPC_CHANNELS.skills.exportPackage
+        ) as Promise<HandoffSkillsExportResult>
+      },
+
+      copySetupInstructions(target: SkillInstallTarget) {
+        return ipcRenderer.invoke(
+          IPC_CHANNELS.skills.copySetupInstructions,
+          target
+        ) as Promise<ClipboardWriteResult>
       }
     },
 

@@ -39,6 +39,7 @@
     }
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "@xenova/transformers": "^2.17.2",
     "chokidar": "^5.0.0",
     "prismjs": "^1.30.0",
@@ -46,7 +47,8 @@
     "react-dom": "^19.2.4",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "selector": "file:../../topchallenger/apps/Selector"
+    "selector": "file:../../topchallenger/apps/Selector",
+    "zod": "^3.24.1"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",

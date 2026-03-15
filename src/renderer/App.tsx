@@ -24,6 +24,9 @@ import "prismjs/components/prism-typescript"
 
 import type {
   AgentDefinition,
+  AgentBridgeConfigSnippets,
+  AgentBridgeHealth,
+  AgentRunRecord,
   AgentUpdatePatch,
   ArchivedFilterValue,
   AppStateInfo,
@@ -34,6 +37,7 @@ import type {
   ConversationTranscript,
   DateRangeFilterValue,
   HandoffApi,
+  HandoffSkillsStatus,
   NewThreadDraft,
   HandoffSettingsPatch,
   HandoffSettingsSnapshot,
@@ -48,6 +52,7 @@ import type {
   SessionClient,
   SessionListItem,
   SessionProvider,
+  SkillInstallTarget,
   TerminalAppId,
   TerminalOption,
   ThinkingLevel,
@@ -532,6 +537,39 @@ function cloneAgentDefinition(agent: AgentDefinition | null) {
 
 function areAgentsEqual(left: AgentDefinition | null, right: AgentDefinition | null) {
   return JSON.stringify(left) === JSON.stringify(right)
+}
+
+function sortAgentRunsByStartedAt(runs: AgentRunRecord[]) {
+  return [...runs].sort((left, right) =>
+    right.startedAt.localeCompare(left.startedAt)
+  )
+}
+
+function formatAgentRunStatus(status: AgentRunRecord["status"]) {
+  if (status === "completed") {
+    return "Completed"
+  }
+
+  if (status === "failed") {
+    return "Failed"
+  }
+
+  return "Running"
+}
+
+function formatSkillInstallState(params: {
+  skillInstalled: boolean
+  mcpInstalled: boolean
+}) {
+  if (params.skillInstalled && params.mcpInstalled) {
+    return "Installed"
+  }
+
+  if (params.skillInstalled || params.mcpInstalled) {
+    return "Partial"
+  }
+
+  return "Not installed"
 }
 
 function buildMarkdownExport(
@@ -1926,9 +1964,123 @@ function TerminalSettingsCard({
   )
 }
 
+function BridgeSettingsCard({
+  bridgeStatus,
+  bridgeSnippets,
+  bridgeError,
+  onCopySnippet
+}: {
+  bridgeStatus: AgentBridgeHealth | null
+  bridgeSnippets: AgentBridgeConfigSnippets | null
+  bridgeError: string | null
+  onCopySnippet(label: string, value: string): void
+}) {
+  if (bridgeError) {
+    return (
+      <section className="settings-card">
+        <div className="settings-card-copy">
+          <h2>Agent bridge</h2>
+          <p>{bridgeError}</p>
+        </div>
+      </section>
+    )
+  }
+
+  if (!bridgeStatus || !bridgeSnippets) {
+    return (
+      <section className="settings-card">
+        <div className="settings-card-copy">
+          <h2>Agent bridge</h2>
+          <p>Loading MCP bridge status and configuration snippets.</p>
+        </div>
+      </section>
+    )
+  }
+
+  return (
+    <section className="settings-card">
+      <div className="settings-card-copy">
+        <h2>Agent bridge</h2>
+        <p>
+          Exposes saved Handoff agents through a local MCP stdio entrypoint. Each call runs
+          headlessly and stores its result in the agent history below.
+        </p>
+      </div>
+
+      <div className="settings-meta-grid">
+        <div className="settings-meta-item">
+          <span className="settings-meta-label">Status</span>
+          <SettingsValue value={bridgeStatus.status === "ready" ? "Ready" : "Error"} />
+        </div>
+        <div className="settings-meta-item settings-meta-item-wide">
+          <span className="settings-meta-label">Command</span>
+          <SettingsValue
+            monospace
+            value={[bridgeStatus.command, ...bridgeStatus.args].join(" ")}
+          />
+        </div>
+        <div className="settings-meta-item settings-meta-item-wide">
+          <span className="settings-meta-label">Runs log</span>
+          <SettingsValue monospace value={bridgeStatus.runsLogPath} />
+        </div>
+        <div className="settings-meta-item settings-meta-item-wide">
+          <span className="settings-meta-label">State directory</span>
+          <SettingsValue monospace value={bridgeStatus.stateDir} />
+        </div>
+      </div>
+
+      <div className="settings-field-list">
+        <div className="settings-field">
+          <span className="settings-field-label">Codex MCP command</span>
+          <textarea
+            className="settings-input settings-code-block"
+            readOnly
+            spellCheck={false}
+            value={bridgeSnippets.codexCommand}
+          />
+          <div className="settings-card-inline-actions">
+            <button
+              className="ghost-button"
+              onClick={() => onCopySnippet("Codex MCP command", bridgeSnippets.codexCommand)}
+              type="button"
+            >
+              Copy
+            </button>
+          </div>
+        </div>
+
+        <div className="settings-field">
+          <span className="settings-field-label">Claude MCP config</span>
+          <textarea
+            className="settings-input settings-code-block"
+            readOnly
+            spellCheck={false}
+            value={bridgeSnippets.claudeConfigJson}
+          />
+          <div className="settings-card-inline-actions">
+            <button
+              className="ghost-button"
+              onClick={() =>
+                onCopySnippet("Claude MCP config", bridgeSnippets.claudeConfigJson)
+              }
+              type="button"
+            >
+              Copy
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
 function SettingsPane({
   settingsSnapshot,
   settingsError,
+  bridgeStatus,
+  bridgeSnippets,
+  bridgeError,
+  onCopyBridgeSnippet,
   onProviderOverrideChange,
   onProviderReset,
   onTerminalToggle,
@@ -1936,6 +2088,10 @@ function SettingsPane({
 }: {
   settingsSnapshot: HandoffSettingsSnapshot | null
   settingsError: string | null
+  bridgeStatus: AgentBridgeHealth | null
+  bridgeSnippets: AgentBridgeConfigSnippets | null
+  bridgeError: string | null
+  onCopyBridgeSnippet(label: string, value: string): void
   onProviderOverrideChange(
     provider: SessionProvider,
     patch: Partial<ProviderLaunchOverrides>
@@ -1988,6 +2144,13 @@ function SettingsPane({
         onSelectDefault={onDefaultTerminalSelect}
         onToggle={onTerminalToggle}
         terminalOptions={settingsSnapshot.terminalOptions}
+      />
+
+      <BridgeSettingsCard
+        bridgeError={bridgeError}
+        bridgeSnippets={bridgeSnippets}
+        bridgeStatus={bridgeStatus}
+        onCopySnippet={onCopyBridgeSnippet}
       />
     </div>
   )
@@ -2112,121 +2275,425 @@ function AgentEditorPane({
   const supportsFastMode = getComposerProviderConfig(draft.provider).supportsFastMode
 
   return (
-    <div className="settings-layout">
-      <section className="settings-card">
-        <div className="settings-card-header">
-          <div className="settings-card-copy">
-            <h2>{draft.name}</h2>
-            <p>Save reusable provider, model, and instruction defaults for later use.</p>
-          </div>
-          <div className="agent-editor-header-actions">
-            <button className="ghost-button" onClick={onDuplicate} type="button">
-              Duplicate
-            </button>
-            <button className="ghost-button" onClick={onDelete} type="button">
-              Delete
-            </button>
-          </div>
+    <section className="settings-card">
+      <div className="settings-card-header">
+        <div className="settings-card-copy">
+          <h2>{draft.name}</h2>
+          <p>Save reusable provider, model, and instruction defaults for later use.</p>
         </div>
+        <div className="agent-editor-header-actions">
+          <button className="ghost-button" onClick={onDuplicate} type="button">
+            Duplicate
+          </button>
+          <button className="ghost-button" onClick={onDelete} type="button">
+            Delete
+          </button>
+        </div>
+      </div>
 
-        <div className="settings-field-list">
+      <div className="settings-field-list">
+        <label className="settings-field">
+          <span className="settings-field-label">Name</span>
+          <input
+            className="settings-input"
+            onChange={event => onDraftChange({ name: event.target.value })}
+            type="text"
+            value={draft.name}
+          />
+        </label>
+
+        <label className="settings-field">
+          <span className="settings-field-label">Specialty</span>
+          <input
+            className="settings-input"
+            onChange={event => onDraftChange({ specialty: event.target.value })}
+            placeholder="When should Handoff use this agent?"
+            type="text"
+            value={draft.specialty ?? ""}
+          />
+        </label>
+
+        <div className="agent-editor-grid">
           <label className="settings-field">
-            <span className="settings-field-label">Name</span>
-            <input
+            <span className="settings-field-label">Provider</span>
+            <select
               className="settings-input"
-              onChange={event => onDraftChange({ name: event.target.value })}
-              type="text"
-              value={draft.name}
-            />
-          </label>
-
-          <div className="agent-editor-grid">
-            <label className="settings-field">
-              <span className="settings-field-label">Provider</span>
-              <select
-                className="settings-input"
-                onChange={event =>
-                  onDraftChange({ provider: event.target.value as SessionProvider })
-                }
-                value={draft.provider}
-              >
-                {NEW_THREAD_VENDOR_OPTIONS.map(option => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="settings-field">
-              <span className="settings-field-label">Model</span>
-              <select
-                className="settings-input"
-                onChange={event => onDraftChange({ modelId: event.target.value })}
-                value={draft.modelId}
-              >
-                {modelOptions.map(option => (
-                  <option key={option.id} value={option.id}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="settings-field">
-              <span className="settings-field-label">Thinking strength</span>
-              <select
-                className="settings-input"
-                onChange={event =>
-                  onDraftChange({ thinkingLevel: event.target.value as ThinkingLevel })
-                }
-                value={draft.thinkingLevel}
-              >
-                {THINKING_LEVEL_OPTIONS.map(option => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          <label className="new-thread-inline-toggle">
-            <input
-              checked={draft.fast}
-              disabled={!supportsFastMode}
-              onChange={event => onDraftChange({ fast: event.target.checked })}
-              type="checkbox"
-            />
-            <span>{supportsFastMode ? "Fast mode" : "Fast mode unavailable for this provider"}</span>
+              onChange={event =>
+                onDraftChange({ provider: event.target.value as SessionProvider })
+              }
+              value={draft.provider}
+            >
+              {NEW_THREAD_VENDOR_OPTIONS.map(option => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
           </label>
 
           <label className="settings-field">
-            <span className="settings-field-label">Custom instructions</span>
-            <textarea
-              className="new-thread-prompt-input agent-editor-textarea"
+            <span className="settings-field-label">Model</span>
+            <select
+              className="settings-input"
+              onChange={event => onDraftChange({ modelId: event.target.value })}
+              value={draft.modelId}
+            >
+              {modelOptions.map(option => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="settings-field">
+            <span className="settings-field-label">Thinking strength</span>
+            <select
+              className="settings-input"
               onChange={event =>
-                onDraftChange({ customInstructions: event.target.value })
+                onDraftChange({ thinkingLevel: event.target.value as ThinkingLevel })
               }
-              placeholder="Add custom instructions"
-              spellCheck={false}
-              value={draft.customInstructions}
-            />
+              value={draft.thinkingLevel}
+            >
+              {THINKING_LEVEL_OPTIONS.map(option => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
           </label>
         </div>
 
-        {editorError ? <div className="new-thread-inline-error">{editorError}</div> : null}
+        <label className="new-thread-inline-toggle">
+          <input
+            checked={draft.fast}
+            disabled={!supportsFastMode}
+            onChange={event => onDraftChange({ fast: event.target.checked })}
+            type="checkbox"
+          />
+          <span>{supportsFastMode ? "Fast mode" : "Fast mode unavailable for this provider"}</span>
+        </label>
 
-        <div className="new-thread-actions">
-          <button className="ghost-button" disabled={!isDirty} onClick={onReset} type="button">
-            Reset
-          </button>
-          <button className="accent-button" onClick={onSave} type="button">
-            Save
-          </button>
+        <label className="settings-field">
+          <span className="settings-field-label">Custom instructions</span>
+          <textarea
+            className="new-thread-prompt-input agent-editor-textarea"
+            onChange={event =>
+              onDraftChange({ customInstructions: event.target.value })
+            }
+            placeholder="Add custom instructions"
+            spellCheck={false}
+            value={draft.customInstructions}
+          />
+        </label>
+      </div>
+
+      {editorError ? <div className="new-thread-inline-error">{editorError}</div> : null}
+
+      <div className="new-thread-actions">
+        <button className="ghost-button" disabled={!isDirty} onClick={onReset} type="button">
+          Reset
+        </button>
+        <button className="accent-button" onClick={onSave} type="button">
+          Save
+        </button>
+      </div>
+    </section>
+  )
+}
+
+function AgentRunsPane({
+  agent,
+  runs,
+  selectedRunId,
+  isLoading,
+  runsError,
+  onSelectRun
+}: {
+  agent: AgentDefinition | null
+  runs: AgentRunRecord[]
+  selectedRunId: string | null
+  isLoading: boolean
+  runsError: string | null
+  onSelectRun(runId: string): void
+}) {
+  if (!agent) {
+    return null
+  }
+
+  const selectedRun =
+    runs.find(run => run.runId === selectedRunId) ?? runs[0] ?? null
+
+  return (
+    <section className="settings-card">
+      <div className="settings-card-copy">
+        <h2>Agent runs</h2>
+        <p>Persisted MCP bridge requests and responses for this agent.</p>
+      </div>
+
+      {runsError ? <div className="new-thread-inline-error">{runsError}</div> : null}
+
+      {isLoading && runs.length === 0 ? (
+        <p className="agent-run-empty">Loading run history.</p>
+      ) : runs.length === 0 ? (
+        <p className="agent-run-empty">No bridge runs recorded for this agent yet.</p>
+      ) : (
+        <div className="agent-run-layout">
+          <div className="agent-run-list" role="list">
+            {runs.map(run => (
+              <button
+                className={`agent-run-row ${run.runId === selectedRun?.runId ? "is-active" : ""}`}
+                key={run.runId}
+                onClick={() => onSelectRun(run.runId)}
+                type="button"
+              >
+                <div className="agent-run-row-header">
+                  <span className={`agent-run-status is-${run.status}`}>
+                    {formatAgentRunStatus(run.status)}
+                  </span>
+                  <span className="agent-run-time">{formatTimestamp(run.startedAt)}</span>
+                </div>
+                <div className="agent-run-row-meta">
+                  <span>{getComposerModelLabel(run.provider, run.modelId)}</span>
+                  <span>{run.projectPath}</span>
+                </div>
+              </button>
+            ))}
+          </div>
+
+          {selectedRun ? (
+            <div className="agent-run-detail">
+              <div className="settings-meta-grid">
+                <div className="settings-meta-item">
+                  <span className="settings-meta-label">Status</span>
+                  <SettingsValue value={formatAgentRunStatus(selectedRun.status)} />
+                </div>
+                <div className="settings-meta-item">
+                  <span className="settings-meta-label">Started</span>
+                  <SettingsValue value={formatTimestamp(selectedRun.startedAt)} />
+                </div>
+                <div className="settings-meta-item">
+                  <span className="settings-meta-label">Model</span>
+                  <SettingsValue
+                    value={getComposerModelLabel(selectedRun.provider, selectedRun.modelId)}
+                  />
+                </div>
+                <div className="settings-meta-item">
+                  <span className="settings-meta-label">Thinking</span>
+                  <SettingsValue
+                    value={
+                      THINKING_LEVEL_OPTIONS.find(
+                        option => option.value === selectedRun.thinkingLevel
+                      )?.label ?? selectedRun.thinkingLevel
+                    }
+                  />
+                </div>
+                <div className="settings-meta-item settings-meta-item-wide">
+                  <span className="settings-meta-label">Project</span>
+                  <SettingsValue monospace value={selectedRun.projectPath} />
+                </div>
+                <div className="settings-meta-item settings-meta-item-wide">
+                  <span className="settings-meta-label">Run ID</span>
+                  <SettingsValue monospace value={selectedRun.runId} />
+                </div>
+              </div>
+
+              <div className="agent-run-body">
+                <div className="settings-field">
+                  <span className="settings-field-label">Request</span>
+                  <textarea
+                    className="settings-input agent-run-textarea"
+                    readOnly
+                    spellCheck={false}
+                    value={selectedRun.message}
+                  />
+                </div>
+
+                {selectedRun.context ? (
+                  <div className="settings-field">
+                    <span className="settings-field-label">Context</span>
+                    <textarea
+                      className="settings-input agent-run-textarea"
+                      readOnly
+                      spellCheck={false}
+                      value={selectedRun.context}
+                    />
+                  </div>
+                ) : null}
+
+                <div className="settings-field">
+                  <span className="settings-field-label">
+                    {selectedRun.status === "failed" ? "Error" : "Response"}
+                  </span>
+                  <textarea
+                    className="settings-input agent-run-textarea"
+                    readOnly
+                    spellCheck={false}
+                    value={selectedRun.status === "failed"
+                      ? selectedRun.error ?? ""
+                      : selectedRun.answer ?? ""}
+                  />
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
-      </section>
-    </div>
+      )}
+    </section>
+  )
+}
+
+function AgentAutomationPane({
+  agent,
+  skillsStatus,
+  skillsError,
+  isBusy,
+  onInstall,
+  onExportPackage,
+  onCopySetupInstructions
+}: {
+  agent: AgentDefinition | null
+  skillsStatus: HandoffSkillsStatus | null
+  skillsError: string | null
+  isBusy: boolean
+  onInstall(target: SkillInstallTarget): void
+  onExportPackage(): void
+  onCopySetupInstructions(target: SkillInstallTarget): void
+}) {
+  if (!agent) {
+    return null
+  }
+
+  return (
+    <section className="settings-card">
+      <div className="settings-card-copy">
+        <h2>Automation / Skills</h2>
+        <p>
+          Install the generic Handoff bridge skill for Codex and Claude Code. Explicit
+          agent-name mentions win first; otherwise the skill routes by specialty.
+        </p>
+      </div>
+
+      <div className="settings-meta-grid">
+        <div className="settings-meta-item">
+          <span className="settings-meta-label">Agent name match</span>
+          <SettingsValue value={agent.name} />
+        </div>
+        <div className="settings-meta-item settings-meta-item-wide">
+          <span className="settings-meta-label">Specialty</span>
+          <SettingsValue
+            value={agent.specialty?.trim() ? agent.specialty : "Not set"}
+          />
+        </div>
+      </div>
+
+      {skillsError ? <div className="new-thread-inline-error">{skillsError}</div> : null}
+
+      {!skillsStatus ? (
+        <p className="agent-run-empty">Loading install status.</p>
+      ) : (
+        <div className="automation-provider-list">
+          {(["codex", "claude"] as const).map(provider => {
+            const providerStatus = skillsStatus.providers[provider]
+
+            return (
+              <div className="automation-provider-row" key={provider}>
+                <div className="automation-provider-header">
+                  <span className="automation-provider-name">
+                    {formatProviderLabel(provider)}
+                  </span>
+                  <span
+                    className={`automation-provider-state is-${
+                      providerStatus.skillInstalled && providerStatus.mcpInstalled
+                        ? "ready"
+                        : providerStatus.skillInstalled || providerStatus.mcpInstalled
+                          ? "partial"
+                          : "idle"
+                    }`}
+                  >
+                    {formatSkillInstallState(providerStatus)}
+                  </span>
+                </div>
+                <div className="settings-meta-grid">
+                  <div className="settings-meta-item">
+                    <span className="settings-meta-label">MCP</span>
+                    <SettingsValue value={providerStatus.mcpInstalled ? "Installed" : "Missing"} />
+                  </div>
+                  <div className="settings-meta-item">
+                    <span className="settings-meta-label">Skill</span>
+                    <SettingsValue
+                      value={providerStatus.skillInstalled ? "Installed" : "Missing"}
+                    />
+                  </div>
+                  <div className="settings-meta-item settings-meta-item-wide">
+                    <span className="settings-meta-label">Config path</span>
+                    <SettingsValue monospace value={providerStatus.configPath} />
+                  </div>
+                  <div className="settings-meta-item settings-meta-item-wide">
+                    <span className="settings-meta-label">Skill path</span>
+                    <SettingsValue monospace value={providerStatus.skillPath} />
+                  </div>
+                </div>
+                {providerStatus.error ? (
+                  <div className="new-thread-inline-error">{providerStatus.error}</div>
+                ) : null}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      <div className="automation-actions">
+        <button
+          className="ghost-button"
+          disabled={isBusy}
+          onClick={() => onInstall("codex")}
+          type="button"
+        >
+          Install in Codex
+        </button>
+        <button
+          className="ghost-button"
+          disabled={isBusy}
+          onClick={() => onInstall("claude")}
+          type="button"
+        >
+          Install in Claude
+        </button>
+        <button
+          className="ghost-button"
+          disabled={isBusy}
+          onClick={() => onInstall("both")}
+          type="button"
+        >
+          Install both
+        </button>
+        <button
+          className="ghost-button"
+          disabled={isBusy}
+          onClick={() => onInstall("both")}
+          type="button"
+        >
+          Update/Reinstall
+        </button>
+        <button
+          className="ghost-button"
+          disabled={isBusy}
+          onClick={onExportPackage}
+          type="button"
+        >
+          Export package
+        </button>
+        <button
+          className="ghost-button"
+          disabled={isBusy}
+          onClick={() => onCopySetupInstructions("both")}
+          type="button"
+        >
+          Copy setup instructions
+        </button>
+      </div>
+    </section>
   )
 }
 
@@ -2902,12 +3369,24 @@ export default function App() {
     null
   )
   const [settingsError, setSettingsError] = useState<string | null>(null)
+  const [bridgeStatus, setBridgeStatus] = useState<AgentBridgeHealth | null>(null)
+  const [bridgeSnippets, setBridgeSnippets] = useState<AgentBridgeConfigSnippets | null>(
+    null
+  )
+  const [bridgeError, setBridgeError] = useState<string | null>(null)
+  const [skillsStatus, setSkillsStatus] = useState<HandoffSkillsStatus | null>(null)
+  const [skillsError, setSkillsError] = useState<string | null>(null)
+  const [isMutatingSkills, setIsMutatingSkills] = useState(false)
   const [agents, setAgents] = useState<AgentDefinition[]>([])
   const [isLoadingAgents, setIsLoadingAgents] = useState(true)
   const [agentsError, setAgentsError] = useState<string | null>(null)
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
   const [agentDraft, setAgentDraft] = useState<AgentDefinition | null>(null)
   const [agentEditorError, setAgentEditorError] = useState<string | null>(null)
+  const [agentRuns, setAgentRuns] = useState<AgentRunRecord[]>([])
+  const [selectedAgentRunId, setSelectedAgentRunId] = useState<string | null>(null)
+  const [isLoadingAgentRuns, setIsLoadingAgentRuns] = useState(false)
+  const [agentRunsError, setAgentRunsError] = useState<string | null>(null)
   const [sessions, setSessions] = useState<SessionListItem[]>([])
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [activeTranscript, setActiveTranscript] =
@@ -3249,6 +3728,48 @@ export default function App() {
     }
   }, [])
 
+  const loadBridgeInfo = useCallback(async () => {
+    const api = getHandoffApi()
+    if (!api) {
+      setBridgeStatus(null)
+      setBridgeSnippets(null)
+      setBridgeError("The preload bridge did not load. Restart the app.")
+      return
+    }
+
+    try {
+      const [nextBridgeStatus, nextBridgeSnippets] = await Promise.all([
+        api.bridge.getStatus(),
+        api.bridge.getConfigSnippets()
+      ])
+      setBridgeStatus(nextBridgeStatus)
+      setBridgeSnippets(nextBridgeSnippets)
+      setBridgeError(null)
+    } catch (error) {
+      setBridgeStatus(null)
+      setBridgeSnippets(null)
+      setBridgeError(error instanceof Error ? error.message : "Unable to load agent bridge.")
+    }
+  }, [])
+
+  const loadSkillsStatus = useCallback(async () => {
+    const api = getHandoffApi()
+    if (!api) {
+      setSkillsStatus(null)
+      setSkillsError("The preload bridge did not load. Restart the app.")
+      return
+    }
+
+    try {
+      const nextSkillsStatus = await api.skills.getStatus()
+      setSkillsStatus(nextSkillsStatus)
+      setSkillsError(null)
+    } catch (error) {
+      setSkillsStatus(null)
+      setSkillsError(error instanceof Error ? error.message : "Unable to load skills status.")
+    }
+  }, [])
+
   const loadAgents = useCallback(async () => {
     setIsLoadingAgents(true)
     const api = getHandoffApi()
@@ -3278,6 +3799,46 @@ export default function App() {
       setSelectedAgentId(null)
     } finally {
       setIsLoadingAgents(false)
+    }
+  }, [])
+
+  const loadAgentRuns = useCallback(async (agentId: string | null) => {
+    if (!agentId) {
+      setAgentRuns([])
+      setSelectedAgentRunId(null)
+      setAgentRunsError(null)
+      setIsLoadingAgentRuns(false)
+      return
+    }
+
+    setIsLoadingAgentRuns(true)
+    const api = getHandoffApi()
+
+    if (!api) {
+      setAgentRuns([])
+      setSelectedAgentRunId(null)
+      setAgentRunsError("The preload bridge did not load. Restart the app.")
+      setIsLoadingAgentRuns(false)
+      return
+    }
+
+    try {
+      const nextRuns = sortAgentRunsByStartedAt(await api.bridge.listRuns(agentId, 50))
+      setAgentRuns(nextRuns)
+      setAgentRunsError(null)
+      setSelectedAgentRunId(currentSelectedRunId => {
+        if (currentSelectedRunId && nextRuns.some(run => run.runId === currentSelectedRunId)) {
+          return currentSelectedRunId
+        }
+
+        return nextRuns[0]?.runId ?? null
+      })
+    } catch (error) {
+      setAgentRuns([])
+      setSelectedAgentRunId(null)
+      setAgentRunsError(error instanceof Error ? error.message : "Unable to load agent runs.")
+    } finally {
+      setIsLoadingAgentRuns(false)
     }
   }, [])
 
@@ -3370,6 +3931,32 @@ export default function App() {
       try {
         await api.clipboard.writeText(text)
         showToast(successLabel)
+      } catch (error) {
+        showToast(
+          error instanceof Error ? error.message : "Unable to copy to clipboard.",
+          "error"
+        )
+      }
+    },
+    [showToast]
+  )
+
+  const copyTextValue = useCallback(
+    async (text: string, successLabel: string) => {
+      const trimmed = text.trim()
+      if (!trimmed) {
+        return
+      }
+
+      const api = getHandoffApi()
+      if (!api) {
+        showToast("Preload bridge unavailable", "error")
+        return
+      }
+
+      try {
+        await api.clipboard.writeText(trimmed)
+        showToast(`Copied ${successLabel}`)
       } catch (error) {
         showToast(
           error instanceof Error ? error.message : "Unable to copy to clipboard.",
@@ -3702,6 +4289,7 @@ export default function App() {
           const nextSettingsSnapshot = await api.settings.update(patch)
           setSettingsSnapshot(nextSettingsSnapshot)
           setSettingsError(null)
+          await loadSkillsStatus()
         })
         .catch(async error => {
           showToast(
@@ -3711,7 +4299,7 @@ export default function App() {
           await loadSettingsSnapshot()
         })
     },
-    [loadSettingsSnapshot, showToast]
+    [loadSettingsSnapshot, loadSkillsStatus, showToast]
   )
 
   const handleProviderOverrideChange = useCallback(
@@ -3739,6 +4327,7 @@ export default function App() {
           const nextSettingsSnapshot = await api.settings.resetProvider(provider)
           setSettingsSnapshot(nextSettingsSnapshot)
           setSettingsError(null)
+          await loadSkillsStatus()
         })
         .catch(async error => {
           showToast(
@@ -3748,7 +4337,7 @@ export default function App() {
           await loadSettingsSnapshot()
         })
     },
-    [loadSettingsSnapshot, showToast]
+    [loadSettingsSnapshot, loadSkillsStatus, showToast]
   )
 
   const handleTerminalToggle = useCallback(
@@ -3847,7 +4436,7 @@ export default function App() {
           documentCount: 0
         })
       }
-      await Promise.all([loadSessions(), loadAgents()])
+      await Promise.all([loadSessions(), loadAgents(), loadBridgeInfo(), loadSkillsStatus()])
     }
 
     initialize().catch(error => {
@@ -3860,7 +4449,7 @@ export default function App() {
     return () => {
       isMounted = false
     }
-  }, [loadAgents, loadSessions])
+  }, [loadAgents, loadBridgeInfo, loadSessions, loadSkillsStatus])
 
   useEffect(() => {
     const api = getHandoffApi()
@@ -3881,6 +4470,28 @@ export default function App() {
     setAgentDraft(cloneAgentDefinition(selectedAgent))
     setAgentEditorError(null)
   }, [selectedAgent])
+
+  useEffect(() => {
+    if (activeSection !== "agents" || isSettingsOpen) {
+      return
+    }
+
+    void loadAgentRuns(selectedAgentId)
+  }, [activeSection, isSettingsOpen, loadAgentRuns, selectedAgentId])
+
+  useEffect(() => {
+    if (activeSection !== "agents" || isSettingsOpen || !selectedAgentId) {
+      return () => undefined
+    }
+
+    const intervalId = window.setInterval(() => {
+      void loadAgentRuns(selectedAgentId)
+    }, 4_000)
+
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [activeSection, isSettingsOpen, loadAgentRuns, selectedAgentId])
 
   useEffect(() => {
     const session = selectedNewThreadSourceSession
@@ -4501,6 +5112,10 @@ export default function App() {
     setAgentEditorError(null)
   }, [])
 
+  const handleSelectAgentRun = useCallback((runId: string) => {
+    setSelectedAgentRunId(runId)
+  }, [])
+
   const handleAgentDraftChange = useCallback((patch: AgentUpdatePatch) => {
     setAgentDraft(currentDraft => {
       if (!currentDraft) {
@@ -4546,6 +5161,7 @@ export default function App() {
     try {
       const updatedAgent = await api.agents.update(selectedAgentId, {
         name: trimmedName,
+        specialty: agentDraft.specialty?.trim() ?? "",
         provider: agentDraft.provider,
         modelId: agentDraft.modelId,
         thinkingLevel: agentDraft.thinkingLevel,
@@ -4618,6 +5234,79 @@ export default function App() {
       showToast(error instanceof Error ? error.message : "Unable to duplicate agent.", "error")
     }
   }, [selectedAgent, showToast])
+
+  const handleInstallSkills = useCallback(
+    async (target: SkillInstallTarget) => {
+      const api = getHandoffApi()
+      if (!api) {
+        showToast("Preload bridge unavailable", "error")
+        return
+      }
+
+      setIsMutatingSkills(true)
+      try {
+        const nextSkillsStatus = await api.skills.install(target)
+        setSkillsStatus(nextSkillsStatus)
+        setSkillsError(null)
+        showToast(
+          target === "both"
+            ? "Installed Handoff skills in Codex and Claude"
+            : `Installed Handoff skill in ${formatProviderLabel(target)}`
+        )
+      } catch (error) {
+        setSkillsError(error instanceof Error ? error.message : "Unable to install skills.")
+        showToast(
+          error instanceof Error ? error.message : "Unable to install skills.",
+          "error"
+        )
+      } finally {
+        setIsMutatingSkills(false)
+      }
+    },
+    [showToast]
+  )
+
+  const handleExportSkillsPackage = useCallback(async () => {
+    const api = getHandoffApi()
+    if (!api) {
+      showToast("Preload bridge unavailable", "error")
+      return
+    }
+
+    setIsMutatingSkills(true)
+    try {
+      const result = await api.skills.exportPackage()
+      showToast(`Exported skills package to ${result.exportPath}`)
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : "Unable to export skills package.",
+        "error"
+      )
+    } finally {
+      setIsMutatingSkills(false)
+    }
+  }, [showToast])
+
+  const handleCopySkillSetupInstructions = useCallback(
+    async (target: SkillInstallTarget) => {
+      const api = getHandoffApi()
+      if (!api) {
+        showToast("Preload bridge unavailable", "error")
+        return
+      }
+
+      try {
+        await api.skills.copySetupInstructions(target)
+        showToast("Copied setup instructions")
+      } catch (error) {
+        showToast(
+          error instanceof Error ? error.message : "Unable to copy setup instructions.",
+          "error"
+        )
+      }
+    },
+    [showToast]
+  )
 
   const handleSidebarResizeStart = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -4992,6 +5681,12 @@ export default function App() {
             <div className="transcript-surface">
               {isSettingsOpen ? (
                 <SettingsPane
+                  bridgeError={bridgeError}
+                  bridgeSnippets={bridgeSnippets}
+                  bridgeStatus={bridgeStatus}
+                  onCopyBridgeSnippet={(label, value) => {
+                    void copyTextValue(value, label)
+                  }}
                   onDefaultTerminalSelect={handleDefaultTerminalSelect}
                   onProviderOverrideChange={handleProviderOverrideChange}
                   onProviderReset={handleProviderReset}
@@ -5010,17 +5705,42 @@ export default function App() {
                     title="No agents yet"
                     detail="Create an agent from the left rail to get started."
                   />
-              ) : (
-                  <AgentEditorPane
-                    agent={selectedAgent}
-                    draft={agentDraft}
-                    editorError={agentEditorError}
-                    onDelete={() => void handleDeleteAgent()}
-                    onDraftChange={handleAgentDraftChange}
-                    onDuplicate={() => void handleDuplicateAgent()}
-                    onReset={handleResetAgent}
-                    onSave={() => void handleSaveAgent()}
-                  />
+                ) : (
+                  <div className="settings-layout">
+                    <AgentEditorPane
+                      agent={selectedAgent}
+                      draft={agentDraft}
+                      editorError={agentEditorError}
+                      onDelete={() => void handleDeleteAgent()}
+                      onDraftChange={handleAgentDraftChange}
+                      onDuplicate={() => void handleDuplicateAgent()}
+                      onReset={handleResetAgent}
+                      onSave={() => void handleSaveAgent()}
+                    />
+                    <AgentAutomationPane
+                      agent={selectedAgent}
+                      isBusy={isMutatingSkills}
+                      onCopySetupInstructions={target => {
+                        void handleCopySkillSetupInstructions(target)
+                      }}
+                      onExportPackage={() => {
+                        void handleExportSkillsPackage()
+                      }}
+                      onInstall={target => {
+                        void handleInstallSkills(target)
+                      }}
+                      skillsError={skillsError}
+                      skillsStatus={skillsStatus}
+                    />
+                    <AgentRunsPane
+                      agent={selectedAgent}
+                      isLoading={isLoadingAgentRuns}
+                      onSelectRun={handleSelectAgentRun}
+                      runs={agentRuns}
+                      runsError={agentRunsError}
+                      selectedRunId={selectedAgentRunId}
+                    />
+                  </div>
                 )
               ) : activeSection === "selector" ? (
                 <SelectorDetailPane controller={selectorSection} />
