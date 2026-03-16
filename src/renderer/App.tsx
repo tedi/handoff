@@ -2631,8 +2631,8 @@ function AgentAutomationPane({
         <h2>Automation / Skills</h2>
         <p>
           Install the generic Handoff bridge skill for Codex and Claude Code. The
-          installed skill starts async bridge jobs, polls for completion, and routes by
-          exact agent name first, then specialty.
+          installed skill starts async bridge jobs, waits inside Handoff for updates, and
+          routes by exact agent name first, then specialty.
         </p>
       </div>
 

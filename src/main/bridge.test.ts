@@ -367,17 +367,27 @@ describe("createAgentBridgeService", () => {
       workerPid: process.pid
     })
 
-    await runAgentBridgeWorkerJob({
-      dataDir: context.dataDir,
-      runId: started.runId,
-      executeCommand
+    const currentContext = context
+    if (!currentContext) {
+      throw new Error("Missing bridge test context.")
+    }
+
+    const workerPromise = new Promise<void>(resolve => {
+      setTimeout(() => {
+        void runAgentBridgeWorkerJob({
+          dataDir: currentContext.dataDir,
+          runId: started.runId,
+          executeCommand
+        }).then(() => resolve())
+      }, 50)
     })
 
-    expect(await bridge.getRun(started.runId)).toMatchObject({
+    expect(await bridge.waitForRun(started.runId, 1)).toMatchObject({
       runId: started.runId,
       status: "completed",
       answer: "Async final answer"
     })
+    await workerPromise
   })
 
   it("cancels async runs and preserves the canceled state", async () => {

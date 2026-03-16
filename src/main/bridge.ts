@@ -25,6 +25,7 @@ export const AGENT_BRIDGE_WORKER_MODE_ARG = "--agent-bridge-worker"
 export const AGENT_BRIDGE_SERVER_NAME = "handoff-agent-bridge"
 
 const MAX_TIMEOUT_SEC = 1_800
+const MAX_WAIT_FOR_RUN_SEC = 30
 const STALE_LOCK_MS = 6 * 60 * 60 * 1_000
 
 type AgentBridgeEventType =
@@ -119,6 +120,7 @@ export interface AgentBridgeService {
     agentName?: string
   }): Promise<AgentDefinition | null>
   startRun(params: Omit<AskAgentParams, "timeoutSec">): Promise<StartAgentRunResult>
+  waitForRun(runId: string, waitUpToSec?: number): Promise<AgentRunRecord | null>
   askAgent(params: AskAgentParams): Promise<AskAgentResult>
   listRuns(agentId?: string, limit?: number): Promise<AgentRunRecord[]>
   getRun(runId: string): Promise<AgentRunRecord | null>
@@ -190,6 +192,27 @@ function normalizeTimeoutSec(value: number | null | undefined) {
   }
 
   return Math.min(Math.floor(value), MAX_TIMEOUT_SEC)
+}
+
+function normalizeWaitUpToSec(value: number | undefined) {
+  if (value === undefined) {
+    return 20
+  }
+
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new AgentBridgeInputError(
+      "invalid_timeout",
+      "Wait duration must be a positive number."
+    )
+  }
+
+  return Math.min(Math.floor(value), MAX_WAIT_FOR_RUN_SEC)
+}
+
+function delay(ms: number) {
+  return new Promise(resolve => {
+    setTimeout(resolve, ms)
+  })
 }
 
 function mapThinkingLevelToCodexEffort(thinkingLevel: ThinkingLevel) {
@@ -1373,6 +1396,26 @@ export function createAgentBridgeService(
         })
         await releaseAgentLock(lockPath)
         throw error
+      }
+    },
+
+    async waitForRun(runId, waitUpToSec) {
+      const waitMs = normalizeWaitUpToSec(waitUpToSec) * 1_000
+      const startedAtMs = Date.now()
+
+      while (true) {
+        await reconcileAllAgentLocks({ locksDir, runsLogPath })
+        const run = await getRunRecord(runsLogPath, runId)
+
+        if (!run || isTerminalRunStatus(run.status)) {
+          return run
+        }
+
+        if (Date.now() - startedAtMs >= waitMs) {
+          return run
+        }
+
+        await delay(500)
       }
     },
 

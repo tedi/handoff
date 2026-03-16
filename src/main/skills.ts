@@ -86,9 +86,10 @@ Use the local Handoff bridge to consult one saved Handoff agent and then continu
 4. If no confident match exists, ask the user which saved Handoff agent to use instead of guessing.
 5. Use the current working directory or repo root as \`projectPath\`.
 6. Call \`start_agent_run\` with the chosen agent, a concise question, and optional context.
-7. Poll \`get_agent_run\` every 5 seconds until the run reaches \`completed\`, \`failed\`, or \`canceled\`.
-8. If \`start_agent_run\` returns a busy error, poll the returned \`runId\` instead of retrying the start.
-9. Use the final answer in your response. If the bridge run fails, say so briefly and continue with the best direct answer you can provide.
+7. Call \`wait_for_agent_run\` with the returned \`runId\` and let Handoff do the short wait internally.
+8. Repeat \`wait_for_agent_run\` until the run reaches \`completed\`, \`failed\`, or \`canceled\`.
+9. If \`start_agent_run\` returns a busy error, call \`wait_for_agent_run\` with the returned \`runId\` instead of retrying the start.
+10. Use the final answer in your response. If the bridge run fails, say so briefly and continue with the best direct answer you can provide.
 
 ## Limits
 
@@ -118,7 +119,7 @@ function buildClaudeSkillMarkdown() {
   return ensureTrailingNewline(`---
 name: ${HANDOFF_SKILL_NAME}
 description: Delegate work to a saved Handoff agent through the local ${AGENT_BRIDGE_SERVER_NAME} MCP bridge. Use when the user asks for specialist input, explicitly names a saved Handoff agent, or when a task should be handed off to a reviewer, planner, or other saved expert. Prefer an exact saved agent name match when one is mentioned; otherwise inspect saved agents and choose the best specialty match, asking the user when the match is unclear.
-allowed-tools: mcp__${AGENT_BRIDGE_SERVER_NAME}__list_agents, mcp__${AGENT_BRIDGE_SERVER_NAME}__get_agent, mcp__${AGENT_BRIDGE_SERVER_NAME}__start_agent_run, mcp__${AGENT_BRIDGE_SERVER_NAME}__get_agent_run
+allowed-tools: mcp__${AGENT_BRIDGE_SERVER_NAME}__list_agents, mcp__${AGENT_BRIDGE_SERVER_NAME}__get_agent, mcp__${AGENT_BRIDGE_SERVER_NAME}__start_agent_run, mcp__${AGENT_BRIDGE_SERVER_NAME}__wait_for_agent_run
 ---
 
 # Handoff Agent Bridge
@@ -133,9 +134,10 @@ Use the local Handoff bridge to consult one saved Handoff agent and then continu
 4. If no confident match exists, ask the user which saved Handoff agent to use instead of guessing.
 5. Use the current working directory or repo root as \`projectPath\`.
 6. Call \`start_agent_run\` with the chosen agent, a concise question, and optional context.
-7. Poll \`get_agent_run\` every 5 seconds until the run reaches \`completed\`, \`failed\`, or \`canceled\`.
-8. If \`start_agent_run\` returns a busy error, poll the returned \`runId\` instead of retrying the start.
-9. Use the final answer in your response. If the bridge run fails, say so briefly and continue with the best direct answer you can provide.
+7. Call \`wait_for_agent_run\` with the returned \`runId\` and let Handoff do the short wait internally.
+8. Repeat \`wait_for_agent_run\` until the run reaches \`completed\`, \`failed\`, or \`canceled\`.
+9. If \`start_agent_run\` returns a busy error, call \`wait_for_agent_run\` with the returned \`runId\` instead of retrying the start.
+10. Use the final answer in your response. If the bridge run fails, say so briefly and continue with the best direct answer you can provide.
 
 ## Limits
 

@@ -119,7 +119,7 @@ export async function runAgentBridgeMcpServer() {
     "ask_agent",
     {
       description:
-        "Deprecated synchronous call. Prefer start_agent_run plus get_agent_run polling for long-running work.",
+        "Deprecated synchronous call. Prefer start_agent_run plus wait_for_agent_run for long-running work.",
       inputSchema: z.object({
         agentId: z.string().optional(),
         agentName: z.string().optional(),
@@ -187,7 +187,7 @@ export async function runAgentBridgeMcpServer() {
         const result = await bridge.startRun(args)
         return successResult(
           result,
-          `Started agent run ${result.runId}. Poll get_agent_run until it completes.`
+          `Started agent run ${result.runId}. Use wait_for_agent_run until it completes.`
         )
       } catch (error) {
         if (error instanceof AgentBridgeBusyError) {
@@ -197,7 +197,7 @@ export async function runAgentBridgeMcpServer() {
               runId: error.info.runId,
               startedAt: error.info.startedAt
             },
-            "Agent is already handling a request. Poll get_agent_run with the returned run id."
+            "Agent is already handling a request. Use wait_for_agent_run with the returned run id."
           )
         }
 
@@ -215,6 +215,55 @@ export async function runAgentBridgeMcpServer() {
             code: "execution_failed"
           },
           error instanceof Error ? error.message : "Agent run failed to start."
+        )
+      }
+    }
+  )
+
+  server.registerTool(
+    "wait_for_agent_run",
+    {
+      description:
+        "Wait briefly inside Handoff for an async agent run to change state, then return the latest run record.",
+      inputSchema: z.object({
+        runId: z.string(),
+        waitUpToSec: z.number().int().positive().max(30).optional()
+      })
+    },
+    async ({ runId, waitUpToSec }) => {
+      try {
+        const run = await bridge.waitForRun(runId, waitUpToSec)
+        if (!run) {
+          return errorResult(
+            {
+              code: "run_not_found",
+              runId
+            },
+            "Run not found."
+          )
+        }
+
+        return successResult(
+          { run },
+          run.status === "running"
+            ? `Run ${runId} is still running.`
+            : `Run ${runId} is ${run.status}.`
+        )
+      } catch (error) {
+        if (error instanceof AgentBridgeInputError) {
+          return errorResult(
+            {
+              code: error.code
+            },
+            error.message
+          )
+        }
+
+        return errorResult(
+          {
+            code: "execution_failed"
+          },
+          error instanceof Error ? error.message : "Unable to wait for run."
         )
       }
     }
