@@ -87,6 +87,7 @@ describe("createAgentBridgeService", () => {
         modelId: "gpt-5.4",
         thinkingLevel: "max",
         fast: true,
+        timeoutSec: null,
         customInstructions: "Review code carefully."
       }
     ])
@@ -134,7 +135,8 @@ describe("createAgentBridgeService", () => {
         env: expect.objectContaining({
           CODEX_HOME: context.codexHome
         }),
-        stdin: expect.stringContaining("How should I refactor this module?")
+        stdin: expect.stringContaining("How should I refactor this module?"),
+        timeoutMs: null
       })
     )
     expect(executeCommand.mock.calls[0]?.[0].args).toEqual(
@@ -183,6 +185,7 @@ describe("createAgentBridgeService", () => {
         modelId: "sonnet",
         thinkingLevel: "max",
         fast: false,
+        timeoutSec: null,
         customInstructions: "Be concise."
       }
     ])
@@ -219,7 +222,8 @@ describe("createAgentBridgeService", () => {
     expect(executeCommand).toHaveBeenCalledWith(
       expect.objectContaining({
         command: "claude",
-        cwd: context.projectPath
+        cwd: context.projectPath,
+        timeoutMs: null
       })
     )
     expect(executeCommand.mock.calls[0]?.[0].args).toEqual(
@@ -240,6 +244,61 @@ describe("createAgentBridgeService", () => {
     )
   })
 
+  it("ignores caller-provided timeoutSec and uses the saved agent timeout", async () => {
+    context = await createBridgeTestContext()
+    await writeSettings(context.dataDir, [
+      {
+        id: "agent-timeout",
+        name: "Timeout agent",
+        provider: "codex",
+        modelId: "gpt-5.4",
+        thinkingLevel: "high",
+        fast: false,
+        timeoutSec: null,
+        customInstructions: ""
+      }
+    ])
+
+    const executeCommand = vi.fn().mockImplementation(async params => {
+      const outputPathIndex = params.args.indexOf("-o")
+      const outputPath = params.args[outputPathIndex + 1]
+      await fs.mkdir(path.dirname(outputPath), { recursive: true })
+      await fs.writeFile(outputPath, "No timeout override", "utf8")
+
+      return {
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+        signal: null,
+        timedOut: false
+      }
+    })
+
+    const bridge = createAgentBridgeService({
+      dataDir: context.dataDir,
+      codexHome: context.codexHome,
+      claudeHome: context.claudeHome,
+      bridgeCommand: {
+        command: "/Applications/Handoff.app/Contents/MacOS/Handoff",
+        args: ["--agent-bridge-mcp"]
+      },
+      executeCommand
+    })
+
+    await bridge.askAgent({
+      agentId: "agent-timeout",
+      message: "Check timeout precedence.",
+      projectPath: context.projectPath,
+      timeoutSec: 120
+    })
+
+    expect(executeCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timeoutMs: null
+      })
+    )
+  })
+
   it("enforces one active run per agent with a cross-process lock", async () => {
     context = await createBridgeTestContext()
     await writeSettings(context.dataDir, [
@@ -250,6 +309,7 @@ describe("createAgentBridgeService", () => {
         modelId: "gpt-5.4",
         thinkingLevel: "high",
         fast: false,
+        timeoutSec: null,
         customInstructions: ""
       }
     ])

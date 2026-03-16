@@ -124,4 +124,56 @@ describe("createHandoffSkillsService", () => {
       "\"handoff-agent-bridge\""
     )
   })
+
+  it("applies configured MCP tool timeout settings during install and export", async () => {
+    context = await createSkillsTestContext()
+    await fs.writeFile(
+      path.join(context.dataDir, "settings.json"),
+      JSON.stringify(
+        {
+          providers: {
+            codex: { binaryPath: "", homePath: "" },
+            claude: { binaryPath: "", homePath: "" }
+          },
+          skills: {
+            codex: { toolTimeoutSec: 900 },
+            claude: { toolTimeoutSec: 300 }
+          },
+          terminals: {
+            enabledTerminalIds: ["terminal"],
+            defaultTerminalId: "terminal"
+          },
+          agents: []
+        },
+        null,
+        2
+      ),
+      "utf8"
+    )
+
+    const skills = createHandoffSkillsService({
+      dataDir: context.dataDir,
+      codexHome: context.codexHome,
+      claudeHome: context.claudeHome,
+      bridgeCommand: {
+        command: "/Applications/Handoff.app/Contents/MacOS/Handoff",
+        args: ["--agent-bridge-mcp"]
+      }
+    })
+
+    await skills.install("both")
+
+    await expect(fs.readFile(path.join(context.codexHome, "config.toml"), "utf8")).resolves
+      .toContain("tool_timeout_sec = 900")
+
+    await expect(
+      fs.readFile(path.join(context.claudeHome, "settings.json"), "utf8")
+    ).resolves.toContain('"MCP_TOOL_TIMEOUT": "300"')
+
+    const exportResult = await skills.exportPackage()
+    await expect(fs.readFile(path.join(exportResult.exportPath, "codex", "config-snippet.toml"), "utf8")).resolves
+      .toContain("tool_timeout_sec = 900")
+    await expect(fs.readFile(path.join(exportResult.exportPath, "claude", "mcp-config.json"), "utf8")).resolves
+      .toContain('"MCP_TOOL_TIMEOUT": "300"')
+  })
 })

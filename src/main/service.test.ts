@@ -811,6 +811,7 @@ describe("handoff service", () => {
       modelId: "gpt-5.4",
       thinkingLevel: "high",
       fast: false,
+      timeoutSec: null,
       customInstructions: ""
     })
 
@@ -829,6 +830,7 @@ describe("handoff service", () => {
       modelId: "opus",
       thinkingLevel: "max",
       fast: false,
+      timeoutSec: null,
       customInstructions: "Review carefully."
     })
 
@@ -836,7 +838,8 @@ describe("handoff service", () => {
     expect(duplicatedAgent).toMatchObject({
       name: "Claude reviewer copy",
       provider: "claude",
-      modelId: "opus"
+      modelId: "opus",
+      timeoutSec: null
     })
 
     await expect(

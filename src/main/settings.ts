@@ -15,6 +15,7 @@ import type {
   ProviderSettingsInfo,
   SessionListItem,
   SessionProvider,
+  SkillProviderSettings,
   TerminalAppId,
   TerminalOption,
   TerminalPreferences
@@ -56,6 +57,7 @@ interface SettingsStoreOptions {
 }
 
 const SUPPORTED_THINKING_LEVELS = new Set(["low", "medium", "high", "max"])
+const MAX_AGENT_TIMEOUT_SEC = 1_800
 
 const SUPPORTED_TERMINAL_IDS = new Set<TerminalAppId>(
   TERMINAL_OPTIONS.map(option => option.id)
@@ -100,6 +102,12 @@ function getDefaultTerminalPreferences(): TerminalPreferences {
   }
 }
 
+function getDefaultSkillProviderSettings(): SkillProviderSettings {
+  return {
+    toolTimeoutSec: null
+  }
+}
+
 function getDefaultSettings(params: SettingsStoreOptions): HandoffSettings {
   void params
   return {
@@ -112,6 +120,10 @@ function getDefaultSettings(params: SettingsStoreOptions): HandoffSettings {
         binaryPath: "",
         homePath: ""
       }
+    },
+    skills: {
+      codex: getDefaultSkillProviderSettings(),
+      claude: getDefaultSkillProviderSettings()
     },
     terminals: getDefaultTerminalPreferences(),
     agents: []
@@ -142,6 +154,18 @@ function normalizeThinkingLevel(value: unknown) {
   }
 
   return "high"
+}
+
+function normalizeAgentTimeoutSec(value: unknown) {
+  if (value === null || value === undefined || value === "") {
+    return null
+  }
+
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return null
+  }
+
+  return Math.min(Math.floor(value), MAX_AGENT_TIMEOUT_SEC)
 }
 
 function normalizeAgentDefinition(
@@ -180,6 +204,7 @@ function normalizeAgentDefinition(
     modelId: normalizedTarget.modelId,
     thinkingLevel: normalizeThinkingLevel(candidate.thinkingLevel),
     fast: normalizedTarget.fast,
+    timeoutSec: normalizeAgentTimeoutSec(candidate.timeoutSec),
     customInstructions:
       typeof candidate.customInstructions === "string" ? candidate.customInstructions : ""
   }
@@ -267,6 +292,22 @@ function normalizeTerminalPreferences(
   }
 }
 
+function normalizeSkillProviderSettings(
+  value: unknown,
+  fallback: SkillProviderSettings
+): SkillProviderSettings {
+  if (!value || typeof value !== "object") {
+    return {
+      toolTimeoutSec: fallback.toolTimeoutSec
+    }
+  }
+
+  const candidate = value as Partial<SkillProviderSettings>
+  return {
+    toolTimeoutSec: normalizeAgentTimeoutSec(candidate.toolTimeoutSec)
+  }
+}
+
 function normalizeSettings(
   value: unknown,
   params: SettingsStoreOptions
@@ -282,6 +323,10 @@ function normalizeSettings(
     providers: {
       codex: normalizeProviderOverrides(candidate.providers?.codex, defaults.providers.codex),
       claude: normalizeProviderOverrides(candidate.providers?.claude, defaults.providers.claude)
+    },
+    skills: {
+      codex: normalizeSkillProviderSettings(candidate.skills?.codex, defaults.skills?.codex ?? getDefaultSkillProviderSettings()),
+      claude: normalizeSkillProviderSettings(candidate.skills?.claude, defaults.skills?.claude ?? getDefaultSkillProviderSettings())
     },
     terminals: normalizeTerminalPreferences(candidate.terminals, defaults.terminals),
     agents: normalizeAgents(candidate.agents)
@@ -303,6 +348,16 @@ function mergeSettingsPatch(
         ...(patch.providers?.claude ?? {})
       }
     },
+    skills: {
+      codex: {
+        ...(current.skills?.codex ?? getDefaultSkillProviderSettings()),
+        ...(patch.skills?.codex ?? {})
+      },
+      claude: {
+        ...(current.skills?.claude ?? getDefaultSkillProviderSettings()),
+        ...(patch.skills?.claude ?? {})
+      }
+    },
     terminals: {
       ...current.terminals,
       ...(patch.terminals ?? {})
@@ -320,6 +375,7 @@ function createDefaultAgentDefinition(existingAgents: AgentDefinition[]): AgentD
     modelId: getDefaultComposerModelId("codex"),
     thinkingLevel: "high",
     fast: false,
+    timeoutSec: null,
     customInstructions: ""
   }
 }
@@ -349,6 +405,9 @@ function buildUpdatedAgentDefinition(
     modelId: normalizedTarget.modelId,
     thinkingLevel: normalizeThinkingLevel(patch.thinkingLevel ?? currentAgent.thinkingLevel),
     fast: normalizedTarget.fast,
+    timeoutSec: normalizeAgentTimeoutSec(
+      patch.timeoutSec === undefined ? currentAgent.timeoutSec : patch.timeoutSec
+    ),
     customInstructions: patch.customInstructions ?? currentAgent.customInstructions
   }
 }
@@ -569,6 +628,10 @@ export function createHandoffSettingsStore(options: SettingsStoreOptions) {
         providers: {
           codex: { ...settings.providers.codex },
           claude: { ...settings.providers.claude }
+        },
+        skills: {
+          codex: { ...(settings.skills?.codex ?? getDefaultSkillProviderSettings()) },
+          claude: { ...(settings.skills?.claude ?? getDefaultSkillProviderSettings()) }
         },
         terminals: {
           enabledTerminalIds: [...settings.terminals.enabledTerminalIds],

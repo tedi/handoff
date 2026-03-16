@@ -306,6 +306,16 @@ function applySettingsPatchToSnapshot(
           ...(patch.providers?.claude ?? {})
         }
       },
+      skills: {
+        codex: {
+          toolTimeoutSec: snapshot.settings.skills?.codex?.toolTimeoutSec ?? null,
+          ...(patch.skills?.codex ?? {})
+        },
+        claude: {
+          toolTimeoutSec: snapshot.settings.skills?.claude?.toolTimeoutSec ?? null,
+          ...(patch.skills?.claude ?? {})
+        }
+      },
       terminals: {
         ...snapshot.settings.terminals,
         ...(patch.terminals ?? {})
@@ -2375,6 +2385,26 @@ function AgentEditorPane({
         </label>
 
         <label className="settings-field">
+          <span className="settings-field-label">Timeout (seconds)</span>
+          <input
+            className="settings-input"
+            inputMode="numeric"
+            min={1}
+            max={1800}
+            onChange={event => {
+              const value = event.target.value.trim()
+              const nextTimeoutSec = value ? Number(value) : null
+              onDraftChange({
+                timeoutSec: Number.isFinite(nextTimeoutSec) ? nextTimeoutSec : null
+              })
+            }}
+            placeholder="None"
+            type="number"
+            value={draft.timeoutSec ?? ""}
+          />
+        </label>
+
+        <label className="settings-field">
           <span className="settings-field-label">Custom instructions</span>
           <textarea
             className="new-thread-prompt-input agent-editor-textarea"
@@ -2547,18 +2577,22 @@ function AgentAutomationPane({
   agent,
   skillsStatus,
   skillsError,
+  skillTimeouts,
   isBusy,
   onInstall,
   onExportPackage,
-  onCopySetupInstructions
+  onCopySetupInstructions,
+  onToolTimeoutChange
 }: {
   agent: AgentDefinition | null
   skillsStatus: HandoffSkillsStatus | null
   skillsError: string | null
+  skillTimeouts: Record<SessionProvider, number | null>
   isBusy: boolean
   onInstall(target: SkillInstallTarget): void
   onExportPackage(): void
   onCopySetupInstructions(target: SkillInstallTarget): void
+  onToolTimeoutChange(provider: SessionProvider, timeoutSec: number | null): void
 }) {
   if (!agent) {
     return null
@@ -2585,6 +2619,60 @@ function AgentAutomationPane({
             value={agent.specialty?.trim() ? agent.specialty : "Not set"}
           />
         </div>
+      </div>
+
+      <div className="settings-field-list">
+        <label className="settings-field">
+          <span className="settings-field-label">Codex MCP timeout (seconds)</span>
+          <input
+            className="settings-input"
+            inputMode="numeric"
+            min={1}
+            onChange={event => {
+              const value = event.target.value.trim()
+              const nextTimeoutSec = value ? Number(value) : null
+              onToolTimeoutChange(
+                "codex",
+                Number.isFinite(nextTimeoutSec) && nextTimeoutSec !== null && nextTimeoutSec > 0
+                  ? nextTimeoutSec
+                  : null
+              )
+            }}
+            placeholder="Provider default"
+            type="number"
+            value={skillTimeouts.codex ?? ""}
+          />
+          <span className="settings-field-help">
+            Blank uses Codex&apos;s default MCP tool timeout. Changes apply on the next install
+            or reinstall.
+          </span>
+        </label>
+
+        <label className="settings-field">
+          <span className="settings-field-label">Claude MCP timeout (seconds)</span>
+          <input
+            className="settings-input"
+            inputMode="numeric"
+            min={1}
+            onChange={event => {
+              const value = event.target.value.trim()
+              const nextTimeoutSec = value ? Number(value) : null
+              onToolTimeoutChange(
+                "claude",
+                Number.isFinite(nextTimeoutSec) && nextTimeoutSec !== null && nextTimeoutSec > 0
+                  ? nextTimeoutSec
+                  : null
+              )
+            }}
+            placeholder="Provider default"
+            type="number"
+            value={skillTimeouts.claude ?? ""}
+          />
+          <span className="settings-field-help">
+            Blank uses Claude Code&apos;s default MCP tool timeout. Changes apply on the next
+            install or reinstall.
+          </span>
+        </label>
       </div>
 
       {skillsError ? <div className="new-thread-inline-error">{skillsError}</div> : null}
@@ -4371,6 +4459,19 @@ export default function App() {
     [handleSettingsPatch]
   )
 
+  const handleSkillToolTimeoutChange = useCallback(
+    (provider: SessionProvider, timeoutSec: number | null) => {
+      handleSettingsPatch({
+        skills: {
+          [provider]: {
+            toolTimeoutSec: timeoutSec
+          }
+        }
+      })
+    },
+    [handleSettingsPatch]
+  )
+
   const toggleThoughtChainEntry = useCallback((entryId: string) => {
     setExpandedThoughtChainIds(current => {
       const next = new Set(current)
@@ -5166,6 +5267,7 @@ export default function App() {
         modelId: agentDraft.modelId,
         thinkingLevel: agentDraft.thinkingLevel,
         fast: agentDraft.fast,
+        timeoutSec: agentDraft.timeoutSec,
         customInstructions: agentDraft.customInstructions
       })
       setAgents(currentAgents =>
@@ -5728,6 +5830,11 @@ export default function App() {
                       }}
                       onInstall={target => {
                         void handleInstallSkills(target)
+                      }}
+                      onToolTimeoutChange={handleSkillToolTimeoutChange}
+                      skillTimeouts={{
+                        codex: settingsSnapshot?.settings.skills?.codex?.toolTimeoutSec ?? null,
+                        claude: settingsSnapshot?.settings.skills?.claude?.toolTimeoutSec ?? null
                       }}
                       skillsError={skillsError}
                       skillsStatus={skillsStatus}

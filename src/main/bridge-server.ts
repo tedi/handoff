@@ -126,7 +126,7 @@ export async function runAgentBridgeMcpServer() {
         message: z.string(),
         projectPath: z.string(),
         context: z.string().optional(),
-        timeoutSec: z.number().int().positive().max(1800).optional(),
+        timeoutSec: z.number().int().positive().max(1800).nullable().optional(),
         caller: z.union([z.string(), z.record(z.unknown())]).optional()
       })
     },

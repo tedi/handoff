@@ -22,7 +22,6 @@ import { createHandoffSettingsStore } from "./settings"
 export const AGENT_BRIDGE_MODE_ARG = "--agent-bridge-mcp"
 export const AGENT_BRIDGE_SERVER_NAME = "handoff-agent-bridge"
 
-const DEFAULT_TIMEOUT_SEC = 300
 const MAX_TIMEOUT_SEC = 1_800
 
 type AgentBridgeEventType = "started" | "completed" | "failed"
@@ -39,7 +38,7 @@ interface CommandExecutionParams {
   cwd: string
   env?: NodeJS.ProcessEnv
   stdin?: string
-  timeoutMs: number
+  timeoutMs: number | null
 }
 
 interface CommandExecutionResult {
@@ -137,9 +136,9 @@ function normalizeCallerMetadata(value: AgentCallerMetadata | undefined): AgentC
   return null
 }
 
-function normalizeTimeoutSec(value: number | undefined) {
-  if (value === undefined) {
-    return DEFAULT_TIMEOUT_SEC
+function normalizeTimeoutSec(value: number | null | undefined) {
+  if (value === undefined || value === null) {
+    return null
   }
 
   if (!Number.isFinite(value) || value <= 0) {
@@ -388,15 +387,18 @@ async function defaultExecuteCommand(
       stdio: "pipe"
     })
 
-    const timer = setTimeout(() => {
-      timedOut = true
-      child.kill("SIGTERM")
-      setTimeout(() => {
-        if (!didFinish) {
-          child.kill("SIGKILL")
-        }
-      }, 4_000).unref()
-    }, params.timeoutMs)
+    const timer =
+      params.timeoutMs === null
+        ? null
+        : setTimeout(() => {
+            timedOut = true
+            child.kill("SIGTERM")
+            setTimeout(() => {
+              if (!didFinish) {
+                child.kill("SIGKILL")
+              }
+            }, 4_000).unref()
+          }, params.timeoutMs)
 
     child.stdout.on("data", chunk => {
       stdout += chunk.toString()
@@ -407,13 +409,17 @@ async function defaultExecuteCommand(
     })
 
     child.on("error", error => {
-      clearTimeout(timer)
+      if (timer) {
+        clearTimeout(timer)
+      }
       reject(error)
     })
 
     child.on("close", (exitCode, signal) => {
       didFinish = true
-      clearTimeout(timer)
+      if (timer) {
+        clearTimeout(timer)
+      }
       resolve({
         stdout,
         stderr,
@@ -679,7 +685,7 @@ export function createAgentBridgeService(
     settings: HandoffSettings
     projectPath: string
     prompt: string
-    timeoutSec: number
+    timeoutSec: number | null
   }) {
     const launchInfo = buildCodexLaunchInfo(params.settings, options.codexHome)
     const lastMessagePath = path.join(
@@ -703,7 +709,7 @@ export function createAgentBridgeService(
         CODEX_HOME: launchInfo.homePath
       },
       stdin: params.prompt,
-      timeoutMs: params.timeoutSec * 1_000
+      timeoutMs: params.timeoutSec === null ? null : params.timeoutSec * 1_000
     })
 
     let answer: string | null = null
@@ -726,7 +732,7 @@ export function createAgentBridgeService(
     settings: HandoffSettings
     projectPath: string
     prompt: string
-    timeoutSec: number
+    timeoutSec: number | null
   }) {
     const launchInfo = buildClaudeLaunchInfo(params.settings, options.claudeHome)
     const result = await executeCommand({
@@ -738,7 +744,7 @@ export function createAgentBridgeService(
       }),
       cwd: params.projectPath,
       env: process.env,
-      timeoutMs: params.timeoutSec * 1_000
+      timeoutMs: params.timeoutSec === null ? null : params.timeoutSec * 1_000
     })
 
     return {
@@ -785,7 +791,6 @@ export function createAgentBridgeService(
       }
 
       await ensureProjectPath(params.projectPath)
-      const timeoutSec = normalizeTimeoutSec(params.timeoutSec)
       const settings = await getSettings()
       const agent = resolveAgentByIdentity(settings.agents, params)
 
@@ -795,6 +800,8 @@ export function createAgentBridgeService(
           "Agent not found. Provide a valid agentId or exact agent name."
         )
       }
+
+      const timeoutSec = normalizeTimeoutSec(agent.timeoutSec)
 
       const prompt = buildAgentPrompt({
         agent,
@@ -869,7 +876,10 @@ export function createAgentBridgeService(
             status: "failed",
             finishedAt,
             answer: result.answer,
-            error: `Timed out after ${timeoutSec} seconds.`,
+            error:
+              timeoutSec === null
+                ? "Timed out."
+                : `Timed out after ${timeoutSec} seconds.`,
             stdout: result.stdout || null,
             stderr: result.stderr || null,
             exitCode: result.exitCode

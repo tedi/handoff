@@ -57,6 +57,14 @@ function createMockApi({
           homePath: ""
         }
       },
+      skills: {
+        codex: {
+          toolTimeoutSec: null
+        },
+        claude: {
+          toolTimeoutSec: null
+        }
+      },
       terminals: {
         enabledTerminalIds: ["terminal", "ghostty", "warp"],
         defaultTerminalId: "terminal"
@@ -176,6 +184,16 @@ function createMockApi({
               ...(patch.providers?.claude ?? {})
             }
           },
+          skills: {
+            codex: {
+              toolTimeoutSec: settingsSnapshot.settings.skills?.codex?.toolTimeoutSec ?? null,
+              ...(patch.skills?.codex ?? {})
+            },
+            claude: {
+              toolTimeoutSec: settingsSnapshot.settings.skills?.claude?.toolTimeoutSec ?? null,
+              ...(patch.skills?.claude ?? {})
+            }
+          },
           terminals: {
             ...settingsSnapshot.settings.terminals,
             ...(patch.terminals ?? {})
@@ -196,6 +214,7 @@ function createMockApi({
           modelId: "gpt-5.4",
           thinkingLevel: "high",
           fast: false,
+          timeoutSec: null,
           customInstructions: ""
         }
         agentState = [...agentState, nextAgent]
@@ -1461,6 +1480,7 @@ describe("Handoff App", () => {
       modelId: "gpt-5.4",
       thinkingLevel: "high",
       fast: false,
+      timeoutSec: null,
       customInstructions: ""
     })
     expect(await screen.findByText("Saved agent")).toBeInTheDocument()
@@ -1475,6 +1495,7 @@ describe("Handoff App", () => {
       modelId: "gpt-5.4",
       thinkingLevel: "high",
       fast: false,
+      timeoutSec: null,
       customInstructions: ""
     }
     const { api } = createMockApi({
@@ -1490,6 +1511,21 @@ describe("Handoff App", () => {
 
     expect(await screen.findByText("Automation / Skills")).toBeInTheDocument()
     expect(screen.getByDisplayValue("Use for release planning and ship reviews.")).toBeInTheDocument()
+    const codexTimeoutInput = await screen.findByLabelText(/Codex MCP timeout \(seconds\)/i)
+    const claudeTimeoutInput = await screen.findByLabelText(/Claude MCP timeout \(seconds\)/i)
+    expect(codexTimeoutInput).toHaveValue(null)
+    expect(claudeTimeoutInput).toHaveValue(null)
+
+    await userEvent.type(codexTimeoutInput, "600")
+    await waitFor(() =>
+      expect(api.settings.update).toHaveBeenCalledWith({
+        skills: {
+          codex: {
+            toolTimeoutSec: 600
+          }
+        }
+      })
+    )
 
     await userEvent.click(screen.getByRole("button", { name: "Install both" }))
     expect(api.skills.install).toHaveBeenCalledWith("both")
@@ -1526,6 +1562,7 @@ describe("Handoff App", () => {
       modelId: "gpt-5.4",
       thinkingLevel: "high",
       fast: false,
+      timeoutSec: null,
       customInstructions: ""
     }
     const { api } = createMockApi({

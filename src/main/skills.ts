@@ -8,6 +8,7 @@ import type {
   HandoffSkillsExportResult,
   HandoffSkillsStatus,
   SessionProvider,
+  SkillProviderSettings,
   SkillInstallTarget
 } from "../shared/contracts"
 import { AGENT_BRIDGE_SERVER_NAME } from "./bridge"
@@ -168,24 +169,49 @@ function buildClaudeMarketplaceJson() {
   )
 }
 
-function buildClaudeMcpConfig(command: string, args: string[]) {
+function getProviderSkillSettings(
+  settings: HandoffSettings,
+  provider: SessionProvider
+): SkillProviderSettings {
+  return settings.skills?.[provider] ?? { toolTimeoutSec: null }
+}
+
+function buildClaudeMcpConfig(
+  command: string,
+  args: string[],
+  toolTimeoutSec: number | null
+) {
+  const serverConfig: Record<string, unknown> = {
+    command,
+    args
+  }
+
+  if (toolTimeoutSec !== null) {
+    serverConfig.env = {
+      MCP_TOOL_TIMEOUT: String(toolTimeoutSec)
+    }
+  }
+
   return {
     mcpServers: {
-      [AGENT_BRIDGE_SERVER_NAME]: {
-        command,
-        args
-      }
+      [AGENT_BRIDGE_SERVER_NAME]: serverConfig
     }
   }
 }
 
-function buildCodexManagedBlock(command: string, args: string[], skillPath: string) {
+function buildCodexManagedBlock(
+  command: string,
+  args: string[],
+  skillPath: string,
+  toolTimeoutSec: number | null
+) {
   return ensureTrailingNewline(
     [
       CODEX_MANAGED_BLOCK_START,
       `[mcp_servers.${escapeTomlString(AGENT_BRIDGE_SERVER_NAME)}]`,
       `command = ${escapeTomlString(command)}`,
       `args = [${args.map(escapeTomlString).join(", ")}]`,
+      ...(toolTimeoutSec !== null ? [`tool_timeout_sec = ${toolTimeoutSec}`] : []),
       "enabled = true",
       "",
       "[[skills.config]]",
@@ -244,12 +270,28 @@ async function readJsonObject(filePath: string) {
 function mergeClaudeMcpConfig(
   currentConfig: Record<string, unknown>,
   command: string,
-  args: string[]
+  args: string[],
+  toolTimeoutSec: number | null
 ) {
   const currentMcpServers =
     currentConfig.mcpServers && typeof currentConfig.mcpServers === "object"
       ? (currentConfig.mcpServers as Record<string, unknown>)
       : {}
+  const currentServer =
+    currentMcpServers[AGENT_BRIDGE_SERVER_NAME] &&
+    typeof currentMcpServers[AGENT_BRIDGE_SERVER_NAME] === "object"
+      ? (currentMcpServers[AGENT_BRIDGE_SERVER_NAME] as Record<string, unknown>)
+      : {}
+  const currentEnv =
+    currentServer.env && typeof currentServer.env === "object"
+      ? { ...(currentServer.env as Record<string, unknown>) }
+      : {}
+
+  if (toolTimeoutSec === null) {
+    delete currentEnv.MCP_TOOL_TIMEOUT
+  } else {
+    currentEnv.MCP_TOOL_TIMEOUT = String(toolTimeoutSec)
+  }
 
   return {
     ...currentConfig,
@@ -257,7 +299,8 @@ function mergeClaudeMcpConfig(
       ...currentMcpServers,
       [AGENT_BRIDGE_SERVER_NAME]: {
         command,
-        args
+        args,
+        ...(Object.keys(currentEnv).length > 0 ? { env: currentEnv } : {})
       }
     }
   }
@@ -450,6 +493,7 @@ export function createHandoffSkillsService(
     const paths = normalizeSettingsPaths(settings, options)
     const skillDir = path.dirname(paths.codexSkillPath)
     const artifacts = buildArtifacts()
+    const skillSettings = getProviderSkillSettings(settings, "codex")
 
     await writeSkillDirectory(skillDir, artifacts.codex)
     await fsPromises.mkdir(path.dirname(paths.codexConfigPath), { recursive: true })
@@ -462,7 +506,8 @@ export function createHandoffSkillsService(
       buildCodexManagedBlock(
         options.bridgeCommand.command,
         options.bridgeCommand.args,
-        paths.codexSkillPath
+        paths.codexSkillPath,
+        skillSettings.toolTimeoutSec
       )
     )
 
@@ -473,6 +518,7 @@ export function createHandoffSkillsService(
     const paths = normalizeSettingsPaths(settings, options)
     const skillDir = path.dirname(paths.claudeSkillPath)
     const artifacts = buildArtifacts()
+    const skillSettings = getProviderSkillSettings(settings, "claude")
 
     await writeSkillDirectory(skillDir, artifacts.claude)
     await fsPromises.mkdir(path.dirname(paths.claudeConfigPath), { recursive: true })
@@ -481,12 +527,14 @@ export function createHandoffSkillsService(
     const nextConfig = mergeClaudeMcpConfig(
       currentConfig,
       options.bridgeCommand.command,
-      options.bridgeCommand.args
+      options.bridgeCommand.args,
+      skillSettings.toolTimeoutSec
     )
     await fsPromises.writeFile(paths.claudeConfigPath, `${JSON.stringify(nextConfig, null, 2)}\n`, "utf8")
   }
 
   async function exportPackage(): Promise<HandoffSkillsExportResult> {
+    const settings = await getSettings()
     const exportPath = path.join(
       options.dataDir,
       "skill-exports",
@@ -507,7 +555,8 @@ export function createHandoffSkillsService(
       buildCodexManagedBlock(
         options.bridgeCommand.command,
         options.bridgeCommand.args,
-        path.join(codexPath, "SKILL.md")
+        path.join(codexPath, "SKILL.md"),
+        getProviderSkillSettings(settings, "codex").toolTimeoutSec
       ),
       "utf8"
     )
@@ -515,7 +564,11 @@ export function createHandoffSkillsService(
       path.join(exportPath, "claude", "mcp-config.json"),
       ensureTrailingNewline(
         JSON.stringify(
-          buildClaudeMcpConfig(options.bridgeCommand.command, options.bridgeCommand.args),
+          buildClaudeMcpConfig(
+            options.bridgeCommand.command,
+            options.bridgeCommand.args,
+            getProviderSkillSettings(settings, "claude").toolTimeoutSec
+          ),
           null,
           2
         )
@@ -539,22 +592,30 @@ export function createHandoffSkillsService(
     ]
 
     if (target === "codex" || target === "both") {
+      const codexTimeoutSec = getProviderSkillSettings(await getSettings(), "codex").toolTimeoutSec
       sections.push(
         [
           "Codex manual setup:",
           `- Config path: ${status.providers.codex.configPath}`,
           `- Skill path: ${status.providers.codex.skillPath}`,
+          `- MCP timeout: ${
+            codexTimeoutSec === null ? "provider default" : `${codexTimeoutSec} seconds`
+          }`,
           "- Add or update the Handoff managed block in config.toml so it declares the handoff-agent-bridge MCP server and the skills.config path."
         ].join("\n")
       )
     }
 
     if (target === "claude" || target === "both") {
+      const claudeTimeoutSec = getProviderSkillSettings(await getSettings(), "claude").toolTimeoutSec
       sections.push(
         [
           "Claude Code manual setup:",
           `- Settings path: ${status.providers.claude.configPath}`,
           `- Skill path: ${status.providers.claude.skillPath}`,
+          `- MCP timeout: ${
+            claudeTimeoutSec === null ? "provider default" : `${claudeTimeoutSec} seconds`
+          }`,
           `- Copy the skill folder into ~/.claude/skills/${HANDOFF_SKILL_NAME}`,
           "- Merge the handoff-agent-bridge mcpServers entry into settings.json."
         ].join("\n")

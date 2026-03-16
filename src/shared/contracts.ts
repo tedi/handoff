@@ -30,6 +30,7 @@ export interface AgentDefinition {
   modelId: string
   thinkingLevel: ThinkingLevel
   fast: boolean
+  timeoutSec: number | null
   customInstructions: string
 }
 
@@ -40,6 +41,7 @@ export interface AgentUpdatePatch {
   modelId?: string
   thinkingLevel?: ThinkingLevel
   fast?: boolean
+  timeoutSec?: number | null
   customInstructions?: string
 }
 
@@ -80,7 +82,7 @@ export interface AskAgentParams {
   message: string
   projectPath: string
   context?: string
-  timeoutSec?: number
+  timeoutSec?: number | null
   caller?: AgentCallerMetadata
 }
 
@@ -332,6 +334,10 @@ export interface ProviderLaunchOverrides {
   homePath: string
 }
 
+export interface SkillProviderSettings {
+  toolTimeoutSec: number | null
+}
+
 export interface TerminalPreferences {
   enabledTerminalIds: TerminalAppId[]
   defaultTerminalId: TerminalAppId
@@ -339,12 +345,14 @@ export interface TerminalPreferences {
 
 export interface HandoffSettings {
   providers: Record<SessionProvider, ProviderLaunchOverrides>
+  skills?: Record<SessionProvider, SkillProviderSettings>
   terminals: TerminalPreferences
   agents: AgentDefinition[]
 }
 
 export interface HandoffSettingsPatch {
   providers?: Partial<Record<SessionProvider, Partial<ProviderLaunchOverrides>>>
+  skills?: Partial<Record<SessionProvider, Partial<SkillProviderSettings>>>
   terminals?: Partial<TerminalPreferences>
 }
 
