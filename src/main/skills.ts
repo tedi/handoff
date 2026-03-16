@@ -85,7 +85,7 @@ Use the local Handoff bridge to consult one saved Handoff agent and then continu
 3. If \`specialty\` is missing or ambiguous, use agent name and custom instructions as weaker hints.
 4. If no confident match exists, ask the user which saved Handoff agent to use instead of guessing.
 5. Use the current working directory or repo root as \`projectPath\`.
-6. Call \`start_agent_run\` with the chosen agent, a concise question, and optional context.
+6. Call \`start_agent_run\` with the chosen agent, a concise question, optional context, and a \`caller\` object that includes \`client\` plus \`threadName\` and \`threadId\` whenever the current client exposes them or you can infer a concise thread label from the current conversation.
 7. Call \`wait_for_agent_run\` with the returned \`runId\` and let Handoff do the short wait internally.
 8. Repeat \`wait_for_agent_run\` until the run reaches \`completed\`, \`failed\`, or \`canceled\`.
 9. If \`start_agent_run\` returns a busy error, call \`wait_for_agent_run\` with the returned \`runId\` instead of retrying the start.
@@ -133,7 +133,7 @@ Use the local Handoff bridge to consult one saved Handoff agent and then continu
 3. If \`specialty\` is missing or ambiguous, use agent name and custom instructions as weaker hints.
 4. If no confident match exists, ask the user which saved Handoff agent to use instead of guessing.
 5. Use the current working directory or repo root as \`projectPath\`.
-6. Call \`start_agent_run\` with the chosen agent, a concise question, and optional context.
+6. Call \`start_agent_run\` with the chosen agent, a concise question, optional context, and a \`caller\` object that includes \`client\` plus \`threadName\` and \`threadId\` whenever the current client exposes them or you can infer a concise thread label from the current conversation.
 7. Call \`wait_for_agent_run\` with the returned \`runId\` and let Handoff do the short wait internally.
 8. Repeat \`wait_for_agent_run\` until the run reaches \`completed\`, \`failed\`, or \`canceled\`.
 9. If \`start_agent_run\` returns a busy error, call \`wait_for_agent_run\` with the returned \`runId\` instead of retrying the start.

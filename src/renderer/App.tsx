@@ -586,6 +586,105 @@ function formatSkillInstallState(params: {
   return "Not installed"
 }
 
+type AgentsPaneView = "dashboard" | "agent" | "automation"
+
+function getAgentRunProjectLabel(projectPath: string) {
+  return formatProjectFilterLabel(projectPath)
+}
+
+function getAgentRunThreadLabel(run: AgentRunRecord) {
+  if (run.caller && typeof run.caller === "object") {
+    const sessionName =
+      typeof run.caller.sessionName === "string" ? run.caller.sessionName.trim() : ""
+    const threadName =
+      typeof run.caller.threadName === "string" ? run.caller.threadName.trim() : ""
+    const threadId =
+      typeof run.caller.threadId === "string" ? run.caller.threadId.trim() : ""
+
+    const primaryName = sessionName || threadName
+
+    if (primaryName && threadId) {
+      return `${primaryName} · ${threadId}`
+    }
+
+    if (primaryName || threadId) {
+      return primaryName || threadId
+    }
+  }
+
+  return run.runId
+}
+
+function getAgentRunHistoryLabel(run: AgentRunRecord) {
+  const threadLabel = getAgentRunThreadLabel(run)
+  return threadLabel === run.runId
+    ? getComposerModelLabel(run.provider, run.modelId)
+    : threadLabel
+}
+
+function formatAgentRunAge(startedAt: string, now: number) {
+  const startedAtMs = Date.parse(startedAt)
+  if (Number.isNaN(startedAtMs)) {
+    return null
+  }
+
+  const diffMs = Math.max(0, now - startedAtMs)
+  const minuteMs = 60 * 1000
+  const hourMs = 60 * minuteMs
+  const dayMs = 24 * hourMs
+  const weekMs = 7 * dayMs
+  const monthMs = 30 * dayMs
+
+  if (diffMs < hourMs) {
+    return `${Math.max(1, Math.floor(diffMs / minuteMs))}m`
+  }
+
+  if (diffMs < dayMs) {
+    return `${Math.max(1, Math.floor(diffMs / hourMs))}h`
+  }
+
+  if (diffMs < weekMs) {
+    return `${Math.max(1, Math.floor(diffMs / dayMs))}d`
+  }
+
+  if (diffMs < monthMs) {
+    return `${Math.max(1, Math.floor(diffMs / weekMs))}w`
+  }
+
+  return `${Math.max(1, Math.floor(diffMs / monthMs))}m`
+}
+
+function getAgentRunResultLabel(run: AgentRunRecord) {
+  if (run.status === "completed") {
+    return "Final response"
+  }
+
+  return "Error"
+}
+
+function getAutomationStatusTone(params: {
+  bridgeStatus?: AgentBridgeHealth | null
+  providerStatus?: HandoffSkillsStatus["providers"][SessionProvider]
+}) {
+  if (params.bridgeStatus) {
+    return params.bridgeStatus.status === "ready" ? "ready" : "error"
+  }
+
+  if (!params.providerStatus) {
+    return "partial"
+  }
+
+  if (params.providerStatus.skillInstalled && params.providerStatus.mcpInstalled) {
+    return "ready"
+  }
+
+  if (params.providerStatus.skillInstalled || params.providerStatus.mcpInstalled) {
+    return "partial"
+  }
+
+  return "error"
+}
+
 function buildMarkdownExport(
   transcript: ConversationTranscript,
   includeDiffs: boolean
@@ -982,6 +1081,36 @@ function AgentsIcon() {
         strokeWidth="1.15"
       />
     </svg>
+  )
+}
+
+function DashboardIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="sidebar-filter-icon"
+      fill="none"
+      viewBox="0 0 16 16"
+    >
+      <path
+        d="M2.75 2.75h4.5v4.5h-4.5ZM8.75 2.75h4.5v2.5h-4.5ZM8.75 6.75h4.5v6.5h-4.5ZM2.75 8.75h4.5v4.5h-4.5Z"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.1"
+      />
+    </svg>
+  )
+}
+
+function StatusMarkerIcon({
+  state
+}: {
+  state: "ready" | "partial" | "error"
+}) {
+  return (
+    <span className={`automation-status-icon is-${state}`} aria-hidden="true">
+      {state === "ready" ? "✓" : state === "partial" ? "–" : "✕"}
+    </span>
   )
 }
 
@@ -2174,16 +2303,20 @@ function SettingsPane({
 function AgentsListPane({
   agents,
   agentsError,
+  isDashboardSelected,
   isLoading,
   onCreate,
+  onSelectDashboard,
   onSelect,
   selectedAgentId,
   stateInfo
 }: {
   agents: AgentDefinition[]
   agentsError: string | null
+  isDashboardSelected: boolean
   isLoading: boolean
   onCreate(): void
+  onSelectDashboard(): void
   onSelect(agentId: string): void
   selectedAgentId: string | null
   stateInfo: AppStateInfo | null
@@ -2211,6 +2344,19 @@ function AgentsListPane({
           <span className="sidebar-filter-button-label">New agent</span>
         </button>
       </div>
+
+      <button
+        className={`session-row ${isDashboardSelected ? "is-active" : ""}`}
+        onClick={onSelectDashboard}
+        type="button"
+      >
+        <div className="session-row-main">
+          <div className="session-title-group agent-list-dashboard-title">
+            <DashboardIcon />
+            <span className="session-title">Dashboard</span>
+          </div>
+        </div>
+      </button>
 
       {isLoading ? (
         <EmptyState
@@ -2248,22 +2394,81 @@ function AgentsListPane({
   )
 }
 
+function AgentSummaryPane({
+  agent,
+  onDelete,
+  onDuplicate,
+  onEdit
+}: {
+  agent: AgentDefinition | null
+  onDelete(): void
+  onDuplicate(): void
+  onEdit(): void
+}) {
+  if (!agent) {
+    return (
+      <EmptyState
+        title="No agent selected"
+        detail="Pick an agent from the left list."
+      />
+    )
+  }
+
+  const thinkingLabel =
+    THINKING_LEVEL_OPTIONS.find(option => option.value === agent.thinkingLevel)?.label ??
+    agent.thinkingLevel
+
+  return (
+    <section className="settings-card">
+      <div className="settings-card-header">
+        <div className="settings-card-copy">
+          <h2>{agent.name}</h2>
+        </div>
+        <div className="agent-editor-header-actions">
+          <button className="ghost-button" onClick={onEdit} type="button">
+            Edit
+          </button>
+          <button className="ghost-button" onClick={onDuplicate} type="button">
+            Duplicate
+          </button>
+          <button className="ghost-button" onClick={onDelete} type="button">
+            Delete
+          </button>
+        </div>
+      </div>
+
+      <div className="agent-summary-row">
+        <span className="agent-summary-pill">{formatProviderLabel(agent.provider)}</span>
+        <span className="agent-summary-pill">
+          {getComposerModelLabel(agent.provider, agent.modelId)}
+        </span>
+        <span className="agent-summary-pill">{thinkingLabel}</span>
+        <span className="agent-summary-pill">{agent.fast ? "Fast" : "Standard"}</span>
+        <span className="agent-summary-pill">
+          {agent.timeoutSec === null ? "No timeout" : `${agent.timeoutSec}s timeout`}
+        </span>
+        {agent.specialty?.trim() ? (
+          <span className="agent-summary-pill">{agent.specialty.trim()}</span>
+        ) : null}
+      </div>
+    </section>
+  )
+}
+
 function AgentEditorPane({
   agent,
   draft,
   editorError,
+  onCancel,
   onDraftChange,
-  onDuplicate,
-  onDelete,
   onReset,
   onSave
 }: {
   agent: AgentDefinition | null
   draft: AgentDefinition | null
   editorError: string | null
+  onCancel(): void
   onDraftChange(patch: AgentUpdatePatch): void
-  onDuplicate(): void
-  onDelete(): void
   onReset(): void
   onSave(): void
 }) {
@@ -2293,16 +2498,7 @@ function AgentEditorPane({
     <section className="settings-card">
       <div className="settings-card-header">
         <div className="settings-card-copy">
-          <h2>{draft.name}</h2>
-          <p>Save reusable provider, model, and instruction defaults for later use.</p>
-        </div>
-        <div className="agent-editor-header-actions">
-          <button className="ghost-button" onClick={onDuplicate} type="button">
-            Duplicate
-          </button>
-          <button className="ghost-button" onClick={onDelete} type="button">
-            Delete
-          </button>
+          <h2>Edit agent</h2>
         </div>
       </div>
 
@@ -2426,6 +2622,9 @@ function AgentEditorPane({
       {editorError ? <div className="new-thread-inline-error">{editorError}</div> : null}
 
       <div className="new-thread-actions">
+        <button className="ghost-button" onClick={onCancel} type="button">
+          Cancel
+        </button>
         <button className="ghost-button" disabled={!isDirty} onClick={onReset} type="button">
           Reset
         </button>
@@ -2438,34 +2637,72 @@ function AgentEditorPane({
 }
 
 function AgentRunsPane({
-  agent,
-  runs,
-  selectedRunId,
+  emptyText,
   isLoading,
+  onCancelRun,
+  onToggleRun,
+  runs,
   runsError,
-  onSelectRun,
-  onCancelRun
+  showAgentName,
+  title
 }: {
-  agent: AgentDefinition | null
-  runs: AgentRunRecord[]
-  selectedRunId: string | null
+  emptyText: string
   isLoading: boolean
-  runsError: string | null
-  onSelectRun(runId: string): void
   onCancelRun(runId: string): void
+  onToggleRun(runId: string): void
+  runs: AgentRunRecord[]
+  runsError: string | null
+  showAgentName: boolean
+  title: string
 }) {
-  if (!agent) {
-    return null
-  }
+  const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set())
+  const [relativeNow, setRelativeNow] = useState(() => Date.now())
 
-  const selectedRun =
-    runs.find(run => run.runId === selectedRunId) ?? runs[0] ?? null
+  useEffect(() => {
+    setExpandedRunIds(current => {
+      const next = new Set<string>()
+
+      for (const run of runs) {
+        if (current.has(run.runId)) {
+          next.add(run.runId)
+        }
+      }
+
+      return next
+    })
+  }, [runs])
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setRelativeNow(Date.now())
+    }, 60_000)
+
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [])
+
+  const toggleRun = useCallback(
+    (runId: string) => {
+      setExpandedRunIds(current => {
+        const next = new Set(current)
+        if (next.has(runId)) {
+          next.delete(runId)
+        } else {
+          next.add(runId)
+        }
+
+        return next
+      })
+      onToggleRun(runId)
+    },
+    [onToggleRun]
+  )
 
   return (
     <section className="settings-card">
       <div className="settings-card-copy">
-        <h2>Agent runs</h2>
-        <p>Persisted MCP bridge requests and responses for this agent.</p>
+        <h2>{title}</h2>
       </div>
 
       {runsError ? <div className="new-thread-inline-error">{runsError}</div> : null}
@@ -2473,127 +2710,98 @@ function AgentRunsPane({
       {isLoading && runs.length === 0 ? (
         <p className="agent-run-empty">Loading run history.</p>
       ) : runs.length === 0 ? (
-        <p className="agent-run-empty">No bridge runs recorded for this agent yet.</p>
+        <p className="agent-run-empty">{emptyText}</p>
       ) : (
-        <div className="agent-run-layout">
-          <div className="agent-run-list" role="list">
-            {runs.map(run => (
-              <button
-                className={`agent-run-row ${run.runId === selectedRun?.runId ? "is-active" : ""}`}
-                key={run.runId}
-                onClick={() => onSelectRun(run.runId)}
-                type="button"
-              >
-                <div className="agent-run-row-header">
-                  <span className={`agent-run-status is-${run.status}`}>
-                    {formatAgentRunStatus(run.status)}
-                  </span>
-                  <span className="agent-run-time">{formatTimestamp(run.startedAt)}</span>
-                </div>
-                <div className="agent-run-row-meta">
-                  <span>{getComposerModelLabel(run.provider, run.modelId)}</span>
-                  <span>{run.projectPath}</span>
-                </div>
-              </button>
-            ))}
-          </div>
+        <div className="agent-run-stack" role="list">
+          {runs.map(run => {
+            const isExpanded = expandedRunIds.has(run.runId)
+            const hasResult =
+              run.status === "completed" ? Boolean(run.answer) : Boolean(run.error)
+            const relativeAge = formatAgentRunAge(run.startedAt, relativeNow)
 
-          {selectedRun ? (
-            <div className="agent-run-detail">
-              <div className="settings-card-inline-actions">
-                {selectedRun.status === "running" ? (
-                  <button
-                    className="ghost-button"
-                    onClick={() => onCancelRun(selectedRun.runId)}
-                    type="button"
-                  >
-                    Cancel run
-                  </button>
-                ) : null}
-              </div>
+            return (
+              <article className="agent-run-card" key={run.runId}>
+                <button
+                  aria-expanded={isExpanded}
+                  className="agent-run-summary"
+                  onClick={() => toggleRun(run.runId)}
+                  type="button"
+                >
+                  <div className="agent-run-summary-main">
+                    <div className="agent-run-summary-title-row">
+                      <span className="agent-run-title">
+                        {showAgentName ? run.agentName : getAgentRunHistoryLabel(run)}
+                      </span>
+                      <span className="agent-run-project-pill">
+                        {getAgentRunProjectLabel(run.projectPath)}
+                      </span>
+                      {relativeAge ? (
+                        <span className="agent-run-age-pill">{relativeAge}</span>
+                      ) : null}
+                    </div>
+                    <div className="agent-run-summary-subtitle">
+                      {showAgentName ? getAgentRunThreadLabel(run) : run.runId}
+                    </div>
+                  </div>
+                  <span
+                    aria-label={formatAgentRunStatus(run.status)}
+                    className={`agent-run-status-dot is-${run.status}`}
+                  />
+                </button>
 
-              <div className="settings-meta-grid">
-                <div className="settings-meta-item">
-                  <span className="settings-meta-label">Status</span>
-                  <SettingsValue value={formatAgentRunStatus(selectedRun.status)} />
-                </div>
-                <div className="settings-meta-item">
-                  <span className="settings-meta-label">Started</span>
-                  <SettingsValue value={formatTimestamp(selectedRun.startedAt)} />
-                </div>
-                <div className="settings-meta-item">
-                  <span className="settings-meta-label">Model</span>
-                  <SettingsValue
-                    value={getComposerModelLabel(selectedRun.provider, selectedRun.modelId)}
-                  />
-                </div>
-                <div className="settings-meta-item">
-                  <span className="settings-meta-label">Thinking</span>
-                  <SettingsValue
-                    value={
-                      THINKING_LEVEL_OPTIONS.find(
-                        option => option.value === selectedRun.thinkingLevel
-                      )?.label ?? selectedRun.thinkingLevel
-                    }
-                  />
-                </div>
-                <div className="settings-meta-item settings-meta-item-wide">
-                  <span className="settings-meta-label">Project</span>
-                  <SettingsValue monospace value={selectedRun.projectPath} />
-                </div>
-                <div className="settings-meta-item settings-meta-item-wide">
-                  <span className="settings-meta-label">Run ID</span>
-                  <SettingsValue monospace value={selectedRun.runId} />
-                </div>
-                {selectedRun.finishedAt ? (
-                  <div className="settings-meta-item">
-                    <span className="settings-meta-label">Finished</span>
-                    <SettingsValue value={formatTimestamp(selectedRun.finishedAt)} />
+                {isExpanded ? (
+                  <div className="agent-run-expanded">
+                    <div className="agent-run-expanded-meta">
+                      <span>Started {formatTimestamp(run.startedAt)}</span>
+                      {run.finishedAt ? (
+                        <span>Finished {formatTimestamp(run.finishedAt)}</span>
+                      ) : null}
+                    </div>
+
+                    <div className="agent-run-expanded-body">
+                      <div className="agent-run-expanded-section">
+                        <span className="settings-field-label">Request</span>
+                        <div className="conversation-entry user-entry agent-run-message">
+                          <div className="user-bubble">
+                            <MarkdownBlock
+                              className="message-markdown agent-run-text-block"
+                              markdown={run.message}
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {hasResult ? (
+                        <div className="agent-run-expanded-section">
+                          <span className="settings-field-label">
+                            {getAgentRunResultLabel(run)}
+                          </span>
+                          <div className="conversation-entry assistant-entry agent-run-message">
+                            <MarkdownBlock
+                              className="message-markdown assistant-markdown agent-run-text-block"
+                              markdown={run.status === "completed" ? run.answer ?? "" : run.error ?? ""}
+                            />
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {run.status === "running" ? (
+                        <div className="settings-card-inline-actions">
+                          <button
+                            className="ghost-button"
+                            onClick={() => onCancelRun(run.runId)}
+                            type="button"
+                          >
+                            Cancel run
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 ) : null}
-              </div>
-
-              <div className="agent-run-body">
-                <div className="settings-field">
-                  <span className="settings-field-label">Request</span>
-                  <textarea
-                    className="settings-input agent-run-textarea"
-                    readOnly
-                    spellCheck={false}
-                    value={selectedRun.message}
-                  />
-                </div>
-
-                {selectedRun.context ? (
-                  <div className="settings-field">
-                    <span className="settings-field-label">Context</span>
-                    <textarea
-                      className="settings-input agent-run-textarea"
-                      readOnly
-                      spellCheck={false}
-                      value={selectedRun.context}
-                    />
-                  </div>
-                ) : null}
-
-                <div className="settings-field">
-                  <span className="settings-field-label">
-                    {selectedRun.status === "completed" ? "Response" : "Error"}
-                  </span>
-                  <textarea
-                    className="settings-input agent-run-textarea"
-                    readOnly
-                    spellCheck={false}
-                    value={
-                      selectedRun.status === "completed"
-                        ? selectedRun.answer ?? ""
-                        : selectedRun.error ?? ""
-                    }
-                  />
-                </div>
-              </div>
-            </div>
-          ) : null}
+              </article>
+            )
+          })}
         </div>
       )}
     </section>
@@ -2601,7 +2809,6 @@ function AgentRunsPane({
 }
 
 function AgentAutomationPane({
-  agent,
   skillsStatus,
   skillsError,
   skillTimeouts,
@@ -2611,7 +2818,6 @@ function AgentAutomationPane({
   onCopySetupInstructions,
   onToolTimeoutChange
 }: {
-  agent: AgentDefinition | null
   skillsStatus: HandoffSkillsStatus | null
   skillsError: string | null
   skillTimeouts: Record<SessionProvider, number | null>
@@ -2621,32 +2827,14 @@ function AgentAutomationPane({
   onCopySetupInstructions(target: SkillInstallTarget): void
   onToolTimeoutChange(provider: SessionProvider, timeoutSec: number | null): void
 }) {
-  if (!agent) {
-    return null
-  }
-
   return (
     <section className="settings-card">
       <div className="settings-card-copy">
         <h2>Automation / Skills</h2>
         <p>
           Install the generic Handoff bridge skill for Codex and Claude Code. The
-          installed skill starts async bridge jobs, waits inside Handoff for updates, and
-          routes by exact agent name first, then specialty.
+          installed skill routes by exact agent name first, then specialty.
         </p>
-      </div>
-
-      <div className="settings-meta-grid">
-        <div className="settings-meta-item">
-          <span className="settings-meta-label">Agent name match</span>
-          <SettingsValue value={agent.name} />
-        </div>
-        <div className="settings-meta-item settings-meta-item-wide">
-          <span className="settings-meta-label">Specialty</span>
-          <SettingsValue
-            value={agent.specialty?.trim() ? agent.specialty : "Not set"}
-          />
-        </div>
       </div>
 
       <div className="settings-field-list">
@@ -2810,6 +2998,141 @@ function AgentAutomationPane({
         </button>
       </div>
     </section>
+  )
+}
+
+function AgentDashboardPane({
+  bridgeStatus,
+  isLoadingRuns,
+  onCancelRun,
+  onOpenAutomation,
+  onToggleRun,
+  runs,
+  runsError,
+  skillsError,
+  skillsStatus
+}: {
+  bridgeStatus: AgentBridgeHealth | null
+  isLoadingRuns: boolean
+  onCancelRun(runId: string): void
+  onOpenAutomation(): void
+  onToggleRun(runId: string): void
+  runs: AgentRunRecord[]
+  runsError: string | null
+  skillsError: string | null
+  skillsStatus: HandoffSkillsStatus | null
+}) {
+  return (
+    <div className="settings-layout">
+      <button className="agent-dashboard-toolbar" onClick={onOpenAutomation} type="button">
+        <span className="agent-dashboard-toolbar-title">Automation / Skills</span>
+        <span className="agent-dashboard-toolbar-summary">
+          <span className="automation-status-chip">
+            <StatusMarkerIcon state={getAutomationStatusTone({ bridgeStatus })} />
+            <span>Bridge</span>
+          </span>
+          <span className="automation-status-chip">
+            <StatusMarkerIcon
+              state={getAutomationStatusTone({
+                providerStatus: skillsStatus?.providers.codex
+              })}
+            />
+            <span>Codex</span>
+          </span>
+          <span className="automation-status-chip">
+            <StatusMarkerIcon
+              state={getAutomationStatusTone({
+                providerStatus: skillsStatus?.providers.claude
+              })}
+            />
+            <span>Claude</span>
+          </span>
+        </span>
+      </button>
+
+      {skillsError ? <div className="new-thread-inline-error">{skillsError}</div> : null}
+
+      <AgentRunsPane
+        emptyText="No agent invocations recorded yet."
+        isLoading={isLoadingRuns}
+        onCancelRun={onCancelRun}
+        onToggleRun={onToggleRun}
+        runs={runs}
+        runsError={runsError}
+        showAgentName
+        title="Recent invocations"
+      />
+    </div>
+  )
+}
+
+function AgentDetailPane({
+  agent,
+  draft,
+  editorError,
+  isEditing,
+  isLoadingRuns,
+  onCancelEdit,
+  onCancelRun,
+  onDelete,
+  onDraftChange,
+  onDuplicate,
+  onEdit,
+  onReset,
+  onSave,
+  onToggleRun,
+  runs,
+  runsError
+}: {
+  agent: AgentDefinition | null
+  draft: AgentDefinition | null
+  editorError: string | null
+  isEditing: boolean
+  isLoadingRuns: boolean
+  onCancelEdit(): void
+  onCancelRun(runId: string): void
+  onDelete(): void
+  onDraftChange(patch: AgentUpdatePatch): void
+  onDuplicate(): void
+  onEdit(): void
+  onReset(): void
+  onSave(): void
+  onToggleRun(runId: string): void
+  runs: AgentRunRecord[]
+  runsError: string | null
+}) {
+  return (
+    <div className="settings-layout">
+      {isEditing ? (
+        <AgentEditorPane
+          agent={agent}
+          draft={draft}
+          editorError={editorError}
+          onCancel={onCancelEdit}
+          onDraftChange={onDraftChange}
+          onReset={onReset}
+          onSave={onSave}
+        />
+      ) : (
+        <AgentSummaryPane
+          agent={agent}
+          onDelete={onDelete}
+          onDuplicate={onDuplicate}
+          onEdit={onEdit}
+        />
+      )}
+
+      <AgentRunsPane
+        emptyText="No bridge runs recorded for this agent yet."
+        isLoading={isLoadingRuns}
+        onCancelRun={onCancelRun}
+        onToggleRun={onToggleRun}
+        runs={runs}
+        runsError={runsError}
+        showAgentName={false}
+        title="Agent tasks"
+      />
+    </div>
   )
 }
 
@@ -3496,11 +3819,12 @@ export default function App() {
   const [agents, setAgents] = useState<AgentDefinition[]>([])
   const [isLoadingAgents, setIsLoadingAgents] = useState(true)
   const [agentsError, setAgentsError] = useState<string | null>(null)
+  const [agentsPaneView, setAgentsPaneView] = useState<AgentsPaneView>("dashboard")
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
+  const [isEditingAgent, setIsEditingAgent] = useState(false)
   const [agentDraft, setAgentDraft] = useState<AgentDefinition | null>(null)
   const [agentEditorError, setAgentEditorError] = useState<string | null>(null)
   const [agentRuns, setAgentRuns] = useState<AgentRunRecord[]>([])
-  const [selectedAgentRunId, setSelectedAgentRunId] = useState<string | null>(null)
   const [isLoadingAgentRuns, setIsLoadingAgentRuns] = useState(false)
   const [agentRunsError, setAgentRunsError] = useState<string | null>(null)
   const [sessions, setSessions] = useState<SessionListItem[]>([])
@@ -3698,6 +4022,10 @@ export default function App() {
   const selectedAgent = useMemo(
     () => agents.find(agent => agent.id === selectedAgentId) ?? null,
     [agents, selectedAgentId]
+  )
+  const selectedAgentRuns = useMemo(
+    () => agentRuns.filter(run => run.agentId === selectedAgentId),
+    [agentRuns, selectedAgentId]
   )
   const activeProjectPath =
     activeTranscript && activeTranscript.id === activeSession?.id
@@ -3906,8 +4234,7 @@ export default function App() {
         if (currentSelectedId && nextAgents.some(agent => agent.id === currentSelectedId)) {
           return currentSelectedId
         }
-
-        return nextAgents[0]?.id ?? null
+        return null
       })
     } catch (error) {
       setAgents([])
@@ -3918,40 +4245,23 @@ export default function App() {
     }
   }, [])
 
-  const loadAgentRuns = useCallback(async (agentId: string | null) => {
-    if (!agentId) {
-      setAgentRuns([])
-      setSelectedAgentRunId(null)
-      setAgentRunsError(null)
-      setIsLoadingAgentRuns(false)
-      return
-    }
-
+  const loadAgentRuns = useCallback(async () => {
     setIsLoadingAgentRuns(true)
     const api = getHandoffApi()
 
     if (!api) {
       setAgentRuns([])
-      setSelectedAgentRunId(null)
       setAgentRunsError("The preload bridge did not load. Restart the app.")
       setIsLoadingAgentRuns(false)
       return
     }
 
     try {
-      const nextRuns = sortAgentRunsByStartedAt(await api.bridge.listRuns(agentId, 50))
+      const nextRuns = sortAgentRunsByStartedAt(await api.bridge.listRuns(undefined, 100))
       setAgentRuns(nextRuns)
       setAgentRunsError(null)
-      setSelectedAgentRunId(currentSelectedRunId => {
-        if (currentSelectedRunId && nextRuns.some(run => run.runId === currentSelectedRunId)) {
-          return currentSelectedRunId
-        }
-
-        return nextRuns[0]?.runId ?? null
-      })
     } catch (error) {
       setAgentRuns([])
-      setSelectedAgentRunId(null)
       setAgentRunsError(error instanceof Error ? error.message : "Unable to load agent runs.")
     } finally {
       setIsLoadingAgentRuns(false)
@@ -4605,11 +4915,11 @@ export default function App() {
       return
     }
 
-    void loadAgentRuns(selectedAgentId)
-  }, [activeSection, isSettingsOpen, loadAgentRuns, selectedAgentId])
+    void loadAgentRuns()
+  }, [activeSection, isSettingsOpen, loadAgentRuns])
 
   useEffect(() => {
-    if (activeSection !== "agents" || isSettingsOpen || !selectedAgentId) {
+    if (activeSection !== "agents" || isSettingsOpen) {
       return () => undefined
     }
 
@@ -4618,13 +4928,13 @@ export default function App() {
     }
 
     const intervalId = window.setInterval(() => {
-      void loadAgentRuns(selectedAgentId)
+      void loadAgentRuns()
     }, 4_000)
 
     return () => {
       window.clearInterval(intervalId)
     }
-  }, [activeSection, agentRuns, isSettingsOpen, loadAgentRuns, selectedAgentId])
+  }, [activeSection, agentRuns, isSettingsOpen, loadAgentRuns])
 
   useEffect(() => {
     const session = selectedNewThreadSourceSession
@@ -4802,13 +5112,19 @@ export default function App() {
       if (selectedAgentId !== null) {
         setSelectedAgentId(null)
       }
+      if (agentsPaneView === "agent") {
+        setAgentsPaneView("dashboard")
+      }
       return
     }
 
-    if (!selectedAgentId || !agents.some(agent => agent.id === selectedAgentId)) {
-      setSelectedAgentId(sortAgentsByName(agents)[0]?.id ?? null)
+    if (selectedAgentId && !agents.some(agent => agent.id === selectedAgentId)) {
+      setSelectedAgentId(null)
+      if (agentsPaneView === "agent") {
+        setAgentsPaneView("dashboard")
+      }
     }
-  }, [agents, selectedAgentId])
+  }, [agents, agentsPaneView, selectedAgentId])
 
   useEffect(() => {
     if (activeSection !== "threads" || isSettingsOpen || rightPaneMode !== "search") {
@@ -5228,6 +5544,8 @@ export default function App() {
       const nextAgent = await api.agents.create()
       setAgents(currentAgents => [...currentAgents, nextAgent])
       setSelectedAgentId(nextAgent.id)
+      setAgentsPaneView("agent")
+      setIsEditingAgent(true)
       setAgentDraft(cloneAgentDefinition(nextAgent))
       setAgentEditorError(null)
       setActiveSection("agents")
@@ -5242,11 +5560,40 @@ export default function App() {
     setActiveSection("agents")
     setIsSettingsOpen(false)
     setSelectedAgentId(agentId)
+    setAgentsPaneView("agent")
+    setIsEditingAgent(false)
     setAgentEditorError(null)
   }, [])
 
-  const handleSelectAgentRun = useCallback((runId: string) => {
-    setSelectedAgentRunId(runId)
+  const handleOpenAgentsDashboard = useCallback(() => {
+    setActiveSection("agents")
+    setIsSettingsOpen(false)
+    setAgentsPaneView("dashboard")
+    setIsEditingAgent(false)
+    setAgentEditorError(null)
+  }, [])
+
+  const handleOpenAgentAutomation = useCallback(() => {
+    setActiveSection("agents")
+    setIsSettingsOpen(false)
+    setAgentsPaneView("automation")
+    setIsEditingAgent(false)
+  }, [])
+
+  const handleStartAgentEdit = useCallback(() => {
+    setAgentsPaneView("agent")
+    setIsEditingAgent(true)
+    setAgentEditorError(null)
+  }, [])
+
+  const handleCancelAgentEdit = useCallback(() => {
+    setAgentDraft(cloneAgentDefinition(selectedAgent))
+    setIsEditingAgent(false)
+    setAgentEditorError(null)
+  }, [selectedAgent])
+
+  const handleToggleAgentRun = useCallback((_runId: string) => {
+    return
   }, [])
 
   const handleCancelAgentRun = useCallback(
@@ -5264,7 +5611,7 @@ export default function App() {
           return
         }
 
-        await loadAgentRuns(nextRun.agentId)
+        await loadAgentRuns()
         showToast("Canceled agent run")
       } catch (error) {
         showToast(error instanceof Error ? error.message : "Unable to cancel run.", "error")
@@ -5330,6 +5677,7 @@ export default function App() {
         currentAgents.map(agent => (agent.id === updatedAgent.id ? updatedAgent : agent))
       )
       setAgentDraft(cloneAgentDefinition(updatedAgent))
+      setIsEditingAgent(false)
       setAgentEditorError(null)
       showToast("Saved agent")
     } catch (error) {
@@ -5363,6 +5711,9 @@ export default function App() {
       setAgents(currentAgents =>
         currentAgents.filter(agent => agent.id !== selectedAgent.id)
       )
+      setSelectedAgentId(null)
+      setAgentsPaneView("dashboard")
+      setIsEditingAgent(false)
       setAgentEditorError(null)
       showToast("Deleted agent")
     } catch (error) {
@@ -5385,6 +5736,8 @@ export default function App() {
       const duplicatedAgent = await api.agents.duplicate(selectedAgent.id)
       setAgents(currentAgents => [...currentAgents, duplicatedAgent])
       setSelectedAgentId(duplicatedAgent.id)
+      setAgentsPaneView("agent")
+      setIsEditingAgent(false)
       setAgentDraft(cloneAgentDefinition(duplicatedAgent))
       setAgentEditorError(null)
       showToast("Duplicated agent")
@@ -5697,8 +6050,10 @@ export default function App() {
                 <AgentsListPane
                   agents={sortedAgents}
                   agentsError={agentsError}
+                  isDashboardSelected={agentsPaneView === "dashboard"}
                   isLoading={isLoadingAgents}
                   onCreate={() => void handleCreateAgent()}
+                  onSelectDashboard={handleOpenAgentsDashboard}
                   onSelect={handleSelectAgent}
                   selectedAgentId={selectedAgentId}
                   stateInfo={stateInfo}
@@ -5735,7 +6090,9 @@ export default function App() {
               {isSettingsOpen ? (
                 <span className="topbar-thread">Settings</span>
               ) : activeSection === "agents" ? (
-                selectedAgent ? (
+                agentsPaneView === "automation" ? (
+                  <span className="topbar-thread">Automation / Skills</span>
+                ) : agentsPaneView === "agent" && selectedAgent ? (
                   <>
                     <span className="topbar-thread">{selectedAgent.name}</span>
                     <div className="topbar-session-meta">
@@ -5777,7 +6134,15 @@ export default function App() {
             </div>
 
             <div className="toolbar">
-              {!isSettingsOpen && activeSection === "threads" && rightPaneMode === "new-thread" ? (
+              {!isSettingsOpen && activeSection === "agents" && agentsPaneView === "automation" ? (
+                <button
+                  className="topbar-button"
+                  onClick={handleOpenAgentsDashboard}
+                  type="button"
+                >
+                  Back
+                </button>
+              ) : !isSettingsOpen && activeSection === "threads" && rightPaneMode === "new-thread" ? (
                 <button
                   className="topbar-button"
                   onClick={handleCloseNewThread}
@@ -5853,60 +6218,65 @@ export default function App() {
                   settingsSnapshot={settingsSnapshot}
                 />
               ) : activeSection === "agents" ? (
-                isLoadingAgents && agents.length === 0 ? (
-                  <EmptyState
-                    title="Loading agents"
-                    detail="Reading saved agent presets."
+                isLoadingAgents && agents.length === 0 && agentsPaneView !== "dashboard" ? (
+                  <EmptyState title="Loading agents" detail="Reading saved agent presets." />
+                ) : agentsPaneView === "dashboard" ? (
+                  <AgentDashboardPane
+                    bridgeStatus={bridgeStatus}
+                    isLoadingRuns={isLoadingAgentRuns}
+                    onCancelRun={runId => {
+                      void handleCancelAgentRun(runId)
+                    }}
+                    onOpenAutomation={handleOpenAgentAutomation}
+                    onToggleRun={handleToggleAgentRun}
+                    runs={agentRuns}
+                    runsError={agentRunsError}
+                    skillsError={skillsError}
+                    skillsStatus={skillsStatus}
+                  />
+                ) : agentsPaneView === "automation" ? (
+                  <AgentAutomationPane
+                    isBusy={isMutatingSkills}
+                    onCopySetupInstructions={target => {
+                      void handleCopySkillSetupInstructions(target)
+                    }}
+                    onExportPackage={() => {
+                      void handleExportSkillsPackage()
+                    }}
+                    onInstall={target => {
+                      void handleInstallSkills(target)
+                    }}
+                    onToolTimeoutChange={handleSkillToolTimeoutChange}
+                    skillTimeouts={{
+                      codex: settingsSnapshot?.settings.skills?.codex?.toolTimeoutSec ?? null,
+                      claude: settingsSnapshot?.settings.skills?.claude?.toolTimeoutSec ?? null
+                    }}
+                    skillsError={skillsError}
+                    skillsStatus={skillsStatus}
                   />
                 ) : agents.length === 0 ? (
-                  <EmptyState
-                    title="No agents yet"
-                    detail="Create an agent from the left rail to get started."
-                  />
+                  <EmptyState title="No agents yet" detail="Create an agent from the left rail." />
                 ) : (
-                  <div className="settings-layout">
-                    <AgentEditorPane
+                  <AgentDetailPane
                       agent={selectedAgent}
                       draft={agentDraft}
                       editorError={agentEditorError}
-                      onDelete={() => void handleDeleteAgent()}
-                      onDraftChange={handleAgentDraftChange}
-                      onDuplicate={() => void handleDuplicateAgent()}
-                      onReset={handleResetAgent}
-                      onSave={() => void handleSaveAgent()}
-                    />
-                    <AgentAutomationPane
-                      agent={selectedAgent}
-                      isBusy={isMutatingSkills}
-                      onCopySetupInstructions={target => {
-                        void handleCopySkillSetupInstructions(target)
-                      }}
-                      onExportPackage={() => {
-                        void handleExportSkillsPackage()
-                      }}
-                      onInstall={target => {
-                        void handleInstallSkills(target)
-                      }}
-                      onToolTimeoutChange={handleSkillToolTimeoutChange}
-                      skillTimeouts={{
-                        codex: settingsSnapshot?.settings.skills?.codex?.toolTimeoutSec ?? null,
-                        claude: settingsSnapshot?.settings.skills?.claude?.toolTimeoutSec ?? null
-                      }}
-                      skillsError={skillsError}
-                      skillsStatus={skillsStatus}
-                    />
-                    <AgentRunsPane
-                      agent={selectedAgent}
-                      isLoading={isLoadingAgentRuns}
+                      isEditing={isEditingAgent}
+                      isLoadingRuns={isLoadingAgentRuns}
+                      onCancelEdit={handleCancelAgentEdit}
                       onCancelRun={runId => {
                         void handleCancelAgentRun(runId)
                       }}
-                      onSelectRun={handleSelectAgentRun}
-                      runs={agentRuns}
+                      onDelete={() => void handleDeleteAgent()}
+                      onDraftChange={handleAgentDraftChange}
+                      onDuplicate={() => void handleDuplicateAgent()}
+                      onEdit={handleStartAgentEdit}
+                      onReset={handleResetAgent}
+                      onSave={() => void handleSaveAgent()}
+                      onToggleRun={handleToggleAgentRun}
+                      runs={selectedAgentRuns}
                       runsError={agentRunsError}
-                      selectedRunId={selectedAgentRunId}
                     />
-                  </div>
                 )
               ) : activeSection === "selector" ? (
                 <SelectorDetailPane controller={selectorSection} />

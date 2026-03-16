@@ -1459,9 +1459,8 @@ describe("Handoff App", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: "Agents" }))
 
-    expect(
-      await screen.findByText("Create an agent from the left rail to get started.")
-    ).toBeInTheDocument()
+    expect(await screen.findByRole("button", { name: "Dashboard" })).toBeInTheDocument()
+    expect(await screen.findByText("Recent invocations")).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole("button", { name: "New agent" }))
 
@@ -1510,8 +1509,9 @@ describe("Handoff App", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: "Agents" }))
 
-    expect(await screen.findByText("Automation / Skills")).toBeInTheDocument()
-    expect(screen.getByDisplayValue("Use for release planning and ship reviews.")).toBeInTheDocument()
+    await userEvent.click(await screen.findByRole("button", { name: /Automation \/ Skills/i }))
+
+    expect(await screen.findAllByText("Automation / Skills")).not.toHaveLength(0)
     const codexTimeoutInput = await screen.findByLabelText(/Codex client MCP timeout \(seconds\)/i)
     const claudeTimeoutInput = await screen.findByLabelText(/Claude client MCP timeout \(seconds\)/i)
     expect(codexTimeoutInput).toHaveValue(null)
@@ -1585,7 +1585,11 @@ describe("Handoff App", () => {
         projectPath: "/tmp/project",
         message: "Review this release plan.",
         context: "Ship this week.",
-        caller: "claude-code",
+        caller: {
+          client: "claude-code",
+          sessionName: "Release planning thread",
+          threadId: "thread-123"
+        },
         prompt: "prompt",
         answer: "Looks ready.",
         error: null,
@@ -1603,9 +1607,18 @@ describe("Handoff App", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: "Agents" }))
 
-    expect(await screen.findByText("Agent runs")).toBeInTheDocument()
-    expect(screen.getAllByText("Completed").length).toBeGreaterThan(0)
-    expect(screen.getByDisplayValue("Review this release plan.")).toBeInTheDocument()
-    expect(screen.getByDisplayValue("Looks ready.")).toBeInTheDocument()
+    expect(await screen.findByText("Recent invocations")).toBeInTheDocument()
+    expect(screen.getByText("Release planning thread · thread-123")).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole("button", { name: /thread-123/i }))
+
+    expect(await screen.findByText(/Started/)).toBeInTheDocument()
+    expect(screen.getByText("Review this release plan.")).toBeInTheDocument()
+    expect(screen.getByText("Looks ready.")).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole("button", { name: /Release reviewer GPT-5.4/i }))
+    expect(await screen.findByRole("button", { name: "Edit" })).toBeInTheDocument()
+    expect(screen.getByText("Agent tasks")).toBeInTheDocument()
+    expect(screen.getByText("Release planning thread · thread-123")).toBeInTheDocument()
   })
 })
