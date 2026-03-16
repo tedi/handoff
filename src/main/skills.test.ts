@@ -93,7 +93,7 @@ describe("createHandoffSkillsService", () => {
         path.join(context.codexHome, "skills", "handoff-agent-bridge", "SKILL.md"),
         "utf8"
       )
-    ).resolves.toContain("Handoff Agent Bridge")
+    ).resolves.toContain("start_agent_run")
     expect(
       codexConfigAfterReinstall.match(/# BEGIN HANDOFF SKILLS MANAGED BLOCK/g)
     ).toHaveLength(1)
@@ -114,12 +114,12 @@ describe("createHandoffSkillsService", () => {
     const exportResult = await skills.exportPackage()
 
     await expect(fs.readFile(path.join(exportResult.codexPath, "SKILL.md"), "utf8")).resolves
-      .toContain("Handoff Agent Bridge")
+      .toContain("start_agent_run")
     await expect(
       fs.readFile(path.join(exportResult.codexPath, "agents", "openai.yaml"), "utf8")
     ).resolves.toContain("handoff-agent-bridge")
     await expect(fs.readFile(path.join(exportResult.claudePath, "SKILL.md"), "utf8")).resolves
-      .toContain("allowed-tools")
+      .toContain("mcp__handoff-agent-bridge__start_agent_run")
     await expect(fs.readFile(exportResult.claudePluginPath, "utf8")).resolves.toContain(
       "\"handoff-agent-bridge\""
     )

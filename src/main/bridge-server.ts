@@ -119,7 +119,7 @@ export async function runAgentBridgeMcpServer() {
     "ask_agent",
     {
       description:
-        "Send one message to a saved Handoff agent and return one final answer.",
+        "Deprecated synchronous call. Prefer start_agent_run plus get_agent_run polling for long-running work.",
       inputSchema: z.object({
         agentId: z.string().optional(),
         agentName: z.string().optional(),
@@ -169,6 +169,58 @@ export async function runAgentBridgeMcpServer() {
   )
 
   server.registerTool(
+    "start_agent_run",
+    {
+      description:
+        "Start one saved Handoff agent run asynchronously and return immediately with a run id.",
+      inputSchema: z.object({
+        agentId: z.string().optional(),
+        agentName: z.string().optional(),
+        message: z.string(),
+        projectPath: z.string(),
+        context: z.string().optional(),
+        caller: z.union([z.string(), z.record(z.unknown())]).optional()
+      })
+    },
+    async args => {
+      try {
+        const result = await bridge.startRun(args)
+        return successResult(
+          result,
+          `Started agent run ${result.runId}. Poll get_agent_run until it completes.`
+        )
+      } catch (error) {
+        if (error instanceof AgentBridgeBusyError) {
+          return errorResult(
+            {
+              code: error.code,
+              runId: error.info.runId,
+              startedAt: error.info.startedAt
+            },
+            "Agent is already handling a request. Poll get_agent_run with the returned run id."
+          )
+        }
+
+        if (error instanceof AgentBridgeInputError) {
+          return errorResult(
+            {
+              code: error.code
+            },
+            error.message
+          )
+        }
+
+        return errorResult(
+          {
+            code: "execution_failed"
+          },
+          error instanceof Error ? error.message : "Agent run failed to start."
+        )
+      }
+    }
+  )
+
+  server.registerTool(
     "list_agent_runs",
     {
       description: "List persisted Handoff agent bridge runs.",
@@ -189,7 +241,7 @@ export async function runAgentBridgeMcpServer() {
   server.registerTool(
     "get_agent_run",
     {
-      description: "Get one persisted Handoff agent bridge run by id.",
+      description: "Get one persisted Handoff agent bridge run by id. Use this to poll async runs.",
       inputSchema: z.object({
         runId: z.string()
       })
@@ -207,6 +259,31 @@ export async function runAgentBridgeMcpServer() {
       }
 
       return successResult({ run }, `Loaded run ${runId}.`)
+    }
+  )
+
+  server.registerTool(
+    "cancel_agent_run",
+    {
+      description: "Cancel one running Handoff agent bridge run by id.",
+      inputSchema: z.object({
+        runId: z.string()
+      })
+    },
+    async ({ runId }) => {
+      const run = await bridge.cancelRun(runId)
+
+      if (!run) {
+        return errorResult(
+          {
+            code: "run_not_found",
+            runId
+          },
+          "Run not found."
+        )
+      }
+
+      return successResult({ run }, `Run ${runId} is now ${run.status}.`)
     }
   )
 

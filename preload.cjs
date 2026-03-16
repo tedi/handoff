@@ -24,7 +24,8 @@ const IPC_CHANNELS = {
     getStatus: "handoff:bridge:get-status",
     getConfigSnippets: "handoff:bridge:get-config-snippets",
     listRuns: "handoff:bridge:list-runs",
-    getRun: "handoff:bridge:get-run"
+    getRun: "handoff:bridge:get-run",
+    cancelRun: "handoff:bridge:cancel-run"
   },
   skills: {
     getStatus: "handoff:skills:get-status",
@@ -162,6 +163,9 @@ contextBridge.exposeInMainWorld("handoffApp", {
     },
     getRun(runId) {
       return ipcRenderer.invoke(IPC_CHANNELS.bridge.getRun, runId)
+    },
+    cancelRun(runId) {
+      return ipcRenderer.invoke(IPC_CHANNELS.bridge.cancelRun, runId)
     }
   },
   skills: {

@@ -49,7 +49,7 @@ export interface AgentDeleteResult {
   deletedId: string
 }
 
-export type AgentRunStatus = "running" | "completed" | "failed"
+export type AgentRunStatus = "running" | "completed" | "failed" | "canceled"
 
 export type AgentCallerMetadata = string | Record<string, unknown> | null
 
@@ -72,6 +72,7 @@ export interface AgentRunRecord {
   stdout: string | null
   stderr: string | null
   exitCode: number | null
+  workerPid: number | null
   startedAt: string
   finishedAt: string | null
 }
@@ -98,6 +99,18 @@ export interface AskAgentResult {
   projectPath: string
   startedAt: string
   finishedAt: string
+}
+
+export interface StartAgentRunResult {
+  runId: string
+  status: Extract<AgentRunStatus, "running">
+  agentId: string
+  provider: SessionProvider
+  modelId: string
+  thinkingLevel: ThinkingLevel
+  fast: boolean
+  projectPath: string
+  startedAt: string
 }
 
 export interface AgentBridgeHealth {
@@ -418,6 +431,7 @@ export interface HandoffApi {
     getConfigSnippets(): Promise<AgentBridgeConfigSnippets>
     listRuns(agentId?: string, limit?: number): Promise<AgentRunRecord[]>
     getRun(runId: string): Promise<AgentRunRecord | null>
+    cancelRun(runId: string): Promise<AgentRunRecord | null>
   }
   skills: {
     getStatus(): Promise<HandoffSkillsStatus>

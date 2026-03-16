@@ -181,6 +181,13 @@ export function createHandoffBridge(
           IPC_CHANNELS.bridge.getRun,
           runId
         ) as Promise<AgentRunRecord | null>
+      },
+
+      cancelRun(runId: string) {
+        return ipcRenderer.invoke(
+          IPC_CHANNELS.bridge.cancelRun,
+          runId
+        ) as Promise<AgentRunRecord | null>
       }
     },
 

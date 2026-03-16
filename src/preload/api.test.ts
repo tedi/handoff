@@ -50,6 +50,7 @@ describe("createHandoffBridge", () => {
     await bridge.bridge.getConfigSnippets()
     await bridge.bridge.listRuns("agent-1", 25)
     await bridge.bridge.getRun("run-1")
+    await bridge.bridge.cancelRun("run-2")
     await bridge.skills.getStatus()
     await bridge.skills.install("both")
     await bridge.skills.exportPackage()
@@ -159,24 +160,29 @@ describe("createHandoffBridge", () => {
     )
     expect(invoke).toHaveBeenNthCalledWith(
       17,
-      IPC_CHANNELS.skills.getStatus
+      IPC_CHANNELS.bridge.cancelRun,
+      "run-2"
     )
     expect(invoke).toHaveBeenNthCalledWith(
       18,
+      IPC_CHANNELS.skills.getStatus
+    )
+    expect(invoke).toHaveBeenNthCalledWith(
+      19,
       IPC_CHANNELS.skills.install,
       "both"
     )
     expect(invoke).toHaveBeenNthCalledWith(
-      19,
+      20,
       IPC_CHANNELS.skills.exportPackage
     )
     expect(invoke).toHaveBeenNthCalledWith(
-      20,
+      21,
       IPC_CHANNELS.skills.copySetupInstructions,
       "claude"
     )
     expect(invoke).toHaveBeenNthCalledWith(
-      21,
+      22,
       IPC_CHANNELS.app.openSourceSession,
       "claude",
       "session-1",
@@ -184,7 +190,7 @@ describe("createHandoffBridge", () => {
       "/tmp/project"
     )
     expect(invoke).toHaveBeenNthCalledWith(
-      22,
+      23,
       IPC_CHANNELS.app.startNewThread,
       {
         provider: "codex",
@@ -197,13 +203,13 @@ describe("createHandoffBridge", () => {
       }
     )
     expect(invoke).toHaveBeenNthCalledWith(
-      23,
+      24,
       IPC_CHANNELS.app.openProjectPath,
       "editor",
       "/tmp/project"
     )
     expect(invoke).toHaveBeenNthCalledWith(
-      24,
+      25,
       IPC_CHANNELS.clipboard.writeText,
       "copied"
     )

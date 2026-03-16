@@ -256,7 +256,7 @@ function createMockApi({
     bridge: {
       getStatus: vi.fn().mockResolvedValue({
         status: "ready",
-        message: "Stateless stdio agent bridge is available.",
+        message: "Async agent jobs are available through the local MCP bridge.",
         command: "/Applications/Handoff.app/Contents/MacOS/Handoff",
         args: ["--agent-bridge-mcp"],
         entrypointLabel: "handoff-agent-bridge",
@@ -283,7 +283,8 @@ function createMockApi({
         )
       }),
       listRuns: vi.fn().mockResolvedValue([]),
-      getRun: vi.fn().mockResolvedValue(null)
+      getRun: vi.fn().mockResolvedValue(null),
+      cancelRun: vi.fn().mockResolvedValue(null)
     },
     skills: {
       getStatus: vi.fn().mockImplementation(async () => ({ ...skillsStatusState })),
@@ -1511,8 +1512,8 @@ describe("Handoff App", () => {
 
     expect(await screen.findByText("Automation / Skills")).toBeInTheDocument()
     expect(screen.getByDisplayValue("Use for release planning and ship reviews.")).toBeInTheDocument()
-    const codexTimeoutInput = await screen.findByLabelText(/Codex MCP timeout \(seconds\)/i)
-    const claudeTimeoutInput = await screen.findByLabelText(/Claude MCP timeout \(seconds\)/i)
+    const codexTimeoutInput = await screen.findByLabelText(/Codex client MCP timeout \(seconds\)/i)
+    const claudeTimeoutInput = await screen.findByLabelText(/Claude client MCP timeout \(seconds\)/i)
     expect(codexTimeoutInput).toHaveValue(null)
     expect(claudeTimeoutInput).toHaveValue(null)
 
@@ -1591,6 +1592,7 @@ describe("Handoff App", () => {
         stdout: null,
         stderr: null,
         exitCode: 0,
+        workerPid: null,
         startedAt: "2026-03-14T00:20:00.000Z",
         finishedAt: "2026-03-14T00:20:10.000Z"
       }

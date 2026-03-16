@@ -438,7 +438,8 @@ describe("registerIpcHandlers", () => {
           claudeConfigJson: "{}"
         }),
         listRuns: vi.fn().mockResolvedValue([]),
-        getRun: vi.fn().mockResolvedValue(null)
+        getRun: vi.fn().mockResolvedValue(null),
+        cancelRun: vi.fn().mockResolvedValue(null)
       },
       skills: {
         getStatus: vi.fn().mockResolvedValue({ skillName: "handoff-agent-bridge" }),
@@ -491,6 +492,7 @@ describe("registerIpcHandlers", () => {
     await ipcMain.invoke(IPC_CHANNELS.bridge.getConfigSnippets)
     await ipcMain.invoke(IPC_CHANNELS.bridge.listRuns, "agent-1", 25)
     await ipcMain.invoke(IPC_CHANNELS.bridge.getRun, "run-1")
+    await ipcMain.invoke(IPC_CHANNELS.bridge.cancelRun, "run-2")
     await ipcMain.invoke(IPC_CHANNELS.skills.getStatus)
     await ipcMain.invoke(IPC_CHANNELS.skills.install, "both")
     await ipcMain.invoke(IPC_CHANNELS.skills.exportPackage)
@@ -500,6 +502,7 @@ describe("registerIpcHandlers", () => {
     expect(service.bridge.getConfigSnippets).toHaveBeenCalled()
     expect(service.bridge.listRuns).toHaveBeenCalledWith("agent-1", 25)
     expect(service.bridge.getRun).toHaveBeenCalledWith("run-1")
+    expect(service.bridge.cancelRun).toHaveBeenCalledWith("run-2")
     expect(service.skills.getStatus).toHaveBeenCalled()
     expect(service.skills.install).toHaveBeenCalledWith("both")
     expect(service.skills.exportPackage).toHaveBeenCalled()

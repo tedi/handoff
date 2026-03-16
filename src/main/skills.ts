@@ -85,8 +85,10 @@ Use the local Handoff bridge to consult one saved Handoff agent and then continu
 3. If \`specialty\` is missing or ambiguous, use agent name and custom instructions as weaker hints.
 4. If no confident match exists, ask the user which saved Handoff agent to use instead of guessing.
 5. Use the current working directory or repo root as \`projectPath\`.
-6. Call \`ask_agent\` with the chosen agent, a concise question, and optional context.
-7. Use the final answer in your response. If the bridge call fails, say so briefly and continue with the best direct answer you can provide.
+6. Call \`start_agent_run\` with the chosen agent, a concise question, and optional context.
+7. Poll \`get_agent_run\` every 5 seconds until the run reaches \`completed\`, \`failed\`, or \`canceled\`.
+8. If \`start_agent_run\` returns a busy error, poll the returned \`runId\` instead of retrying the start.
+9. Use the final answer in your response. If the bridge run fails, say so briefly and continue with the best direct answer you can provide.
 
 ## Limits
 
@@ -116,7 +118,7 @@ function buildClaudeSkillMarkdown() {
   return ensureTrailingNewline(`---
 name: ${HANDOFF_SKILL_NAME}
 description: Delegate work to a saved Handoff agent through the local ${AGENT_BRIDGE_SERVER_NAME} MCP bridge. Use when the user asks for specialist input, explicitly names a saved Handoff agent, or when a task should be handed off to a reviewer, planner, or other saved expert. Prefer an exact saved agent name match when one is mentioned; otherwise inspect saved agents and choose the best specialty match, asking the user when the match is unclear.
-allowed-tools: mcp__${AGENT_BRIDGE_SERVER_NAME}__list_agents, mcp__${AGENT_BRIDGE_SERVER_NAME}__get_agent, mcp__${AGENT_BRIDGE_SERVER_NAME}__ask_agent
+allowed-tools: mcp__${AGENT_BRIDGE_SERVER_NAME}__list_agents, mcp__${AGENT_BRIDGE_SERVER_NAME}__get_agent, mcp__${AGENT_BRIDGE_SERVER_NAME}__start_agent_run, mcp__${AGENT_BRIDGE_SERVER_NAME}__get_agent_run
 ---
 
 # Handoff Agent Bridge
@@ -130,8 +132,10 @@ Use the local Handoff bridge to consult one saved Handoff agent and then continu
 3. If \`specialty\` is missing or ambiguous, use agent name and custom instructions as weaker hints.
 4. If no confident match exists, ask the user which saved Handoff agent to use instead of guessing.
 5. Use the current working directory or repo root as \`projectPath\`.
-6. Call \`ask_agent\` with the chosen agent, a concise question, and optional context.
-7. Use the final answer in your response. If the bridge call fails, say so briefly and continue with the best direct answer you can provide.
+6. Call \`start_agent_run\` with the chosen agent, a concise question, and optional context.
+7. Poll \`get_agent_run\` every 5 seconds until the run reaches \`completed\`, \`failed\`, or \`canceled\`.
+8. If \`start_agent_run\` returns a busy error, poll the returned \`runId\` instead of retrying the start.
+9. Use the final answer in your response. If the bridge run fails, say so briefly and continue with the best direct answer you can provide.
 
 ## Limits
 
@@ -598,7 +602,7 @@ export function createHandoffSkillsService(
           "Codex manual setup:",
           `- Config path: ${status.providers.codex.configPath}`,
           `- Skill path: ${status.providers.codex.skillPath}`,
-          `- MCP timeout: ${
+          `- Client-side MCP tool-call timeout: ${
             codexTimeoutSec === null ? "provider default" : `${codexTimeoutSec} seconds`
           }`,
           "- Add or update the Handoff managed block in config.toml so it declares the handoff-agent-bridge MCP server and the skills.config path."
@@ -613,7 +617,7 @@ export function createHandoffSkillsService(
           "Claude Code manual setup:",
           `- Settings path: ${status.providers.claude.configPath}`,
           `- Skill path: ${status.providers.claude.skillPath}`,
-          `- MCP timeout: ${
+          `- Client-side MCP tool-call timeout: ${
             claudeTimeoutSec === null ? "provider default" : `${claudeTimeoutSec} seconds`
           }`,
           `- Copy the skill folder into ~/.claude/skills/${HANDOFF_SKILL_NAME}`,

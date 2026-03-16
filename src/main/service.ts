@@ -89,6 +89,7 @@ export interface HandoffService {
     getConfigSnippets(): Promise<AgentBridgeConfigSnippets>
     listRuns(agentId?: string, limit?: number): Promise<AgentRunRecord[]>
     getRun(runId: string): Promise<AgentRunRecord | null>
+    cancelRun(runId: string): Promise<AgentRunRecord | null>
   }
   skills: {
     getStatus(): Promise<import("../shared/contracts").HandoffSkillsStatus>
@@ -975,6 +976,10 @@ export function createHandoffService(
 
       async getRun(runId) {
         return bridgeService.getRun(runId)
+      },
+
+      async cancelRun(runId) {
+        return bridgeService.cancelRun(runId)
       }
     },
 

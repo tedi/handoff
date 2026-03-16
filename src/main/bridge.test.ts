@@ -1,11 +1,16 @@
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
+import { spawn } from "node:child_process"
 
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import type { AgentDefinition, HandoffSettings } from "../shared/contracts"
-import { createAgentBridgeService, AgentBridgeBusyError } from "./bridge"
+import {
+  createAgentBridgeService,
+  AgentBridgeBusyError,
+  runAgentBridgeWorkerJob
+} from "./bridge"
 
 interface BridgeTestContext {
   baseDir: string
@@ -297,6 +302,130 @@ describe("createAgentBridgeService", () => {
         timeoutMs: null
       })
     )
+  })
+
+  it("starts async runs immediately and completes them through the detached worker flow", async () => {
+    context = await createBridgeTestContext()
+    await writeSettings(context.dataDir, [
+      {
+        id: "agent-async",
+        name: "Async agent",
+        provider: "codex",
+        modelId: "gpt-5.4",
+        thinkingLevel: "high",
+        fast: false,
+        timeoutSec: null,
+        customInstructions: "Answer carefully."
+      }
+    ])
+
+    const executeCommand = vi.fn().mockImplementation(async params => {
+      const outputPathIndex = params.args.indexOf("-o")
+      const outputPath = params.args[outputPathIndex + 1]
+      await fs.mkdir(path.dirname(outputPath), { recursive: true })
+      await fs.writeFile(outputPath, "Async final answer", "utf8")
+
+      return {
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+        signal: null,
+        timedOut: false
+      }
+    })
+
+    const spawnWorkerProcess = vi.fn().mockResolvedValue(process.pid)
+    const bridge = createAgentBridgeService({
+      dataDir: context.dataDir,
+      codexHome: context.codexHome,
+      claudeHome: context.claudeHome,
+      bridgeCommand: {
+        command: "/Applications/Handoff.app/Contents/MacOS/Handoff",
+        args: ["--agent-bridge-mcp"]
+      },
+      spawnWorkerProcess
+    })
+
+    const started = await bridge.startRun({
+      agentId: "agent-async",
+      message: "Handle this asynchronously.",
+      projectPath: context.projectPath
+    })
+
+    expect(started.status).toBe("running")
+    expect(spawnWorkerProcess).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: "/Applications/Handoff.app/Contents/MacOS/Handoff",
+        args: ["--agent-bridge-worker"],
+        runId: started.runId
+      })
+    )
+
+    expect(await bridge.getRun(started.runId)).toMatchObject({
+      runId: started.runId,
+      status: "running",
+      workerPid: process.pid
+    })
+
+    await runAgentBridgeWorkerJob({
+      dataDir: context.dataDir,
+      runId: started.runId,
+      executeCommand
+    })
+
+    expect(await bridge.getRun(started.runId)).toMatchObject({
+      runId: started.runId,
+      status: "completed",
+      answer: "Async final answer"
+    })
+  })
+
+  it("cancels async runs and preserves the canceled state", async () => {
+    context = await createBridgeTestContext()
+    await writeSettings(context.dataDir, [
+      {
+        id: "agent-cancel",
+        name: "Cancelable agent",
+        provider: "codex",
+        modelId: "gpt-5.4",
+        thinkingLevel: "high",
+        fast: false,
+        timeoutSec: null,
+        customInstructions: ""
+      }
+    ])
+
+    const dummyWorker = spawn(process.execPath, ["-e", "setInterval(() => {}, 10000)"], {
+      stdio: "ignore"
+    })
+
+    try {
+      const bridge = createAgentBridgeService({
+        dataDir: context.dataDir,
+        codexHome: context.codexHome,
+        claudeHome: context.claudeHome,
+        bridgeCommand: {
+          command: "/Applications/Handoff.app/Contents/MacOS/Handoff",
+          args: ["--agent-bridge-mcp"]
+        },
+        spawnWorkerProcess: vi.fn().mockResolvedValue(dummyWorker.pid ?? null)
+      })
+
+      const started = await bridge.startRun({
+        agentId: "agent-cancel",
+        message: "Cancel this run.",
+        projectPath: context.projectPath
+      })
+
+      const canceled = await bridge.cancelRun(started.runId)
+      expect(canceled).toMatchObject({
+        runId: started.runId,
+        status: "canceled",
+        error: "Run canceled."
+      })
+    } finally {
+      dummyWorker.kill("SIGKILL")
+    }
   })
 
   it("enforces one active run per agent with a cross-process lock", async () => {

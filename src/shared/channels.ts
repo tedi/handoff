@@ -22,7 +22,8 @@ export const IPC_CHANNELS = {
     getStatus: "handoff:bridge:get-status",
     getConfigSnippets: "handoff:bridge:get-config-snippets",
     listRuns: "handoff:bridge:list-runs",
-    getRun: "handoff:bridge:get-run"
+    getRun: "handoff:bridge:get-run",
+    cancelRun: "handoff:bridge:cancel-run"
   },
   skills: {
     getStatus: "handoff:skills:get-status",

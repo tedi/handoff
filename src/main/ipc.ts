@@ -448,6 +448,9 @@ export function registerIpcHandlers(ipcMain: IpcMain, service: HandoffService) {
   ipcMain.handle(IPC_CHANNELS.bridge.getRun, (_event, runId: string) =>
     service.bridge.getRun(runId)
   )
+  ipcMain.handle(IPC_CHANNELS.bridge.cancelRun, (_event, runId: string) =>
+    service.bridge.cancelRun(runId)
+  )
   ipcMain.handle(IPC_CHANNELS.skills.getStatus, () => service.skills.getStatus())
   ipcMain.handle(
     IPC_CHANNELS.skills.install,

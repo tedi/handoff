@@ -4,14 +4,17 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { IPC_CHANNELS } from "../shared/channels"
-import { AGENT_BRIDGE_MODE_ARG } from "./bridge"
+import { AGENT_BRIDGE_MODE_ARG, AGENT_BRIDGE_WORKER_MODE_ARG, runAgentBridgeWorkerJob } from "./bridge"
 import { runAgentBridgeMcpServer } from "./bridge-server"
 import { registerIpcHandlers } from "./ipc"
 import { createHandoffService } from "./service"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isBridgeMode = process.argv.includes(AGENT_BRIDGE_MODE_ARG)
-const service = isBridgeMode
+const workerModeIndex = process.argv.indexOf(AGENT_BRIDGE_WORKER_MODE_ARG)
+const isWorkerMode = workerModeIndex >= 0
+const workerRunId = isWorkerMode ? process.argv[workerModeIndex + 1] ?? null : null
+const service = isBridgeMode || isWorkerMode
   ? null
   : createHandoffService({
       appDir: app.getAppPath(),
@@ -64,6 +67,22 @@ async function createMainWindow() {
 app.whenReady().then(async () => {
   if (isBridgeMode) {
     await runAgentBridgeMcpServer()
+    return
+  }
+
+  if (isWorkerMode) {
+    app.dock?.hide()
+
+    if (!workerRunId) {
+      app.exit(1)
+      return
+    }
+
+    await runAgentBridgeWorkerJob({
+      dataDir: app.getPath("userData"),
+      runId: workerRunId
+    })
+    app.exit(0)
     return
   }
 

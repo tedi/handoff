@@ -564,6 +564,10 @@ function formatAgentRunStatus(status: AgentRunRecord["status"]) {
     return "Failed"
   }
 
+  if (status === "canceled") {
+    return "Canceled"
+  }
+
   return "Running"
 }
 
@@ -2012,8 +2016,9 @@ function BridgeSettingsCard({
       <div className="settings-card-copy">
         <h2>Agent bridge</h2>
         <p>
-          Exposes saved Handoff agents through a local MCP stdio entrypoint. Each call runs
-          headlessly and stores its result in the agent history below.
+          Exposes saved Handoff agents through a local MCP stdio entrypoint. Async jobs are
+          started quickly, then clients poll for completion while Handoff runs the provider
+          headlessly in the background.
         </p>
       </div>
 
@@ -2438,7 +2443,8 @@ function AgentRunsPane({
   selectedRunId,
   isLoading,
   runsError,
-  onSelectRun
+  onSelectRun,
+  onCancelRun
 }: {
   agent: AgentDefinition | null
   runs: AgentRunRecord[]
@@ -2446,6 +2452,7 @@ function AgentRunsPane({
   isLoading: boolean
   runsError: string | null
   onSelectRun(runId: string): void
+  onCancelRun(runId: string): void
 }) {
   if (!agent) {
     return null
@@ -2493,6 +2500,18 @@ function AgentRunsPane({
 
           {selectedRun ? (
             <div className="agent-run-detail">
+              <div className="settings-card-inline-actions">
+                {selectedRun.status === "running" ? (
+                  <button
+                    className="ghost-button"
+                    onClick={() => onCancelRun(selectedRun.runId)}
+                    type="button"
+                  >
+                    Cancel run
+                  </button>
+                ) : null}
+              </div>
+
               <div className="settings-meta-grid">
                 <div className="settings-meta-item">
                   <span className="settings-meta-label">Status</span>
@@ -2526,6 +2545,12 @@ function AgentRunsPane({
                   <span className="settings-meta-label">Run ID</span>
                   <SettingsValue monospace value={selectedRun.runId} />
                 </div>
+                {selectedRun.finishedAt ? (
+                  <div className="settings-meta-item">
+                    <span className="settings-meta-label">Finished</span>
+                    <SettingsValue value={formatTimestamp(selectedRun.finishedAt)} />
+                  </div>
+                ) : null}
               </div>
 
               <div className="agent-run-body">
@@ -2553,15 +2578,17 @@ function AgentRunsPane({
 
                 <div className="settings-field">
                   <span className="settings-field-label">
-                    {selectedRun.status === "failed" ? "Error" : "Response"}
+                    {selectedRun.status === "completed" ? "Response" : "Error"}
                   </span>
                   <textarea
                     className="settings-input agent-run-textarea"
                     readOnly
                     spellCheck={false}
-                    value={selectedRun.status === "failed"
-                      ? selectedRun.error ?? ""
-                      : selectedRun.answer ?? ""}
+                    value={
+                      selectedRun.status === "completed"
+                        ? selectedRun.answer ?? ""
+                        : selectedRun.error ?? ""
+                    }
                   />
                 </div>
               </div>
@@ -2603,8 +2630,9 @@ function AgentAutomationPane({
       <div className="settings-card-copy">
         <h2>Automation / Skills</h2>
         <p>
-          Install the generic Handoff bridge skill for Codex and Claude Code. Explicit
-          agent-name mentions win first; otherwise the skill routes by specialty.
+          Install the generic Handoff bridge skill for Codex and Claude Code. The
+          installed skill starts async bridge jobs, polls for completion, and routes by
+          exact agent name first, then specialty.
         </p>
       </div>
 
@@ -2623,7 +2651,7 @@ function AgentAutomationPane({
 
       <div className="settings-field-list">
         <label className="settings-field">
-          <span className="settings-field-label">Codex MCP timeout (seconds)</span>
+          <span className="settings-field-label">Codex client MCP timeout (seconds)</span>
           <input
             className="settings-input"
             inputMode="numeric"
@@ -2643,13 +2671,13 @@ function AgentAutomationPane({
             value={skillTimeouts.codex ?? ""}
           />
           <span className="settings-field-help">
-            Blank uses Codex&apos;s default MCP tool timeout. Changes apply on the next install
-            or reinstall.
+            Blank uses Codex&apos;s default MCP tool-call timeout. Async bridge jobs reduce
+            the need for long values. Changes apply on the next install or reinstall.
           </span>
         </label>
 
         <label className="settings-field">
-          <span className="settings-field-label">Claude MCP timeout (seconds)</span>
+          <span className="settings-field-label">Claude client MCP timeout (seconds)</span>
           <input
             className="settings-input"
             inputMode="numeric"
@@ -2669,8 +2697,8 @@ function AgentAutomationPane({
             value={skillTimeouts.claude ?? ""}
           />
           <span className="settings-field-help">
-            Blank uses Claude Code&apos;s default MCP tool timeout. Changes apply on the next
-            install or reinstall.
+            Blank uses Claude Code&apos;s default MCP tool-call timeout. Async bridge jobs
+            reduce the need for long values. Changes apply on the next install or reinstall.
           </span>
         </label>
       </div>
@@ -4585,6 +4613,10 @@ export default function App() {
       return () => undefined
     }
 
+    if (!agentRuns.some(run => run.status === "running")) {
+      return () => undefined
+    }
+
     const intervalId = window.setInterval(() => {
       void loadAgentRuns(selectedAgentId)
     }, 4_000)
@@ -4592,7 +4624,7 @@ export default function App() {
     return () => {
       window.clearInterval(intervalId)
     }
-  }, [activeSection, isSettingsOpen, loadAgentRuns, selectedAgentId])
+  }, [activeSection, agentRuns, isSettingsOpen, loadAgentRuns, selectedAgentId])
 
   useEffect(() => {
     const session = selectedNewThreadSourceSession
@@ -5216,6 +5248,30 @@ export default function App() {
   const handleSelectAgentRun = useCallback((runId: string) => {
     setSelectedAgentRunId(runId)
   }, [])
+
+  const handleCancelAgentRun = useCallback(
+    async (runId: string) => {
+      const api = getHandoffApi()
+      if (!api) {
+        showToast("The preload bridge did not load. Restart the app.", "error")
+        return
+      }
+
+      try {
+        const nextRun = await api.bridge.cancelRun(runId)
+        if (!nextRun) {
+          showToast("Run not found", "error")
+          return
+        }
+
+        await loadAgentRuns(nextRun.agentId)
+        showToast("Canceled agent run")
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : "Unable to cancel run.", "error")
+      }
+    },
+    [loadAgentRuns, showToast]
+  )
 
   const handleAgentDraftChange = useCallback((patch: AgentUpdatePatch) => {
     setAgentDraft(currentDraft => {
@@ -5842,6 +5898,9 @@ export default function App() {
                     <AgentRunsPane
                       agent={selectedAgent}
                       isLoading={isLoadingAgentRuns}
+                      onCancelRun={runId => {
+                        void handleCancelAgentRun(runId)
+                      }}
                       onSelectRun={handleSelectAgentRun}
                       runs={agentRuns}
                       runsError={agentRunsError}

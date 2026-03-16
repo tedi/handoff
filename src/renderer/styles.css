@@ -1420,6 +1420,10 @@ pre {
     color: #fca5a5;
 }
 
+.agent-run-status.is-canceled {
+    color: #fda4af;
+}
+
 .agent-run-status.is-running {
     color: #fbbf24;
 }
