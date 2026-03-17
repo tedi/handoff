@@ -1650,6 +1650,10 @@ pre {
     padding-bottom: 6px;
 }
 
+.agent-list>.session-row {
+    flex: 0 0 auto;
+}
+
 .agent-list-dashboard-title {
     display: inline-flex;
     align-items: center;
