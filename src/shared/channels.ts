@@ -18,6 +18,10 @@ export const IPC_CHANNELS = {
     delete: "handoff:agents:delete",
     duplicate: "handoff:agents:duplicate"
   },
+  threads: {
+    get: "handoff:threads:get",
+    update: "handoff:threads:update"
+  },
   bridge: {
     getStatus: "handoff:bridge:get-status",
     getConfigSnippets: "handoff:bridge:get-config-snippets",

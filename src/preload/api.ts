@@ -24,6 +24,7 @@ import type {
   SessionProvider,
   SkillInstallTarget,
   HandoffStateChangeEvent,
+  ThreadOrganizationSettings,
   TranscriptOptions
 } from "../shared/contracts"
 
@@ -154,6 +155,19 @@ export function createHandoffBridge(
         return ipcRenderer.invoke(IPC_CHANNELS.agents.duplicate, id) as Promise<
           Awaited<ReturnType<HandoffApi["agents"]["duplicate"]>>
         >
+      }
+    },
+
+    threads: {
+      get() {
+        return ipcRenderer.invoke(IPC_CHANNELS.threads.get) as Promise<ThreadOrganizationSettings>
+      },
+
+      update(settings: ThreadOrganizationSettings) {
+        return ipcRenderer.invoke(
+          IPC_CHANNELS.threads.update,
+          settings
+        ) as Promise<ThreadOrganizationSettings>
       }
     },
 

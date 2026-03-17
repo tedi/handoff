@@ -23,6 +23,7 @@ function createSession(overrides: Partial<SessionIndexEntry> = {}): SessionIndex
     provider,
     archived: overrides.archived ?? false,
     threadName: overrides.threadName ?? "Highlights regression",
+    createdAt: overrides.createdAt ?? "2026-03-14T00:05:59.676Z",
     updatedAt: overrides.updatedAt ?? "2026-03-14T00:18:45.474Z",
     projectPath: overrides.projectPath ?? null
   }

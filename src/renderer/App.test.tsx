@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -21,13 +21,15 @@ import App from "./App"
 function createMockApi({
   agents = [],
   sessions,
+  threadOrganization,
   transcriptById,
   transcriptErrors = {},
   searchStatus,
   searchQuery
 }: {
   agents?: AgentDefinition[]
-  sessions: SessionListItem[]
+  sessions: Array<Omit<SessionListItem, "createdAt"> & Partial<Pick<SessionListItem, "createdAt">>>
+  threadOrganization?: import("../shared/contracts").ThreadOrganizationSettings
   transcriptById: Record<string, ConversationTranscript>
   transcriptErrors?: Record<string, Error>
   searchStatus?: SearchStatus
@@ -35,8 +37,14 @@ function createMockApi({
     query: string
     filters: import("../shared/contracts").SearchFilters
     limit: number
-  }) => SearchResult[] | Promise<SearchResult[]>
+  }) =>
+    | Array<Omit<SearchResult, "createdAt"> & Partial<Pick<SearchResult, "createdAt">>>
+    | Promise<Array<Omit<SearchResult, "createdAt"> & Partial<Pick<SearchResult, "createdAt">>>>
 }) {
+  const normalizedSessions: SessionListItem[] = sessions.map(session => ({
+    ...session,
+    createdAt: session.createdAt ?? session.updatedAt
+  }))
   const stateInfo: AppStateInfo = {
     indexPath: "/Users/tedikonda/.codex/session_index.jsonl",
     sessionsRoot: "/Users/tedikonda/.codex/sessions",
@@ -69,7 +77,13 @@ function createMockApi({
         enabledTerminalIds: ["terminal", "ghostty", "warp"],
         defaultTerminalId: "terminal"
       },
-      agents
+      agents,
+      threadOrganization: threadOrganization ?? {
+        viewMode: "chronological",
+        sortKey: "updated",
+        projects: {},
+        collections: []
+      }
     },
     providerInfo: {
       codex: {
@@ -198,7 +212,8 @@ function createMockApi({
             ...settingsSnapshot.settings.terminals,
             ...(patch.terminals ?? {})
           },
-          agents: settingsSnapshot.settings.agents
+          agents: settingsSnapshot.settings.agents,
+          threadOrganization: settingsSnapshot.settings.threadOrganization
         }
       })),
       resetProvider: vi.fn().mockResolvedValue(settingsSnapshot)
@@ -252,6 +267,10 @@ function createMockApi({
         agentState = [...agentState, duplicatedAgent]
         return { ...duplicatedAgent }
       })
+    },
+    threads: {
+      get: vi.fn().mockResolvedValue(settingsSnapshot.settings.threadOrganization),
+      update: vi.fn().mockImplementation(async nextOrganization => nextOrganization)
     },
     bridge: {
       getStatus: vi.fn().mockResolvedValue({
@@ -322,7 +341,7 @@ function createMockApi({
       copySetupInstructions: vi.fn().mockResolvedValue({ copied: true })
     },
     sessions: {
-      list: vi.fn().mockResolvedValue(sessions),
+      list: vi.fn().mockResolvedValue(normalizedSessions),
       getTranscript: vi.fn().mockImplementation(async (id: string, options) => {
         const error = transcriptErrors[id]
         if (error && options.includeDiffs) {
@@ -346,12 +365,16 @@ function createMockApi({
           state: "ready",
           message: null,
           indexedAt: "2026-03-14T00:20:00.000Z",
-          documentCount: sessions.length
+          documentCount: normalizedSessions.length
         }
       ),
-      query: vi.fn().mockImplementation(async params =>
-        searchQuery ? searchQuery(params) : []
-      ),
+      query: vi.fn().mockImplementation(async params => {
+        const results = searchQuery ? await searchQuery(params) : []
+        return results.map(result => ({
+          ...result,
+          createdAt: result.createdAt ?? result.updatedAt
+        }))
+      }),
       onStatusChanged(listener) {
         searchStatusListeners.add(listener)
 
@@ -1486,6 +1509,132 @@ describe("Handoff App", () => {
     expect(await screen.findByText("Saved agent")).toBeInTheDocument()
   })
 
+  it("creates a new collection from the threads sidebar and places it first", async () => {
+    const { api } = createMockApi({
+      sessions: [
+        {
+          id: "session-1",
+          provider: "codex",
+          sourceSessionId: "session-1",
+          threadName: "Gesture regression",
+          updatedAt: "2026-03-14T01:00:00.000Z",
+          sessionPath: "/tmp/session-1.jsonl",
+          projectPath: "/tmp/project",
+          archived: false
+        }
+      ],
+      threadOrganization: {
+        viewMode: "collection",
+        sortKey: "updated",
+        projects: {},
+        collections: []
+      },
+      transcriptById: {
+        "session-1": {
+          id: "session-1",
+          provider: "codex",
+          sourceSessionId: "session-1",
+          threadName: "Gesture regression",
+          updatedAt: "2026-03-14T01:00:00.000Z",
+          projectPath: "/tmp/project",
+          entries: [],
+          markdown: "",
+          lastAssistantMarkdown: "",
+          hasDiffs: false,
+          sessionClient: "cli",
+          sessionCwd: "/tmp/project",
+          sessionPath: "/tmp/session-1.jsonl",
+          archived: false
+        }
+      }
+    })
+
+    window.handoffApp = api
+    render(<App />)
+
+    await userEvent.click(await screen.findByRole("button", { name: "New collection" }))
+    const dialog = await screen.findByRole("dialog", { name: "Create collection" })
+    expect(dialog).toBeInTheDocument()
+
+    const input = screen.getByLabelText("Collection name")
+    await userEvent.clear(input)
+    await userEvent.type(input, "Launch blockers")
+    await userEvent.click(within(dialog).getByRole("button", { name: "Create collection" }))
+
+    expect(await screen.findByText("Launch blockers")).toBeInTheDocument()
+    expect(api.threads.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        viewMode: "collection",
+        collections: expect.arrayContaining([
+          expect.objectContaining({
+            name: "Launch blockers",
+            order: 0
+          })
+        ])
+      })
+    )
+  })
+
+  it("opens the collection actions menu from the collection header", async () => {
+    const { api } = createMockApi({
+      sessions: [
+        {
+          id: "session-1",
+          provider: "codex",
+          sourceSessionId: "session-1",
+          threadName: "Gesture regression",
+          updatedAt: "2026-03-14T01:00:00.000Z",
+          sessionPath: "/tmp/session-1.jsonl",
+          projectPath: "/tmp/project",
+          archived: false
+        }
+      ],
+      threadOrganization: {
+        viewMode: "collection",
+        sortKey: "updated",
+        projects: {},
+        collections: [
+          {
+            id: "collection-1",
+            name: "Launch blockers",
+            icon: "stack",
+            color: "#8b7cf6",
+            collapsed: false,
+            order: 0,
+            threadIds: ["session-1"]
+          }
+        ]
+      },
+      transcriptById: {
+        "session-1": {
+          id: "session-1",
+          provider: "codex",
+          sourceSessionId: "session-1",
+          threadName: "Gesture regression",
+          updatedAt: "2026-03-14T01:00:00.000Z",
+          projectPath: "/tmp/project",
+          entries: [],
+          markdown: "",
+          lastAssistantMarkdown: "",
+          hasDiffs: false,
+          sessionClient: "cli",
+          sessionCwd: "/tmp/project",
+          sessionPath: "/tmp/session-1.jsonl",
+          archived: false
+        }
+      }
+    })
+
+    window.handoffApp = api
+    render(<App />)
+
+    await userEvent.click(await screen.findByRole("button", { name: "Open collection actions" }))
+
+    expect(await screen.findByRole("button", { name: "Rename" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Change color/icon" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Remove collection" })).toBeInTheDocument()
+  })
+
   it("shows automation setup actions for the selected agent", async () => {
     const agent: AgentDefinition = {
       id: "agent-1",
@@ -1616,7 +1765,7 @@ describe("Handoff App", () => {
     expect(screen.getByText("Review this release plan.")).toBeInTheDocument()
     expect(screen.getByText("Looks ready.")).toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole("button", { name: /Release reviewer GPT-5.4/i }))
+    await userEvent.click(screen.getByRole("button", { name: "Release reviewer" }))
     expect(await screen.findByRole("button", { name: "Edit" })).toBeInTheDocument()
     expect(screen.getByText("Agent tasks")).toBeInTheDocument()
     expect(screen.getByText("Release planning thread · thread-123")).toBeInTheDocument()

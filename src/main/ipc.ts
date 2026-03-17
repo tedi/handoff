@@ -437,6 +437,10 @@ export function registerIpcHandlers(ipcMain: IpcMain, service: HandoffService) {
     IPC_CHANNELS.agents.duplicate,
     (_event, id: string) => service.agents.duplicate(id)
   )
+  ipcMain.handle(IPC_CHANNELS.threads.get, () => service.threads.get())
+  ipcMain.handle(IPC_CHANNELS.threads.update, (_event, settings) =>
+    service.threads.update(settings)
+  )
   ipcMain.handle(IPC_CHANNELS.bridge.getStatus, () => service.bridge.getStatus())
   ipcMain.handle(IPC_CHANNELS.bridge.getConfigSnippets, () =>
     service.bridge.getConfigSnippets()
@@ -634,6 +638,8 @@ export function registerIpcHandlers(ipcMain: IpcMain, service: HandoffService) {
     ipcMain.removeHandler(IPC_CHANNELS.agents.update)
     ipcMain.removeHandler(IPC_CHANNELS.agents.delete)
     ipcMain.removeHandler(IPC_CHANNELS.agents.duplicate)
+    ipcMain.removeHandler(IPC_CHANNELS.threads.get)
+    ipcMain.removeHandler(IPC_CHANNELS.threads.update)
     ipcMain.removeHandler(IPC_CHANNELS.selector.app.getStateInfo)
     ipcMain.removeHandler(IPC_CHANNELS.selector.app.openPath)
     ipcMain.removeHandler(IPC_CHANNELS.selector.app.refresh)

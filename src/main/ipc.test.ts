@@ -81,7 +81,13 @@ const settingsSnapshot: HandoffSettingsSnapshot = {
       enabledTerminalIds: ["terminal", "ghostty"],
       defaultTerminalId: "ghostty"
     },
-    agents: []
+    agents: [],
+    threadOrganization: {
+      viewMode: "chronological",
+      sortKey: "updated",
+      projects: {},
+      collections: []
+    }
   },
   providerInfo: {
     codex: {

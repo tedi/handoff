@@ -60,7 +60,13 @@ async function writeSettings(
       enabledTerminalIds: ["terminal"],
       defaultTerminalId: "terminal"
     },
-    agents
+    agents,
+    threadOrganization: {
+      viewMode: "chronological",
+      sortKey: "updated",
+      projects: {},
+      collections: []
+    }
   }
 
   await fs.writeFile(

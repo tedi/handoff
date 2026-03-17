@@ -27,6 +27,7 @@ import type {
   SessionIndexEntry,
   SessionListItem,
   SessionProvider,
+  ThreadOrganizationSettings,
   TranscriptOptions
 } from "../shared/contracts"
 import { createAgentBridgeService, type AgentBridgeService } from "./bridge"
@@ -84,6 +85,10 @@ export interface HandoffService {
     delete(id: string): Promise<AgentDeleteResult>
     duplicate(id: string): Promise<AgentDefinition>
   }
+  threads: {
+    get(): Promise<ThreadOrganizationSettings>
+    update(settings: ThreadOrganizationSettings): Promise<ThreadOrganizationSettings>
+  }
   bridge: {
     getStatus(): Promise<AgentBridgeHealth>
     getConfigSnippets(): Promise<AgentBridgeConfigSnippets>
@@ -132,6 +137,11 @@ interface CacheState {
   pathById: Map<string, string>
 }
 
+interface CodexSessionFileMetadata {
+  projectPath: string | null
+  createdAt: string | null
+}
+
 interface SessionLocation {
   path: string
   archived: boolean
@@ -140,6 +150,7 @@ interface SessionLocation {
 interface ClaudeSessionFileMetadata {
   sourceSessionId: string | null
   firstUserText: string | null
+  createdAt: string | null
   updatedAt: string | null
   projectPath: string | null
   isSidechain: boolean
@@ -267,13 +278,21 @@ async function buildCodexSessionLocationMap(params: {
   return locationsById
 }
 
-async function readCodexSessionProjectPath(sessionPath: string) {
+async function readCodexSessionFileMetadata(
+  sessionPath: string
+): Promise<CodexSessionFileMetadata> {
   let content = ""
   try {
     content = await fs.readFile(sessionPath, "utf8")
   } catch {
-    return null
+    return {
+      projectPath: null,
+      createdAt: null
+    }
   }
+
+  let projectPath: string | null = null
+  let createdAt: string | null = null
 
   for (const rawLine of content.split(/\r?\n/)) {
     const line = rawLine.trim()
@@ -288,16 +307,31 @@ async function readCodexSessionProjectPath(sessionPath: string) {
       continue
     }
 
+    if (typeof record.timestamp === "string" && (!createdAt || record.timestamp < createdAt)) {
+      createdAt = record.timestamp
+    }
+
     if (record.type !== "session_meta" || !isRecord(record.payload)) {
       continue
     }
 
     const cwd =
       typeof record.payload.cwd === "string" ? record.payload.cwd.trim() : ""
-    return cwd || null
+    if (!projectPath) {
+      projectPath = cwd || null
+    }
+
+    const sessionTimestamp =
+      typeof record.payload.timestamp === "string" ? record.payload.timestamp : null
+    if (sessionTimestamp && (!createdAt || sessionTimestamp < createdAt)) {
+      createdAt = sessionTimestamp
+    }
   }
 
-  return null
+  return {
+    projectPath,
+    createdAt
+  }
 }
 
 function parseCodexIndexLine(line: string, lineNumber: number): SessionIndexEntry {
@@ -327,6 +361,7 @@ function parseCodexIndexLine(line: string, lineNumber: number): SessionIndexEntr
     provider: "codex",
     archived: false,
     threadName: (parsed as { thread_name: string }).thread_name,
+    createdAt: (parsed as { updated_at: string }).updated_at,
     updatedAt: (parsed as { updated_at: string }).updated_at,
     projectPath: null
   }
@@ -400,6 +435,7 @@ async function readClaudeSessionFileMetadata(
     return {
       sourceSessionId: null,
       firstUserText: null,
+      createdAt: null,
       updatedAt: null,
       projectPath: null,
       isSidechain: false,
@@ -409,6 +445,7 @@ async function readClaudeSessionFileMetadata(
 
   let sourceSessionId: string | null = null
   let firstUserText: string | null = null
+  let createdAt: string | null = null
   let updatedAt: string | null = null
   let projectPath: string | null = null
   let isSidechain = false
@@ -432,6 +469,16 @@ async function readClaudeSessionFileMetadata(
 
     if (!sourceSessionId && typeof record.sessionId === "string") {
       sourceSessionId = record.sessionId
+    }
+
+    if (!createdAt && typeof record.timestamp === "string") {
+      createdAt = record.timestamp
+    } else if (
+      typeof record.timestamp === "string" &&
+      createdAt !== null &&
+      record.timestamp < createdAt
+    ) {
+      createdAt = record.timestamp
     }
 
     if (!updatedAt && typeof record.timestamp === "string") {
@@ -496,6 +543,7 @@ async function readClaudeSessionFileMetadata(
   return {
     sourceSessionId,
     firstUserText,
+    createdAt,
     updatedAt,
     projectPath,
     isSidechain,
@@ -556,9 +604,11 @@ async function loadCodexEntries(params: {
         return entry
       }
 
+      const metadata = await readCodexSessionFileMetadata(sessionPath)
       return {
         ...entry,
-        projectPath: await readCodexSessionProjectPath(sessionPath)
+        createdAt: metadata.createdAt ?? entry.createdAt,
+        projectPath: metadata.projectPath
       }
     })
   )
@@ -624,6 +674,7 @@ async function loadClaudeIndexEntries(projectDir: string, indexPath: string) {
       typeof rawEntry.modified === "string"
         ? rawEntry.modified
         : fileMetadata?.updatedAt ?? stat?.mtime.toISOString() ?? new Date(0).toISOString()
+    const createdAt = fileMetadata?.createdAt ?? updatedAt
 
     const sessionId = createSessionKey("claude", sourceSessionId)
     const sessionPath = sessionPathExists ? preferredPath : null
@@ -641,6 +692,7 @@ async function loadClaudeIndexEntries(projectDir: string, indexPath: string) {
         firstPrompt: rawEntry.firstPrompt,
         fileMetadata
       }),
+      createdAt,
       updatedAt,
       projectPath:
         typeof rawEntry.projectPath === "string"
@@ -680,6 +732,7 @@ async function loadClaudeFallbackEntries(projectDir: string) {
       provider: "claude",
       archived: false,
       threadName: resolveClaudeThreadName({ fileMetadata: metadata }),
+      createdAt: metadata.createdAt ?? metadata.updatedAt ?? stat.mtime.toISOString(),
       updatedAt: metadata.updatedAt ?? stat.mtime.toISOString(),
       projectPath: metadata.projectPath
     })
@@ -958,6 +1011,16 @@ export function createHandoffService(
 
       async duplicate(id) {
         return settingsStore.duplicateAgent(id)
+      }
+    },
+
+    threads: {
+      async get() {
+        return settingsStore.getThreadOrganization()
+      },
+
+      async update(settings) {
+        return settingsStore.updateThreadOrganization(settings)
       }
     },
 

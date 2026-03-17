@@ -98,6 +98,7 @@ describe("createHandoffSearchService", () => {
         provider: "codex",
         archived: false,
         threadName: "Gesture regression",
+        createdAt: "2026-03-13T23:50:00.000Z",
         updatedAt: "2026-03-14T01:00:00.000Z",
         projectPath: "/tmp/project",
         sessionPath
@@ -154,6 +155,7 @@ describe("createHandoffSearchService", () => {
         provider: "codex",
         archived: false,
         threadName: "Gesture regression",
+        createdAt: "2026-03-13T23:50:00.000Z",
         updatedAt: "2026-03-14T01:00:00.000Z",
         projectPath: "/tmp/project",
         sessionPath: gestureSessionPath
@@ -164,6 +166,7 @@ describe("createHandoffSearchService", () => {
         provider: "codex",
         archived: true,
         threadName: "Archived maintenance",
+        createdAt: "2026-03-12T23:50:00.000Z",
         updatedAt: "2026-03-13T01:00:00.000Z",
         projectPath: "/tmp/archive-project",
         sessionPath: archivedSessionPath

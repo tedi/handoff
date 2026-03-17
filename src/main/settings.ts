@@ -18,7 +18,9 @@ import type {
   SkillProviderSettings,
   TerminalAppId,
   TerminalOption,
-  TerminalPreferences
+  TerminalPreferences,
+  ThreadCollection,
+  ThreadOrganizationSettings
 } from "../shared/contracts"
 import {
   getDefaultComposerModelId,
@@ -50,6 +52,17 @@ const TERMINAL_OPTIONS: ReadonlyArray<{
   }
 ] as const
 
+const DEFAULT_THREAD_COLLECTION_ICON: ThreadCollection["icon"] = "stack"
+const DEFAULT_THREAD_COLLECTION_COLOR = "#8b7cf6"
+const SUPPORTED_THREAD_COLLECTION_ICONS = new Set<NonNullable<ThreadCollection["icon"]>>([
+  "stack",
+  "bookmark",
+  "star",
+  "bolt",
+  "target",
+  "briefcase"
+])
+
 interface SettingsStoreOptions {
   dataDir: string
   codexHome: string
@@ -58,6 +71,8 @@ interface SettingsStoreOptions {
 
 const SUPPORTED_THINKING_LEVELS = new Set(["low", "medium", "high", "max"])
 const MAX_AGENT_TIMEOUT_SEC = 1_800
+const THREAD_VIEW_MODES = new Set(["chronological", "project", "collection"])
+const THREAD_SORT_KEYS = new Set(["updated", "created"])
 
 const SUPPORTED_TERMINAL_IDS = new Set<TerminalAppId>(
   TERMINAL_OPTIONS.map(option => option.id)
@@ -126,7 +141,17 @@ function getDefaultSettings(params: SettingsStoreOptions): HandoffSettings {
       claude: getDefaultSkillProviderSettings()
     },
     terminals: getDefaultTerminalPreferences(),
-    agents: []
+    agents: [],
+    threadOrganization: getDefaultThreadOrganizationSettings()
+  }
+}
+
+function getDefaultThreadOrganizationSettings(): ThreadOrganizationSettings {
+  return {
+    viewMode: "chronological",
+    sortKey: "updated",
+    projects: {},
+    collections: []
   }
 }
 
@@ -230,6 +255,127 @@ function normalizeAgents(value: unknown) {
   return agents
 }
 
+function normalizeThreadOrder(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [] as string[]
+  }
+
+  return Array.from(
+    new Set(
+      value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+    )
+  )
+}
+
+function normalizeThreadOrganizationSettings(value: unknown): ThreadOrganizationSettings {
+  const defaults = getDefaultThreadOrganizationSettings()
+  if (!value || typeof value !== "object") {
+    return defaults
+  }
+
+  const candidate = value as Partial<ThreadOrganizationSettings>
+  const rawProjects =
+    candidate.projects && typeof candidate.projects === "object"
+      ? candidate.projects
+      : {}
+  const projects = Object.fromEntries(
+    Object.entries(rawProjects).flatMap(([projectPath, state]) => {
+      if (!state || typeof state !== "object" || !projectPath.trim()) {
+        return []
+      }
+
+      const candidateState = state as Partial<ThreadOrganizationSettings["projects"][string]>
+      const nextOrder =
+        typeof candidateState.order === "number" && Number.isFinite(candidateState.order)
+          ? Math.max(0, Math.floor(candidateState.order))
+          : null
+
+      return [
+        [
+          projectPath,
+          {
+            projectPath,
+            alias: typeof candidateState.alias === "string" ? candidateState.alias : "",
+            collapsed: candidateState.collapsed === true,
+            order: nextOrder,
+            threadOrder: normalizeThreadOrder(candidateState.threadOrder)
+          }
+        ]
+      ]
+    })
+  ) satisfies ThreadOrganizationSettings["projects"]
+
+  const collections = Array.isArray(candidate.collections)
+    ? candidate.collections
+        .flatMap((collection, index) => {
+          if (!collection || typeof collection !== "object") {
+            return []
+          }
+
+          const candidateCollection = collection as Partial<ThreadCollection>
+          const id =
+            typeof candidateCollection.id === "string" && candidateCollection.id.trim()
+              ? candidateCollection.id.trim()
+              : null
+          const name =
+            typeof candidateCollection.name === "string" && candidateCollection.name.trim()
+              ? candidateCollection.name.trim()
+              : null
+
+          if (!id || !name) {
+            return []
+          }
+
+          const order =
+            typeof candidateCollection.order === "number" &&
+            Number.isFinite(candidateCollection.order)
+              ? Math.max(0, Math.floor(candidateCollection.order))
+              : null
+
+          return [
+            {
+              id,
+              name,
+              icon: normalizeThreadCollectionIcon(candidateCollection.icon),
+              color: normalizeThreadCollectionColor(candidateCollection.color),
+              collapsed: candidateCollection.collapsed === true,
+              order,
+              threadIds: normalizeThreadOrder(candidateCollection.threadIds)
+            }
+          ]
+        })
+        .sort((left, right) => {
+          if (left.order !== null && right.order !== null) {
+            return left.order - right.order || left.name.localeCompare(right.name)
+          }
+
+          if (left.order !== null) {
+            return -1
+          }
+
+          if (right.order !== null) {
+            return 1
+          }
+
+          return left.name.localeCompare(right.name)
+        })
+    : defaults.collections
+
+  return {
+    viewMode:
+      typeof candidate.viewMode === "string" &&
+      THREAD_VIEW_MODES.has(candidate.viewMode)
+        ? candidate.viewMode
+        : defaults.viewMode,
+    sortKey:
+      typeof candidate.sortKey === "string" && THREAD_SORT_KEYS.has(candidate.sortKey)
+        ? candidate.sortKey
+        : defaults.sortKey,
+    projects,
+    collections
+  }
+}
+
 function normalizeProviderOverrides(
   value: unknown,
   fallback: ProviderLaunchOverrides
@@ -329,7 +475,8 @@ function normalizeSettings(
       claude: normalizeSkillProviderSettings(candidate.skills?.claude, defaults.skills?.claude ?? getDefaultSkillProviderSettings())
     },
     terminals: normalizeTerminalPreferences(candidate.terminals, defaults.terminals),
-    agents: normalizeAgents(candidate.agents)
+    agents: normalizeAgents(candidate.agents),
+    threadOrganization: normalizeThreadOrganizationSettings(candidate.threadOrganization)
   }
 }
 
@@ -362,7 +509,8 @@ function mergeSettingsPatch(
       ...current.terminals,
       ...(patch.terminals ?? {})
     },
-    agents: current.agents
+    agents: current.agents,
+    threadOrganization: current.threadOrganization
   }
 }
 
@@ -519,6 +667,22 @@ async function readObservedClaudeModel(sessions: SessionListItem[]) {
   return null
 }
 
+function normalizeThreadCollectionIcon(value: unknown) {
+  if (typeof value === "string" && SUPPORTED_THREAD_COLLECTION_ICONS.has(value as NonNullable<ThreadCollection["icon"]>)) {
+    return value as NonNullable<ThreadCollection["icon"]>
+  }
+
+  return DEFAULT_THREAD_COLLECTION_ICON
+}
+
+function normalizeThreadCollectionColor(value: unknown) {
+  if (typeof value === "string" && value.trim()) {
+    return value.trim()
+  }
+
+  return DEFAULT_THREAD_COLLECTION_COLOR
+}
+
 async function readClaudeProviderInfo(params: {
   overrides: ProviderLaunchOverrides
   defaultHome: string
@@ -637,8 +801,38 @@ export function createHandoffSettingsStore(options: SettingsStoreOptions) {
           enabledTerminalIds: [...settings.terminals.enabledTerminalIds],
           defaultTerminalId: settings.terminals.defaultTerminalId
         },
-        agents: settings.agents.map(agent => ({ ...agent }))
+        agents: settings.agents.map(agent => ({ ...agent })),
+        threadOrganization: {
+          ...settings.threadOrganization,
+          projects: Object.fromEntries(
+            Object.entries(settings.threadOrganization.projects).map(([projectPath, state]) => [
+              projectPath,
+              {
+                ...state,
+                threadOrder: [...state.threadOrder]
+              }
+            ])
+          ),
+          collections: settings.threadOrganization.collections.map(collection => ({
+            ...collection,
+            threadIds: [...collection.threadIds]
+          }))
+        }
       }
+    },
+
+    async getThreadOrganization() {
+      const settings = await loadSettings()
+      return normalizeThreadOrganizationSettings(settings.threadOrganization)
+    },
+
+    async updateThreadOrganization(threadOrganization: ThreadOrganizationSettings) {
+      const currentSettings = await loadSettings()
+      const persistedSettings = await persistSettings({
+        ...currentSettings,
+        threadOrganization: normalizeThreadOrganizationSettings(threadOrganization)
+      })
+      return normalizeThreadOrganizationSettings(persistedSettings.threadOrganization)
     },
 
     async listAgents() {

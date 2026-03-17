@@ -20,6 +20,10 @@ const IPC_CHANNELS = {
     delete: "handoff:agents:delete",
     duplicate: "handoff:agents:duplicate"
   },
+  threads: {
+    get: "handoff:threads:get",
+    update: "handoff:threads:update"
+  },
   bridge: {
     getStatus: "handoff:bridge:get-status",
     getConfigSnippets: "handoff:bridge:get-config-snippets",
@@ -149,6 +153,14 @@ contextBridge.exposeInMainWorld("handoffApp", {
     },
     duplicate(id) {
       return ipcRenderer.invoke(IPC_CHANNELS.agents.duplicate, id)
+    }
+  },
+  threads: {
+    get() {
+      return ipcRenderer.invoke(IPC_CHANNELS.threads.get)
+    },
+    update(settings) {
+      return ipcRenderer.invoke(IPC_CHANNELS.threads.update, settings)
     }
   },
   bridge: {

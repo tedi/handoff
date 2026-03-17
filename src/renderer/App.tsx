@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type DragEvent as ReactDragEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode
 } from "react"
@@ -56,8 +57,13 @@ import type {
   TerminalAppId,
   TerminalOption,
   ThinkingLevel,
+  ThreadCollection,
+  ThreadCollectionIcon,
   ThreadLaunchMode,
-  ThreadLaunchVendor
+  ThreadLaunchVendor,
+  ThreadOrganizationSettings,
+  ThreadSortKey,
+  ThreadViewMode
 } from "../shared/contracts"
 import {
   getComposerModelLabel,
@@ -219,6 +225,193 @@ type FilterMenuKey = "archived" | "provider" | "project" | "date"
 type NewThreadTargetMenuKey = "vendor" | "launchMode" | "model" | "options"
 type CopyActionKey = "chat" | "chat-with-diffs" | "last-message"
 type OutputFormatKey = "markdown" | "json" | "structured"
+type ThreadGroupMenuKind = "project" | "collection"
+
+interface ThreadSidebarGroup {
+  id: string
+  kind: ThreadGroupMenuKind | "system"
+  title: string
+  subtitle: string | null
+  projectPath: string | null
+  collectionId: string | null
+  collapsed: boolean
+  sessions: SessionListItem[]
+  canRename: boolean
+  canDelete: boolean
+  canReorder: boolean
+  collectionIcon?: ThreadCollection["icon"]
+  collectionColor?: string
+}
+
+type ThreadDragItem =
+  | { type: "project-group"; projectPath: string }
+  | { type: "project-thread"; projectPath: string; threadId: string }
+  | { type: "collection-group"; collectionId: string }
+  | { type: "collection-thread"; collectionId: string | null; threadId: string }
+
+type ThreadDropIndicator =
+  | { type: "project-group"; projectPath: string; position: "before" | "after" }
+  | { type: "project-thread"; projectPath: string; threadId: string; position: "before" | "after" }
+  | { type: "project-append"; projectPath: string }
+  | { type: "collection-group"; collectionId: string; position: "before" | "after" }
+  | {
+      type: "collection-thread"
+      collectionId: string | null
+      threadId: string
+      position: "before" | "after"
+    }
+  | { type: "collection-append"; collectionId: string | null }
+
+function CollectionCreateDialog({
+  value,
+  inputRef,
+  onCancel,
+  onChange,
+  onSubmit
+}: {
+  value: string
+  inputRef: { current: HTMLInputElement | null }
+  onCancel(): void
+  onChange(value: string): void
+  onSubmit(): void
+}) {
+  return (
+    <div
+      aria-label="Create collection"
+      className="app-modal-backdrop"
+      onClick={onCancel}
+      role="dialog"
+    >
+      <div
+        className="app-modal-card"
+        onClick={event => event.stopPropagation()}
+      >
+        <div className="settings-card-copy">
+          <h2>New collection</h2>
+          <p>Name the collection to add it to the top of the list.</p>
+        </div>
+
+        <label className="settings-field">
+          <span className="settings-field-label">Collection name</span>
+          <input
+            className="settings-input"
+            onChange={event => onChange(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === "Enter") {
+                event.preventDefault()
+                onSubmit()
+                return
+              }
+
+              if (event.key === "Escape") {
+                event.preventDefault()
+                onCancel()
+              }
+            }}
+            ref={inputRef}
+            type="text"
+            value={value}
+          />
+        </label>
+
+        <div className="app-modal-actions">
+          <button className="ghost-button" onClick={onCancel} type="button">
+            Cancel
+          </button>
+          <button className="accent-button" onClick={onSubmit} type="button">
+            Create collection
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function CollectionAppearanceDialog({
+  color,
+  icon,
+  onCancel,
+  onColorSelect,
+  onIconSelect,
+  onSubmit
+}: {
+  color: string
+  icon: ThreadCollection["icon"] | null | undefined
+  onCancel(): void
+  onColorSelect(color: string): void
+  onIconSelect(icon: ThreadCollectionIcon): void
+  onSubmit(): void
+}) {
+  return (
+    <div
+      aria-label="Edit collection appearance"
+      className="app-modal-backdrop"
+      onClick={onCancel}
+      role="dialog"
+    >
+      <div className="app-modal-card" onClick={event => event.stopPropagation()}>
+        <div className="settings-card-copy">
+          <h2>Edit collection appearance</h2>
+          <p>Choose the icon and color for this collection.</p>
+        </div>
+
+        <div className="settings-field">
+          <span className="settings-field-label">Icon</span>
+          <div className="collection-icon-grid">
+            {THREAD_COLLECTION_ICON_OPTIONS.map(option => {
+              const isSelected = resolveCollectionIcon(icon) === option.value
+
+              return (
+                <button
+                  aria-label={option.label}
+                  className={`collection-icon-swatch ${isSelected ? "is-selected" : ""}`}
+                  key={option.value}
+                  onClick={() => onIconSelect(option.value)}
+                  style={{ "--collection-color": resolveCollectionColor(color) } as CSSProperties}
+                  type="button"
+                >
+                  <CollectionSymbol icon={option.value} />
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        <div className="settings-field">
+          <span className="settings-field-label">Color</span>
+          <div className="collection-color-grid">
+            {THREAD_COLLECTION_COLOR_OPTIONS.map(option => {
+              const isSelected = resolveCollectionColor(color) === option
+
+              return (
+                <button
+                  aria-label={`Color ${option}`}
+                  className={`collection-color-swatch ${isSelected ? "is-selected" : ""}`}
+                  key={option}
+                  onClick={() => onColorSelect(option)}
+                  style={{ "--collection-color": option } as CSSProperties}
+                  type="button"
+                />
+              )
+            })}
+          </div>
+        </div>
+
+        <div className="app-modal-actions">
+          <button className="ghost-button" onClick={onCancel} type="button">
+            Cancel
+          </button>
+          <button className="accent-button" onClick={onSubmit} type="button">
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const NO_PROJECT_GROUP_ID = "__no-project__"
+const UNASSIGNED_COLLECTION_GROUP_ID = "__unassigned__"
 
 const DEFAULT_SIDEBAR_FILTERS: SearchFilters = {
   archived: "not-archived",
@@ -233,6 +426,56 @@ const DEFAULT_SEARCH_FILTERS: SearchFilters = {
   projectPaths: [],
   dateRange: "30d"
 }
+
+const DEFAULT_THREAD_ORGANIZATION: ThreadOrganizationSettings = {
+  viewMode: "chronological",
+  sortKey: "updated",
+  projects: {},
+  collections: []
+}
+
+const DEFAULT_THREAD_COLLECTION_ICON: ThreadCollectionIcon = "stack"
+const DEFAULT_THREAD_COLLECTION_COLOR = "#8b7cf6"
+const THREAD_COLLECTION_COLOR_OPTIONS = [
+  "#8b7cf6",
+  "#22c55e",
+  "#06b6d4",
+  "#f59e0b",
+  "#ef4444",
+  "#ec4899",
+  "#84cc16",
+  "#14b8a6",
+  "#3b82f6",
+  "#f97316"
+] as const
+const THREAD_COLLECTION_ICON_OPTIONS: Array<{
+  value: ThreadCollectionIcon
+  label: string
+}> = [
+  { value: "stack", label: "Stack" },
+  { value: "bookmark", label: "Bookmark" },
+  { value: "star", label: "Star" },
+  { value: "bolt", label: "Bolt" },
+  { value: "target", label: "Target" },
+  { value: "briefcase", label: "Briefcase" }
+]
+
+const THREAD_VIEW_MODE_OPTIONS: Array<{
+  label: string
+  value: ThreadViewMode
+}> = [
+  { label: "By project", value: "project" },
+  { label: "By collection", value: "collection" },
+  { label: "Chronological list", value: "chronological" }
+]
+
+const THREAD_SORT_KEY_OPTIONS: Array<{
+  label: string
+  value: ThreadSortKey
+}> = [
+  { label: "Created", value: "created" },
+  { label: "Updated", value: "updated" }
+]
 
 const ARCHIVED_FILTER_OPTIONS: Array<{
   label: string
@@ -296,6 +539,7 @@ function applySettingsPatchToSnapshot(
     ...snapshot,
     settings: {
       agents: snapshot.settings.agents,
+      threadOrganization: snapshot.settings.threadOrganization,
       providers: {
         codex: {
           ...snapshot.settings.providers.codex,
@@ -431,6 +675,405 @@ function formatProjectSummary(
   }
 
   return `${selectedProjectPaths.length} selected`
+}
+
+function createDefaultThreadOrganization(): ThreadOrganizationSettings {
+  return {
+    viewMode: DEFAULT_THREAD_ORGANIZATION.viewMode,
+    sortKey: DEFAULT_THREAD_ORGANIZATION.sortKey,
+    projects: {},
+    collections: []
+  }
+}
+
+function cloneThreadOrganization(
+  organization: ThreadOrganizationSettings
+): ThreadOrganizationSettings {
+  return {
+    viewMode: organization.viewMode,
+    sortKey: organization.sortKey,
+    projects: Object.fromEntries(
+      Object.entries(organization.projects).map(([projectPath, state]) => [
+        projectPath,
+        {
+          ...state,
+          threadOrder: [...state.threadOrder]
+        }
+      ])
+    ),
+    collections: organization.collections.map(collection => ({
+      ...collection,
+      threadIds: [...collection.threadIds]
+    }))
+  }
+}
+
+function getSessionSortTimestamp(session: SessionListItem, sortKey: ThreadSortKey) {
+  const value = sortKey === "created" ? session.createdAt : session.updatedAt
+  const timestamp = Date.parse(value)
+  return Number.isNaN(timestamp) ? 0 : timestamp
+}
+
+function sortSessionsByThreadKey(
+  sessions: SessionListItem[],
+  sortKey: ThreadSortKey
+) {
+  return [...sessions].sort((left, right) => {
+    const timestampDiff =
+      getSessionSortTimestamp(right, sortKey) - getSessionSortTimestamp(left, sortKey)
+    if (timestampDiff !== 0) {
+      return timestampDiff
+    }
+
+    return right.updatedAt.localeCompare(left.updatedAt) || left.threadName.localeCompare(right.threadName)
+  })
+}
+
+function orderSessionsWithManualOrder(
+  sessions: SessionListItem[],
+  threadOrder: string[],
+  sortKey: ThreadSortKey
+) {
+  const byId = new Map(sessions.map(session => [session.id, session]))
+  const orderedSessions = threadOrder
+    .map(sessionId => byId.get(sessionId) ?? null)
+    .filter((session): session is SessionListItem => session !== null)
+  const seenSessionIds = new Set(orderedSessions.map(session => session.id))
+  const remainingSessions = sortSessionsByThreadKey(
+    sessions.filter(session => !seenSessionIds.has(session.id)),
+    sortKey
+  )
+
+  return [...orderedSessions, ...remainingSessions]
+}
+
+function moveItemWithPosition<T>(
+  items: T[],
+  fromIndex: number,
+  toIndex: number,
+  position: "before" | "after"
+) {
+  if (fromIndex === -1 || toIndex === -1) {
+    return items
+  }
+
+  const nextItems = [...items]
+  const [movedItem] = nextItems.splice(fromIndex, 1)
+  let insertionIndex = toIndex
+
+  if (fromIndex < toIndex) {
+    insertionIndex -= 1
+  }
+
+  if (position === "after") {
+    insertionIndex += 1
+  }
+
+  nextItems.splice(Math.max(0, insertionIndex), 0, movedItem)
+  return nextItems
+}
+
+function mergeVisibleOrderWithHiddenIds(
+  existingIds: string[],
+  visibleIds: string[]
+) {
+  const visibleIdSet = new Set(visibleIds)
+  const hiddenIds = existingIds.filter(id => !visibleIdSet.has(id))
+  return [...visibleIds, ...hiddenIds.filter(id => !visibleIds.includes(id))]
+}
+
+function getProjectLabel(
+  projectPath: string,
+  organization: ThreadOrganizationSettings
+) {
+  const alias = organization.projects[projectPath]?.alias?.trim() ?? ""
+  return alias || formatProjectFilterLabel(projectPath)
+}
+
+function getCollectionMembershipMap(collections: ThreadCollection[]) {
+  const membershipMap = new Map<string, Set<string>>()
+
+  for (const collection of collections) {
+    for (const threadId of collection.threadIds) {
+      const membership = membershipMap.get(threadId) ?? new Set<string>()
+      membership.add(collection.id)
+      membershipMap.set(threadId, membership)
+    }
+  }
+
+  return membershipMap
+}
+
+function buildProjectSidebarGroups(params: {
+  sessions: SessionListItem[]
+  organization: ThreadOrganizationSettings
+}) {
+  const groupEntries = new Map<string, SessionListItem[]>()
+  for (const session of params.sessions) {
+    const groupId = session.projectPath ?? NO_PROJECT_GROUP_ID
+    const groupSessions = groupEntries.get(groupId) ?? []
+    groupSessions.push(session)
+    groupEntries.set(groupId, groupSessions)
+  }
+
+  const projectGroups: ThreadSidebarGroup[] = []
+  let noProjectGroup: ThreadSidebarGroup | null = null
+
+  for (const [groupId, sessions] of groupEntries) {
+    if (groupId === NO_PROJECT_GROUP_ID) {
+      noProjectGroup = {
+        id: NO_PROJECT_GROUP_ID,
+        kind: "system",
+        title: "No project",
+        subtitle: null,
+        projectPath: null,
+        collectionId: null,
+        collapsed: false,
+        sessions: sortSessionsByThreadKey(sessions, params.organization.sortKey),
+        canRename: false,
+        canDelete: false,
+        canReorder: false
+      }
+      continue
+    }
+
+    const projectState = params.organization.projects[groupId]
+    const orderedSessions = orderSessionsWithManualOrder(
+      sessions,
+      projectState?.threadOrder ?? [],
+      params.organization.sortKey
+    )
+
+    projectGroups.push({
+      id: groupId,
+      kind: "project",
+      title: getProjectLabel(groupId, params.organization),
+      subtitle: groupId,
+      projectPath: groupId,
+      collectionId: null,
+      collapsed: projectState?.collapsed ?? false,
+      sessions: orderedSessions,
+      canRename: true,
+      canDelete: false,
+      canReorder: true
+    })
+  }
+
+  const manualProjectGroups = projectGroups
+    .filter(group => {
+      const order = group.projectPath ? params.organization.projects[group.projectPath]?.order : null
+      return order !== null && order !== undefined
+    })
+    .sort((left, right) => {
+      const leftOrder = left.projectPath ? params.organization.projects[left.projectPath]?.order ?? 0 : 0
+      const rightOrder = right.projectPath ? params.organization.projects[right.projectPath]?.order ?? 0 : 0
+      return leftOrder - rightOrder || left.title.localeCompare(right.title)
+    })
+  const manualGroupIds = new Set(manualProjectGroups.map(group => group.id))
+  const unorderedProjectGroups = projectGroups
+    .filter(group => !manualGroupIds.has(group.id))
+    .sort((left, right) => {
+      const leftSession = left.sessions[0]
+      const rightSession = right.sessions[0]
+      if (!leftSession || !rightSession) {
+        return left.title.localeCompare(right.title)
+      }
+
+      const timestampDiff =
+        getSessionSortTimestamp(rightSession, params.organization.sortKey) -
+        getSessionSortTimestamp(leftSession, params.organization.sortKey)
+      return timestampDiff !== 0 ? timestampDiff : left.title.localeCompare(right.title)
+    })
+
+  return [...manualProjectGroups, ...unorderedProjectGroups, ...(noProjectGroup ? [noProjectGroup] : [])]
+}
+
+function buildCollectionSidebarGroups(params: {
+  sessions: SessionListItem[]
+  organization: ThreadOrganizationSettings
+}) {
+  const sessionById = new Map(params.sessions.map(session => [session.id, session]))
+  const membershipMap = getCollectionMembershipMap(params.organization.collections)
+
+  const collectionGroups = params.organization.collections.flatMap(collection => {
+      const visibleSessions = collection.threadIds
+        .map(threadId => sessionById.get(threadId) ?? null)
+        .filter((session): session is SessionListItem => session !== null)
+
+      return [
+        {
+          id: collection.id,
+          kind: "collection" as const,
+          title: collection.name,
+          subtitle: null,
+          projectPath: null,
+          collectionId: collection.id,
+          collapsed: collection.collapsed,
+          sessions: orderSessionsWithManualOrder(
+            visibleSessions,
+            collection.threadIds,
+            params.organization.sortKey
+          ),
+          canRename: true,
+          canDelete: true,
+          canReorder: true,
+          collectionIcon: collection.icon,
+          collectionColor: collection.color
+        } satisfies ThreadSidebarGroup
+      ]
+    })
+
+  const manualCollectionGroups = collectionGroups
+    .filter(group => {
+      const order =
+        params.organization.collections.find(collection => collection.id === group.id)?.order ?? null
+      return order !== null && order !== undefined
+    })
+    .sort((left, right) => {
+      const leftOrder =
+        params.organization.collections.find(collection => collection.id === left.id)?.order ?? 0
+      const rightOrder =
+        params.organization.collections.find(collection => collection.id === right.id)?.order ?? 0
+      return leftOrder - rightOrder || left.title.localeCompare(right.title)
+    })
+  const manualCollectionIds = new Set(manualCollectionGroups.map(group => group.id))
+  const unorderedCollectionGroups = collectionGroups
+    .filter(group => !manualCollectionIds.has(group.id))
+    .sort((left, right) => {
+      const leftSession = left.sessions[0]
+      const rightSession = right.sessions[0]
+      if (!leftSession || !rightSession) {
+        return left.title.localeCompare(right.title)
+      }
+
+      const timestampDiff =
+        getSessionSortTimestamp(rightSession, params.organization.sortKey) -
+        getSessionSortTimestamp(leftSession, params.organization.sortKey)
+      return timestampDiff !== 0 ? timestampDiff : left.title.localeCompare(right.title)
+    })
+
+  const unassignedSessions = params.sessions.filter(session => {
+    const membership = membershipMap.get(session.id)
+    return !membership || membership.size === 0
+  })
+  const unassignedGroup =
+    unassignedSessions.length > 0
+      ? ({
+          id: UNASSIGNED_COLLECTION_GROUP_ID,
+          kind: "system" as const,
+          title: "Unassigned",
+          subtitle: null,
+          projectPath: null,
+          collectionId: null,
+          collapsed: false,
+          sessions: sortSessionsByThreadKey(unassignedSessions, params.organization.sortKey),
+          canRename: false,
+          canDelete: false,
+          canReorder: false
+        } satisfies ThreadSidebarGroup)
+      : null
+
+  return [
+    ...manualCollectionGroups,
+    ...unorderedCollectionGroups,
+    ...(unassignedGroup ? [unassignedGroup] : [])
+  ]
+}
+
+function buildUniqueCollectionName(
+  collections: ThreadCollection[],
+  baseName: string
+) {
+  const trimmedBaseName = baseName.trim() || "New collection"
+  const normalizedNames = new Set(
+    collections.map(collection => collection.name.trim().toLowerCase()).filter(Boolean)
+  )
+
+  if (!normalizedNames.has(trimmedBaseName.toLowerCase())) {
+    return trimmedBaseName
+  }
+
+  let suffix = 2
+  while (normalizedNames.has(`${trimmedBaseName} ${suffix}`.toLowerCase())) {
+    suffix += 1
+  }
+
+  return `${trimmedBaseName} ${suffix}`
+}
+
+function resequenceProjectOrders(
+  organization: ThreadOrganizationSettings,
+  orderedProjectPaths: string[]
+) {
+  const remainingProjectPaths = Object.values(organization.projects)
+    .filter(project => project.order !== null && !orderedProjectPaths.includes(project.projectPath))
+    .sort((left, right) => (left.order ?? 0) - (right.order ?? 0))
+    .map(project => project.projectPath)
+  const nextProjects = { ...organization.projects }
+
+  ;[...orderedProjectPaths, ...remainingProjectPaths].forEach((projectPath, index) => {
+    const currentState = nextProjects[projectPath] ?? {
+      projectPath,
+      alias: "",
+      collapsed: false,
+      order: null,
+      threadOrder: []
+    }
+    nextProjects[projectPath] = {
+      ...currentState,
+      order: index
+    }
+  })
+
+  return {
+    ...organization,
+    projects: nextProjects
+  }
+}
+
+function resequenceCollectionOrders(
+  organization: ThreadOrganizationSettings,
+  orderedCollectionIds: string[]
+) {
+  const remainingCollections = organization.collections
+    .filter(collection => !orderedCollectionIds.includes(collection.id))
+    .sort((left, right) => {
+      if (left.order !== null && right.order !== null) {
+        return left.order - right.order || left.name.localeCompare(right.name)
+      }
+
+      if (left.order !== null) {
+        return -1
+      }
+
+      if (right.order !== null) {
+        return 1
+      }
+
+      return left.name.localeCompare(right.name)
+    })
+    .map(collection => collection.id)
+
+  const nextOrder = [...orderedCollectionIds, ...remainingCollections]
+  return {
+    ...organization,
+    collections: nextOrder.flatMap((collectionId, index) => {
+      const collection = organization.collections.find(entry => entry.id === collectionId)
+      return collection
+        ? [
+            {
+              ...collection,
+              order: index
+            }
+          ]
+        : []
+    })
+  }
+}
+
+function getVerticalDropPosition(event: ReactDragEvent<HTMLElement>) {
+  const bounds = event.currentTarget.getBoundingClientRect()
+  return event.clientY - bounds.top < bounds.height / 2 ? "before" : "after"
 }
 
 function escapeStructuredValue(value: string) {
@@ -962,6 +1605,199 @@ function FilterIcon() {
         strokeLinejoin="round"
         strokeWidth="1.2"
       />
+    </svg>
+  )
+}
+
+function SortIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="sidebar-filter-icon"
+      fill="none"
+      viewBox="0 0 16 16"
+    >
+      <path
+        d="M3 4.25h10M5 8h8M7 11.75h6"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.2"
+      />
+    </svg>
+  )
+}
+
+function NewCollectionIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="sidebar-filter-icon"
+      fill="none"
+      viewBox="0 0 16 16"
+    >
+      <path
+        d="M2.75 4.75h3.5l1.1 1.3h5.9v5.45a1 1 0 0 1-1 1h-8.5a1 1 0 0 1-1-1v-6.75Z"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.15"
+      />
+      <path
+        d="M11.25 3.25v3M9.75 4.75h3"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.15"
+      />
+    </svg>
+  )
+}
+
+function FolderIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="sidebar-filter-icon"
+      fill="none"
+      viewBox="0 0 16 16"
+    >
+      <path
+        d="M2.75 4.75h3.5l1.1 1.3h5.9v5.45a1 1 0 0 1-1 1h-8.5a1 1 0 0 1-1-1v-6.75Z"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.15"
+      />
+    </svg>
+  )
+}
+
+function CollectionIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="sidebar-filter-icon"
+      fill="none"
+      viewBox="0 0 16 16"
+    >
+      <rect
+        height="7.25"
+        rx="1"
+        stroke="currentColor"
+        strokeWidth="1.1"
+        width="7.25"
+        x="2.25"
+        y="3.25"
+      />
+      <rect
+        height="7.25"
+        rx="1"
+        stroke="currentColor"
+        strokeWidth="1.1"
+        width="7.25"
+        x="6.5"
+        y="5.5"
+      />
+    </svg>
+  )
+}
+
+function BookmarkIcon() {
+  return (
+    <svg aria-hidden="true" className="sidebar-filter-icon" fill="none" viewBox="0 0 16 16">
+      <path
+        d="M4.25 2.75h7.5v10.5L8 10.6l-3.75 2.65V2.75Z"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.1"
+      />
+    </svg>
+  )
+}
+
+function StarIcon() {
+  return (
+    <svg aria-hidden="true" className="sidebar-filter-icon" fill="none" viewBox="0 0 16 16">
+      <path
+        d="m8 2.75 1.55 3.15 3.48.5-2.52 2.45.6 3.45L8 10.7l-3.11 1.6.6-3.45L2.97 6.4l3.48-.5L8 2.75Z"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.05"
+      />
+    </svg>
+  )
+}
+
+function BoltIcon() {
+  return (
+    <svg aria-hidden="true" className="sidebar-filter-icon" fill="none" viewBox="0 0 16 16">
+      <path
+        d="M8.9 2.75 4.9 8.1h2.55l-.35 5.15 4-5.35H8.55l.35-5.15Z"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.1"
+      />
+    </svg>
+  )
+}
+
+function TargetIcon() {
+  return (
+    <svg aria-hidden="true" className="sidebar-filter-icon" fill="none" viewBox="0 0 16 16">
+      <circle cx="8" cy="8" r="4.5" stroke="currentColor" strokeWidth="1.05" />
+      <circle cx="8" cy="8" r="2" stroke="currentColor" strokeWidth="1.05" />
+      <path d="M8 1.75v2M8 12.25v2M1.75 8h2M12.25 8h2" stroke="currentColor" strokeLinecap="round" strokeWidth="1.05" />
+    </svg>
+  )
+}
+
+function BriefcaseIcon() {
+  return (
+    <svg aria-hidden="true" className="sidebar-filter-icon" fill="none" viewBox="0 0 16 16">
+      <path
+        d="M5.4 4.25V3.4c0-.36.29-.65.65-.65h3.9c.36 0 .65.29.65.65v.85M2.75 5.25h10.5v6a1 1 0 0 1-1 1H3.75a1 1 0 0 1-1-1v-6Z"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.1"
+      />
+      <path d="M2.75 7.35h10.5" stroke="currentColor" strokeWidth="1.1" />
+    </svg>
+  )
+}
+
+function resolveCollectionIcon(icon: ThreadCollection["icon"] | null | undefined): ThreadCollectionIcon {
+  return icon ?? DEFAULT_THREAD_COLLECTION_ICON
+}
+
+function resolveCollectionColor(color: string | null | undefined) {
+  return color?.trim() || DEFAULT_THREAD_COLLECTION_COLOR
+}
+
+function CollectionSymbol({
+  icon
+}: {
+  icon?: ThreadCollection["icon"] | null
+}) {
+  switch (resolveCollectionIcon(icon)) {
+    case "bookmark":
+      return <BookmarkIcon />
+    case "star":
+      return <StarIcon />
+    case "bolt":
+      return <BoltIcon />
+    case "target":
+      return <TargetIcon />
+    case "briefcase":
+      return <BriefcaseIcon />
+    case "stack":
+    default:
+      return <CollectionIcon />
+  }
+}
+
+function EllipsisIcon() {
+  return (
+    <svg aria-hidden="true" className="sidebar-filter-icon" fill="currentColor" viewBox="0 0 16 16">
+      <circle cx="3.5" cy="8" r="1.2" />
+      <circle cx="8" cy="8" r="1.2" />
+      <circle cx="12.5" cy="8" r="1.2" />
     </svg>
   )
 }
@@ -1810,6 +2646,285 @@ function SidebarFilterContent({
   )
 }
 
+function ThreadOrganizeMenu({
+  viewMode,
+  sortKey,
+  onViewModeChange,
+  onSortKeyChange
+}: {
+  viewMode: ThreadViewMode
+  sortKey: ThreadSortKey
+  onViewModeChange(value: ThreadViewMode): void
+  onSortKeyChange(value: ThreadSortKey): void
+}) {
+  const [isOpen, setIsOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!isOpen) {
+      return () => undefined
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target
+      if (target instanceof Node && rootRef.current?.contains(target)) {
+        return
+      }
+
+      setIsOpen(false)
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsOpen(false)
+      }
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown)
+    window.addEventListener("keydown", handleKeyDown)
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown)
+      window.removeEventListener("keydown", handleKeyDown)
+    }
+  }, [isOpen])
+
+  return (
+    <div className="thread-organize-menu" ref={rootRef}>
+      <button
+        aria-expanded={isOpen}
+        aria-haspopup="dialog"
+        className="sidebar-filter-button sidebar-filter-list-button"
+        onClick={() => setIsOpen(current => !current)}
+        type="button"
+      >
+        <SortIcon />
+        <span className="sidebar-filter-button-label">Organize</span>
+      </button>
+
+      {isOpen ? (
+        <div className="thread-organize-popover" role="dialog">
+          <div className="thread-organize-section">
+            <span className="thread-organize-section-label">Organize</span>
+            {THREAD_VIEW_MODE_OPTIONS.map(option => (
+              <button
+                className={`thread-organize-option ${
+                  option.value === viewMode ? "is-selected" : ""
+                }`}
+                key={option.value}
+                onClick={() => {
+                  onViewModeChange(option.value)
+                  setIsOpen(false)
+                }}
+                type="button"
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="thread-organize-divider" />
+
+          <div className="thread-organize-section">
+            <span className="thread-organize-section-label">Sort by</span>
+            {THREAD_SORT_KEY_OPTIONS.map(option => (
+              <button
+                className={`thread-organize-option ${
+                  option.value === sortKey ? "is-selected" : ""
+                }`}
+                key={option.value}
+                onClick={() => {
+                  onSortKeyChange(option.value)
+                  setIsOpen(false)
+                }}
+                type="button"
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function ThreadGroupMenuButton({
+  kind,
+  canDelete,
+  onEditAppearance,
+  onRename,
+  onDelete
+}: {
+  kind: ThreadGroupMenuKind
+  canDelete: boolean
+  onEditAppearance?(): void
+  onRename(): void
+  onDelete?(): void
+}) {
+  const [isOpen, setIsOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!isOpen) {
+      return () => undefined
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target
+      if (target instanceof Node && rootRef.current?.contains(target)) {
+        return
+      }
+
+      setIsOpen(false)
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsOpen(false)
+      }
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown)
+    window.addEventListener("keydown", handleKeyDown)
+
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown)
+      window.removeEventListener("keydown", handleKeyDown)
+    }
+  }, [isOpen])
+
+  return (
+    <div className="thread-group-menu" ref={rootRef}>
+      <button
+        aria-label={`Open ${kind} actions`}
+        className="thread-group-menu-trigger"
+        onClick={event => {
+          event.stopPropagation()
+          setIsOpen(current => !current)
+        }}
+        onDragStart={event => {
+          event.preventDefault()
+          event.stopPropagation()
+        }}
+        onPointerDown={event => {
+          event.stopPropagation()
+        }}
+        draggable={false}
+        type="button"
+      >
+        <EllipsisIcon />
+      </button>
+
+      {isOpen ? (
+        <div className="thread-group-menu-popover" role="menu">
+          <button
+            className="thread-group-menu-option"
+            onClick={event => {
+              event.stopPropagation()
+              setIsOpen(false)
+              onRename()
+            }}
+            type="button"
+          >
+            Rename
+          </button>
+          {kind === "collection" && onEditAppearance ? (
+            <button
+              className="thread-group-menu-option"
+              onClick={event => {
+                event.stopPropagation()
+                setIsOpen(false)
+                onEditAppearance()
+              }}
+              type="button"
+            >
+              Change color/icon
+            </button>
+          ) : null}
+          {canDelete && onDelete ? (
+            <button
+              className="thread-group-menu-option is-danger"
+              onClick={event => {
+                event.stopPropagation()
+                setIsOpen(false)
+                onDelete()
+              }}
+              type="button"
+            >
+              Remove collection
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function ThreadSessionRow({
+  session,
+  stateInfo,
+  isActive,
+  isGrouped,
+  dropIndicator,
+  onSelect,
+  draggable = false,
+  onDragStart,
+  onDragEnd,
+  onDragOver,
+  onDrop
+}: {
+  session: SessionListItem
+  stateInfo: AppStateInfo | null
+  isActive: boolean
+  isGrouped: boolean
+  dropIndicator?: "before" | "after" | null
+  onSelect(): void
+  draggable?: boolean
+  onDragStart?(event: ReactDragEvent<HTMLDivElement>): void
+  onDragEnd?(): void
+  onDragOver?(event: ReactDragEvent<HTMLDivElement>): void
+  onDrop?(event: ReactDragEvent<HTMLDivElement>): void
+}) {
+  return (
+    <div
+      className={`thread-tree-row ${isGrouped ? "is-grouped" : ""} ${
+        dropIndicator ? `is-drop-${dropIndicator}` : ""
+      }`}
+      draggable={draggable}
+      onDragEnd={onDragEnd}
+      onDragOver={onDragOver}
+      onDragStart={onDragStart}
+      onDrop={onDrop}
+    >
+      <button
+        className={`session-row ${isActive ? "is-active" : ""}`}
+        onClick={onSelect}
+        type="button"
+      >
+        <div className="session-row-main">
+          <div className="session-title-group">
+            {session.archived ? (
+              <span className="archived-indicator" title="Archived">
+                A
+              </span>
+            ) : null}
+            <span className="session-title">{session.threadName}</span>
+          </div>
+          <div className="session-row-meta">
+            <ProviderIcon provider={session.provider} stateInfo={stateInfo} />
+            <span className="session-time">
+              {formatRelativeTimestamp(session.updatedAt)}
+            </span>
+          </div>
+        </div>
+        {!session.sessionPath ? (
+          <span className="session-subtitle">Missing session file</span>
+        ) : null}
+      </button>
+    </div>
+  )
+}
+
 function SearchResultsPane({
   stateInfo,
   results,
@@ -2374,6 +3489,7 @@ function AgentsListPane({
             className={`session-row ${agent.id === selectedAgentId ? "is-active" : ""}`}
             key={agent.id}
             onClick={() => onSelect(agent.id)}
+            title={getComposerModelLabel(agent.provider, agent.modelId)}
             type="button"
           >
             <div className="session-row-main">
@@ -2384,9 +3500,6 @@ function AgentsListPane({
                 <ProviderIcon provider={agent.provider} stateInfo={stateInfo} />
               </div>
             </div>
-            <span className="session-subtitle">
-              {getComposerModelLabel(agent.provider, agent.modelId)}
-            </span>
           </button>
         ))
       )}
@@ -3851,6 +4964,9 @@ export default function App() {
   const [sidebarFilters, setSidebarFilters] = useState<SearchFilters>(
     DEFAULT_SIDEBAR_FILTERS
   )
+  const [threadOrganization, setThreadOrganization] = useState<ThreadOrganizationSettings>(
+    () => createDefaultThreadOrganization()
+  )
   const [searchFilters, setSearchFilters] = useState<SearchFilters>(
     DEFAULT_SEARCH_FILTERS
   )
@@ -3880,16 +4996,34 @@ export default function App() {
     startX: number
     startWidth: number
   } | null>(null)
+  const [threadDragItem, setThreadDragItem] = useState<ThreadDragItem | null>(null)
+  const [threadDropIndicator, setThreadDropIndicator] = useState<ThreadDropIndicator | null>(
+    null
+  )
+  const [isCreateCollectionDialogOpen, setIsCreateCollectionDialogOpen] = useState(false)
+  const [newCollectionNameDraft, setNewCollectionNameDraft] = useState("New collection")
+  const [editingCollectionAppearanceId, setEditingCollectionAppearanceId] = useState<string | null>(
+    null
+  )
+  const [collectionAppearanceDraft, setCollectionAppearanceDraft] = useState<{
+    icon: ThreadCollection["icon"]
+    color: string
+  }>({
+    icon: DEFAULT_THREAD_COLLECTION_ICON,
+    color: DEFAULT_THREAD_COLLECTION_COLOR
+  })
   const [expandedThoughtChainIds, setExpandedThoughtChainIds] = useState<Set<string>>(
     () => new Set()
   )
   const filterButtonRef = useRef<HTMLButtonElement | null>(null)
   const filterPopoverRef = useRef<HTMLDivElement | null>(null)
+  const newCollectionInputRef = useRef<HTMLInputElement | null>(null)
   const outputFormatMenuRef = useRef<HTMLDivElement | null>(null)
   const copyMenuRef = useRef<HTMLDivElement | null>(null)
   const searchInputRef = useRef<HTMLInputElement | null>(null)
   const searchRequestIdRef = useRef(0)
   const settingsMutationQueueRef = useRef(Promise.resolve())
+  const threadOrganizationMutationQueueRef = useRef(Promise.resolve())
   const toastSequenceRef = useRef(0)
   const toastHideTimerRef = useRef<number | null>(null)
   const toastClearTimerRef = useRef<number | null>(null)
@@ -3969,6 +5103,50 @@ export default function App() {
         session.projectPath !== null && selectedProjectPaths.has(session.projectPath)
     )
   }, [preProjectFilteredSessions, sidebarFilters.projectPaths])
+  const sortedFilteredSessions = useMemo(
+    () => sortSessionsByThreadKey(filteredSessions, threadOrganization.sortKey),
+    [filteredSessions, threadOrganization.sortKey]
+  )
+  const projectSidebarGroups = useMemo(
+    () =>
+      buildProjectSidebarGroups({
+        sessions: filteredSessions,
+        organization: threadOrganization
+      }),
+    [filteredSessions, threadOrganization]
+  )
+  const collectionSidebarGroups = useMemo(
+    () =>
+      buildCollectionSidebarGroups({
+        sessions: filteredSessions,
+        organization: threadOrganization
+      }),
+    [filteredSessions, threadOrganization]
+  )
+  const visibleThreadGroups = useMemo(() => {
+    if (threadOrganization.viewMode === "project") {
+      return projectSidebarGroups
+    }
+
+    if (threadOrganization.viewMode === "collection") {
+      return collectionSidebarGroups
+    }
+
+    return []
+  }, [
+    collectionSidebarGroups,
+    projectSidebarGroups,
+    threadOrganization.viewMode
+  ])
+  const visibleSidebarSessionIds = useMemo(() => {
+    if (threadOrganization.viewMode === "chronological") {
+      return new Set(sortedFilteredSessions.map(session => session.id))
+    }
+
+    return new Set(
+      visibleThreadGroups.flatMap(group => group.sessions.map(session => session.id))
+    )
+  }, [sortedFilteredSessions, threadOrganization.viewMode, visibleThreadGroups])
   const preProjectSearchSessions = useMemo(() => {
     const now = Date.now()
 
@@ -4171,6 +5349,62 @@ export default function App() {
       setSettingsError(message)
     }
   }, [])
+
+  const loadThreadOrganization = useCallback(async () => {
+    const api = getHandoffApi()
+    if (!api) {
+      return
+    }
+
+    try {
+      const nextOrganization = await api.threads.get()
+      setThreadOrganization(cloneThreadOrganization(nextOrganization))
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : "Unable to load thread organization.",
+        "error"
+      )
+    }
+  }, [showToast])
+
+  const persistThreadOrganization = useCallback(
+    (updater: (current: ThreadOrganizationSettings) => ThreadOrganizationSettings) => {
+      setThreadOrganization(currentOrganization => {
+        const nextOrganization = updater(currentOrganization)
+        const normalizedOrganization = cloneThreadOrganization(nextOrganization)
+        const api = getHandoffApi()
+
+        if (!api) {
+          return normalizedOrganization
+        }
+
+        threadOrganizationMutationQueueRef.current = threadOrganizationMutationQueueRef.current
+          .catch(() => undefined)
+          .then(async () => {
+            try {
+              const persistedOrganization = await api.threads.update(normalizedOrganization)
+              setThreadOrganization(cloneThreadOrganization(persistedOrganization))
+            } catch (error) {
+              showToast(
+                error instanceof Error
+                  ? error.message
+                  : "Unable to save thread organization.",
+                "error"
+              )
+              try {
+                const restoredOrganization = await api.threads.get()
+                setThreadOrganization(cloneThreadOrganization(restoredOrganization))
+              } catch {
+                return
+              }
+            }
+          })
+
+        return normalizedOrganization
+      })
+    },
+    [showToast]
+  )
 
   const loadBridgeInfo = useCallback(async () => {
     const api = getHandoffApi()
@@ -4875,7 +6109,13 @@ export default function App() {
           documentCount: 0
         })
       }
-      await Promise.all([loadSessions(), loadAgents(), loadBridgeInfo(), loadSkillsStatus()])
+      await Promise.all([
+        loadSessions(),
+        loadAgents(),
+        loadBridgeInfo(),
+        loadSkillsStatus(),
+        loadThreadOrganization()
+      ])
     }
 
     initialize().catch(error => {
@@ -4888,7 +6128,7 @@ export default function App() {
     return () => {
       isMounted = false
     }
-  }, [loadAgents, loadBridgeInfo, loadSessions, loadSkillsStatus])
+  }, [loadAgents, loadBridgeInfo, loadSessions, loadSkillsStatus, loadThreadOrganization])
 
   useEffect(() => {
     const api = getHandoffApi()
@@ -5260,6 +6500,15 @@ export default function App() {
   }, [isFilterPopoverOpen])
 
   useEffect(() => {
+    if (!isCreateCollectionDialogOpen) {
+      return
+    }
+
+    newCollectionInputRef.current?.focus()
+    newCollectionInputRef.current?.select()
+  }, [isCreateCollectionDialogOpen])
+
+  useEffect(() => {
     if (!isCopyMenuOpen) {
       return () => undefined
     }
@@ -5416,6 +6665,236 @@ export default function App() {
     }))
   }, [])
 
+  const handleThreadViewModeChange = useCallback(
+    (viewMode: ThreadViewMode) => {
+      persistThreadOrganization(currentOrganization => ({
+        ...currentOrganization,
+        viewMode
+      }))
+    },
+    [persistThreadOrganization]
+  )
+
+  const handleThreadSortKeyChange = useCallback(
+    (sortKey: ThreadSortKey) => {
+      persistThreadOrganization(currentOrganization => ({
+        ...currentOrganization,
+        sortKey
+      }))
+    },
+    [persistThreadOrganization]
+  )
+
+  const handleOpenCreateCollectionDialog = useCallback(() => {
+    setNewCollectionNameDraft("New collection")
+    setIsCreateCollectionDialogOpen(true)
+  }, [])
+
+  const handleCancelCreateCollection = useCallback(() => {
+    setIsCreateCollectionDialogOpen(false)
+    setNewCollectionNameDraft("New collection")
+  }, [])
+
+  const handleConfirmCreateCollection = useCallback(() => {
+    persistThreadOrganization(currentOrganization => {
+      const name = buildUniqueCollectionName(
+        currentOrganization.collections,
+        newCollectionNameDraft
+      )
+      const collectionId =
+        typeof window !== "undefined" && window.crypto?.randomUUID
+          ? window.crypto.randomUUID()
+          : `collection-${Date.now()}`
+      const nextOrganization = {
+        ...currentOrganization,
+        viewMode: "collection" as const,
+        collections: [
+          ...currentOrganization.collections,
+          {
+            id: collectionId,
+            name,
+            icon: DEFAULT_THREAD_COLLECTION_ICON,
+            color: DEFAULT_THREAD_COLLECTION_COLOR,
+            collapsed: false,
+            order: null,
+            threadIds: []
+          }
+        ]
+      }
+
+      return resequenceCollectionOrders(nextOrganization, [collectionId])
+    })
+
+    setIsCreateCollectionDialogOpen(false)
+    setNewCollectionNameDraft("New collection")
+  }, [newCollectionNameDraft, persistThreadOrganization])
+
+  const handleOpenCollectionAppearanceEditor = useCallback(
+    (collectionId: string) => {
+      const collection = threadOrganization.collections.find(entry => entry.id === collectionId)
+      if (!collection) {
+        return
+      }
+
+      setEditingCollectionAppearanceId(collectionId)
+      setCollectionAppearanceDraft({
+        icon: resolveCollectionIcon(collection.icon),
+        color: resolveCollectionColor(collection.color)
+      })
+    },
+    [threadOrganization.collections]
+  )
+
+  const handleCloseCollectionAppearanceEditor = useCallback(() => {
+    setEditingCollectionAppearanceId(null)
+    setCollectionAppearanceDraft({
+      icon: DEFAULT_THREAD_COLLECTION_ICON,
+      color: DEFAULT_THREAD_COLLECTION_COLOR
+    })
+  }, [])
+
+  const handleSaveCollectionAppearance = useCallback(() => {
+    if (!editingCollectionAppearanceId) {
+      return
+    }
+
+    persistThreadOrganization(currentOrganization => ({
+      ...currentOrganization,
+      collections: currentOrganization.collections.map(collection =>
+        collection.id === editingCollectionAppearanceId
+          ? {
+              ...collection,
+              icon: resolveCollectionIcon(collectionAppearanceDraft.icon),
+              color: resolveCollectionColor(collectionAppearanceDraft.color)
+            }
+          : collection
+      )
+    }))
+
+    handleCloseCollectionAppearanceEditor()
+  }, [
+    collectionAppearanceDraft.color,
+    collectionAppearanceDraft.icon,
+    editingCollectionAppearanceId,
+    handleCloseCollectionAppearanceEditor,
+    persistThreadOrganization
+  ])
+
+  const handleRenameProjectAlias = useCallback(
+    (projectPath: string) => {
+      const currentAlias = threadOrganization.projects[projectPath]?.alias ?? ""
+      const nextAlias = window.prompt("Project name", currentAlias || formatProjectFilterLabel(projectPath))
+      if (nextAlias === null) {
+        return
+      }
+
+      persistThreadOrganization(currentOrganization => ({
+        ...currentOrganization,
+        projects: {
+          ...currentOrganization.projects,
+          [projectPath]: {
+            projectPath,
+            alias: nextAlias.trim(),
+            collapsed: currentOrganization.projects[projectPath]?.collapsed ?? false,
+            order: currentOrganization.projects[projectPath]?.order ?? null,
+            threadOrder: [...(currentOrganization.projects[projectPath]?.threadOrder ?? [])]
+          }
+        }
+      }))
+    },
+    [persistThreadOrganization, threadOrganization.projects]
+  )
+
+  const handleToggleProjectCollapsed = useCallback(
+    (projectPath: string) => {
+      persistThreadOrganization(currentOrganization => {
+        const currentState = currentOrganization.projects[projectPath]
+        return {
+          ...currentOrganization,
+          projects: {
+            ...currentOrganization.projects,
+            [projectPath]: {
+              projectPath,
+              alias: currentState?.alias ?? "",
+              collapsed: !(currentState?.collapsed ?? false),
+              order: currentState?.order ?? null,
+              threadOrder: [...(currentState?.threadOrder ?? [])]
+            }
+          }
+        }
+      })
+    },
+    [persistThreadOrganization]
+  )
+
+  const handleRenameCollection = useCallback(
+    (collectionId: string) => {
+      const collection = threadOrganization.collections.find(entry => entry.id === collectionId)
+      if (!collection) {
+        return
+      }
+
+      const nextName = window.prompt("Collection name", collection.name)
+      if (nextName === null) {
+        return
+      }
+
+      const trimmedName = nextName.trim()
+      if (!trimmedName) {
+        return
+      }
+
+      persistThreadOrganization(currentOrganization => ({
+        ...currentOrganization,
+        collections: currentOrganization.collections.map(entry =>
+          entry.id === collectionId
+            ? {
+                ...entry,
+                name: trimmedName
+              }
+            : entry
+        )
+      }))
+    },
+    [persistThreadOrganization, threadOrganization.collections]
+  )
+
+  const handleDeleteCollection = useCallback(
+    (collectionId: string) => {
+      const collection = threadOrganization.collections.find(entry => entry.id === collectionId)
+      if (!collection) {
+        return
+      }
+
+      if (!window.confirm(`Remove "${collection.name}"?`)) {
+        return
+      }
+
+      persistThreadOrganization(currentOrganization => ({
+        ...currentOrganization,
+        collections: currentOrganization.collections.filter(entry => entry.id !== collectionId)
+      }))
+    },
+    [persistThreadOrganization, threadOrganization.collections]
+  )
+
+  const handleToggleCollectionCollapsed = useCallback(
+    (collectionId: string) => {
+      persistThreadOrganization(currentOrganization => ({
+        ...currentOrganization,
+        collections: currentOrganization.collections.map(collection =>
+          collection.id === collectionId
+            ? {
+                ...collection,
+                collapsed: !collection.collapsed
+              }
+            : collection
+        )
+      }))
+    },
+    [persistThreadOrganization]
+  )
+
   const handleSearchArchivedFilterChange = useCallback((value: ArchivedFilterValue) => {
     setSearchFilters(current => ({
       ...current,
@@ -5532,6 +7011,287 @@ export default function App() {
     setRightPaneMode("conversation")
     setSearchReturnActive(true)
   }, [])
+
+  const clearThreadDragState = useCallback(() => {
+    setThreadDragItem(null)
+    setThreadDropIndicator(null)
+  }, [])
+
+  const handleThreadDragEnd = useCallback(() => {
+    clearThreadDragState()
+  }, [clearThreadDragState])
+
+  const handleProjectGroupDrop = useCallback(
+    (targetProjectPath: string, event: ReactDragEvent<HTMLDivElement>) => {
+      if (threadDragItem?.type !== "project-group" || threadDragItem.projectPath === targetProjectPath) {
+        return
+      }
+
+      const orderedProjectPaths = projectSidebarGroups
+        .filter(group => group.kind === "project" && group.projectPath)
+        .map(group => group.projectPath as string)
+      const nextProjectPaths = moveItemWithPosition(
+        orderedProjectPaths,
+        orderedProjectPaths.indexOf(threadDragItem.projectPath),
+        orderedProjectPaths.indexOf(targetProjectPath),
+        getVerticalDropPosition(event)
+      )
+
+      persistThreadOrganization(currentOrganization =>
+        resequenceProjectOrders(currentOrganization, nextProjectPaths)
+      )
+      clearThreadDragState()
+    },
+    [clearThreadDragState, persistThreadOrganization, projectSidebarGroups, threadDragItem]
+  )
+
+  const handleProjectThreadDrop = useCallback(
+    (
+      targetProjectPath: string,
+      targetThreadId: string,
+      event: ReactDragEvent<HTMLDivElement>
+    ) => {
+      if (
+        threadDragItem?.type !== "project-thread" ||
+        threadDragItem.projectPath !== targetProjectPath
+      ) {
+        return
+      }
+
+      const targetGroup = projectSidebarGroups.find(group => group.projectPath === targetProjectPath)
+      if (!targetGroup) {
+        return
+      }
+
+      const visibleThreadIds = targetGroup.sessions.map(session => session.id)
+      const nextVisibleThreadIds = moveItemWithPosition(
+        visibleThreadIds,
+        visibleThreadIds.indexOf(threadDragItem.threadId),
+        visibleThreadIds.indexOf(targetThreadId),
+        getVerticalDropPosition(event)
+      )
+
+      persistThreadOrganization(currentOrganization => {
+        const currentProjectState = currentOrganization.projects[targetProjectPath]
+        return {
+          ...currentOrganization,
+          projects: {
+            ...currentOrganization.projects,
+            [targetProjectPath]: {
+              projectPath: targetProjectPath,
+              alias: currentProjectState?.alias ?? "",
+              collapsed: currentProjectState?.collapsed ?? false,
+              order: currentProjectState?.order ?? null,
+              threadOrder: mergeVisibleOrderWithHiddenIds(
+                currentProjectState?.threadOrder ?? [],
+                nextVisibleThreadIds
+              )
+            }
+          }
+        }
+      })
+      clearThreadDragState()
+    },
+    [clearThreadDragState, persistThreadOrganization, projectSidebarGroups, threadDragItem]
+  )
+
+  const handleProjectThreadAppend = useCallback(
+    (targetProjectPath: string) => {
+      if (
+        threadDragItem?.type !== "project-thread" ||
+        threadDragItem.projectPath !== targetProjectPath
+      ) {
+        return
+      }
+
+      const targetGroup = projectSidebarGroups.find(group => group.projectPath === targetProjectPath)
+      if (!targetGroup) {
+        return
+      }
+
+      const visibleThreadIds = targetGroup.sessions.map(session => session.id)
+      const nextVisibleThreadIds = [
+        ...visibleThreadIds.filter(threadId => threadId !== threadDragItem.threadId),
+        threadDragItem.threadId
+      ]
+
+      persistThreadOrganization(currentOrganization => {
+        const currentProjectState = currentOrganization.projects[targetProjectPath]
+        return {
+          ...currentOrganization,
+          projects: {
+            ...currentOrganization.projects,
+            [targetProjectPath]: {
+              projectPath: targetProjectPath,
+              alias: currentProjectState?.alias ?? "",
+              collapsed: currentProjectState?.collapsed ?? false,
+              order: currentProjectState?.order ?? null,
+              threadOrder: mergeVisibleOrderWithHiddenIds(
+                currentProjectState?.threadOrder ?? [],
+                nextVisibleThreadIds
+              )
+            }
+          }
+        }
+      })
+      clearThreadDragState()
+    },
+    [clearThreadDragState, persistThreadOrganization, projectSidebarGroups, threadDragItem]
+  )
+
+  const handleCollectionGroupDrop = useCallback(
+    (targetCollectionId: string, event: ReactDragEvent<HTMLDivElement>) => {
+      if (threadDragItem?.type === "collection-group") {
+        if (threadDragItem.collectionId === targetCollectionId) {
+          return
+        }
+
+        const orderedCollectionIds = collectionSidebarGroups
+          .filter(group => group.kind === "collection" && group.collectionId)
+          .map(group => group.collectionId as string)
+        const nextCollectionIds = moveItemWithPosition(
+          orderedCollectionIds,
+          orderedCollectionIds.indexOf(threadDragItem.collectionId),
+          orderedCollectionIds.indexOf(targetCollectionId),
+          getVerticalDropPosition(event)
+        )
+
+        persistThreadOrganization(currentOrganization =>
+          resequenceCollectionOrders(currentOrganization, nextCollectionIds)
+        )
+        clearThreadDragState()
+        return
+      }
+
+      if (threadDragItem?.type !== "collection-thread") {
+        return
+      }
+
+      const targetGroup = collectionSidebarGroups.find(group => group.collectionId === targetCollectionId)
+      if (!targetGroup) {
+        return
+      }
+
+      const nextVisibleThreadIds = [
+        ...targetGroup.sessions
+          .map(session => session.id)
+          .filter(threadId => threadId !== threadDragItem.threadId),
+        threadDragItem.threadId
+      ]
+
+      persistThreadOrganization(currentOrganization => {
+        const nextCollections = currentOrganization.collections.map(collection => {
+          if (collection.id === targetCollectionId) {
+            return {
+              ...collection,
+              threadIds: mergeVisibleOrderWithHiddenIds(
+                [...collection.threadIds.filter(id => id !== threadDragItem.threadId), threadDragItem.threadId],
+                nextVisibleThreadIds
+              )
+            }
+          }
+
+          if (
+            threadDragItem.collectionId !== null &&
+            collection.id === threadDragItem.collectionId &&
+            threadDragItem.collectionId !== targetCollectionId
+          ) {
+            return {
+              ...collection,
+              threadIds: collection.threadIds.filter(id => id !== threadDragItem.threadId)
+            }
+          }
+
+          return collection
+        })
+
+        return {
+          ...currentOrganization,
+          collections: nextCollections
+        }
+      })
+      clearThreadDragState()
+    },
+    [clearThreadDragState, collectionSidebarGroups, persistThreadOrganization, threadDragItem]
+  )
+
+  const handleCollectionThreadDrop = useCallback(
+    (
+      targetCollectionId: string | null,
+      targetThreadId: string,
+      event: ReactDragEvent<HTMLDivElement>
+    ) => {
+      if (threadDragItem?.type !== "collection-thread") {
+        return
+      }
+
+      if (targetCollectionId === null) {
+        if (threadDragItem.collectionId === null) {
+          return
+        }
+
+        persistThreadOrganization(currentOrganization => ({
+          ...currentOrganization,
+          collections: currentOrganization.collections.map(collection =>
+            collection.id === threadDragItem.collectionId
+              ? {
+                  ...collection,
+                  threadIds: collection.threadIds.filter(id => id !== threadDragItem.threadId)
+                }
+              : collection
+          )
+        }))
+        clearThreadDragState()
+        return
+      }
+
+      const targetGroup = collectionSidebarGroups.find(group => group.collectionId === targetCollectionId)
+      if (!targetGroup) {
+        return
+      }
+
+      const targetVisibleThreadIds = targetGroup.sessions
+        .map(session => session.id)
+        .filter(threadId => threadId !== threadDragItem.threadId)
+      const targetWithDraggedThread = [...targetVisibleThreadIds, threadDragItem.threadId]
+      const nextTargetVisibleThreadIds = moveItemWithPosition(
+        targetWithDraggedThread,
+        targetWithDraggedThread.indexOf(threadDragItem.threadId),
+        targetWithDraggedThread.indexOf(targetThreadId),
+        getVerticalDropPosition(event)
+      )
+
+      persistThreadOrganization(currentOrganization => ({
+        ...currentOrganization,
+        collections: currentOrganization.collections.map(collection => {
+          if (collection.id === targetCollectionId) {
+            return {
+              ...collection,
+              threadIds: mergeVisibleOrderWithHiddenIds(
+                [...collection.threadIds.filter(id => id !== threadDragItem.threadId), threadDragItem.threadId],
+                nextTargetVisibleThreadIds
+              )
+            }
+          }
+
+          if (
+            threadDragItem.collectionId !== null &&
+            collection.id === threadDragItem.collectionId &&
+            threadDragItem.collectionId !== targetCollectionId
+          ) {
+            return {
+              ...collection,
+              threadIds: collection.threadIds.filter(id => id !== threadDragItem.threadId)
+            }
+          }
+
+          return collection
+        })
+      }))
+      clearThreadDragState()
+    },
+    [clearThreadDragState, collectionSidebarGroups, persistThreadOrganization, threadDragItem]
+  )
 
   const handleCreateAgent = useCallback(async () => {
     const api = getHandoffApi()
@@ -5834,8 +7594,524 @@ export default function App() {
     [isSidebarCollapsed, resolvedSidebarWidth]
   )
 
+  function renderThreadSidebarList() {
+    return (
+      <div className="session-list" role="list">
+        <div className="sidebar-filter-list-row sidebar-organizer-row">
+          <button
+            aria-label="Create collection"
+            className="sidebar-filter-button sidebar-filter-list-icon-button"
+            onClick={handleOpenCreateCollectionDialog}
+            type="button"
+          >
+            <NewCollectionIcon />
+          </button>
+
+          <button
+            aria-expanded={isFilterPopoverOpen}
+            aria-haspopup="dialog"
+            aria-label={isFilterPopoverOpen ? "Close filters" : "Open filters"}
+            aria-pressed={hasActiveSidebarFilters}
+            className={`sidebar-filter-button sidebar-filter-list-button ${
+              hasActiveSidebarFilters ? "is-active" : ""
+            }`}
+            onClick={handleFilterPopoverToggle}
+            ref={filterButtonRef}
+            type="button"
+          >
+            <FilterIcon />
+            <span className="sidebar-filter-button-label">Filter</span>
+            {hasActiveSidebarFilters ? (
+              <span aria-hidden="true" className="sidebar-filter-button-dot" />
+            ) : null}
+          </button>
+
+          <ThreadOrganizeMenu
+            onSortKeyChange={handleThreadSortKeyChange}
+            onViewModeChange={handleThreadViewModeChange}
+            sortKey={threadOrganization.sortKey}
+            viewMode={threadOrganization.viewMode}
+          />
+
+          {isFilterPopoverOpen ? (
+            <div
+              aria-label="Session filters"
+              className="sidebar-filter-popover"
+              ref={filterPopoverRef}
+              role="dialog"
+            >
+              <div className="sidebar-filter-popover-header">
+                <span className="sidebar-filter-popover-title">Filters</span>
+                <button
+                  aria-label="Dismiss filter panel"
+                  className="sidebar-filter-close-button"
+                  onClick={() => setIsFilterPopoverOpen(false)}
+                  type="button"
+                >
+                  ×
+                </button>
+              </div>
+              <SidebarFilterContent
+                filters={sidebarFilters}
+                onArchivedChange={handleArchivedFilterChange}
+                onDateChange={handleDateFilterChange}
+                onProjectToggle={handleProjectFilterToggle}
+                onProviderChange={handleProviderFilterChange}
+                projectOptions={projectOptions}
+              />
+            </div>
+          ) : null}
+        </div>
+
+        {threadOrganization.viewMode === "collection" ? (
+          <div className="thread-collection-create-row">
+            <button
+              className="sidebar-filter-button sidebar-filter-list-button"
+              onClick={handleOpenCreateCollectionDialog}
+              type="button"
+            >
+              <NewCollectionIcon />
+              <span className="sidebar-filter-button-label">New collection</span>
+            </button>
+          </div>
+        ) : null}
+
+        {isLoadingSessions && sessions.length === 0 ? (
+          <EmptyState
+            title="Loading sessions"
+            detail="Reading Codex and Claude session indexes and resolving available conversation files."
+          />
+        ) : sessions.length === 0 ? (
+          <EmptyState
+            title="No sessions found"
+            detail="No conversation entries were available from Codex or Claude."
+          />
+        ) : filteredSessions.length === 0 ? (
+          <EmptyState
+            title="No matching sessions"
+            detail="No sessions match the current filters."
+          />
+        ) : threadOrganization.viewMode === "chronological" ? (
+          sortedFilteredSessions.map(session => (
+            <ThreadSessionRow
+              isActive={session.id === activeSessionId && visibleSidebarSessionIds.has(session.id)}
+              isGrouped={false}
+              key={`${session.id}:${session.updatedAt}:${session.threadName}`}
+              onSelect={() => handleSelectSessionFromSidebar(session.id)}
+              session={session}
+              stateInfo={stateInfo}
+            />
+          ))
+        ) : (
+          visibleThreadGroups.map(group => {
+            const isProjectView = threadOrganization.viewMode === "project"
+            const canCollapse = group.kind !== "system"
+            const groupDropBefore =
+              (isProjectView &&
+                threadDropIndicator?.type === "project-group" &&
+                threadDropIndicator.projectPath === group.projectPath &&
+                threadDropIndicator.position === "before") ||
+              (!isProjectView &&
+                threadDropIndicator?.type === "collection-group" &&
+                threadDropIndicator.collectionId === group.collectionId &&
+                threadDropIndicator.position === "before")
+            const groupDropAfter =
+              (isProjectView &&
+                threadDropIndicator?.type === "project-group" &&
+                threadDropIndicator.projectPath === group.projectPath &&
+                threadDropIndicator.position === "after") ||
+              (!isProjectView &&
+                threadDropIndicator?.type === "collection-group" &&
+                threadDropIndicator.collectionId === group.collectionId &&
+                threadDropIndicator.position === "after")
+            const groupAppendIndicator =
+              (isProjectView &&
+                threadDropIndicator?.type === "project-append" &&
+                threadDropIndicator.projectPath === group.projectPath) ||
+              (!isProjectView &&
+                threadDropIndicator?.type === "collection-append" &&
+                threadDropIndicator.collectionId === group.collectionId)
+
+            return (
+              <div className="thread-group" key={group.id}>
+                <div
+                  className={`thread-group-header ${group.canReorder ? "is-draggable" : ""} ${
+                    groupDropBefore ? "is-drop-before" : ""
+                  } ${groupDropAfter ? "is-drop-after" : ""} ${
+                    groupAppendIndicator ? "is-drop-append" : ""
+                  }`}
+                  draggable={group.canReorder}
+                  onDragEnd={handleThreadDragEnd}
+                  onDragOver={event => {
+                    if (!threadDragItem) {
+                      return
+                    }
+
+                    if (
+                      (isProjectView &&
+                        ((threadDragItem.type === "project-group" && group.projectPath) ||
+                          (threadDragItem.type === "project-thread" &&
+                            threadDragItem.projectPath === group.projectPath))) ||
+                      (!isProjectView &&
+                        ((threadDragItem.type === "collection-group" && group.collectionId) ||
+                          threadDragItem.type === "collection-thread"))
+                    ) {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      event.dataTransfer.dropEffect = "move"
+
+                      if (isProjectView && group.projectPath) {
+                        if (threadDragItem.type === "project-group") {
+                          setThreadDropIndicator({
+                            type: "project-group",
+                            projectPath: group.projectPath,
+                            position: getVerticalDropPosition(event)
+                          })
+                          return
+                        }
+
+                        setThreadDropIndicator({
+                          type: "project-append",
+                          projectPath: group.projectPath
+                        })
+                        return
+                      }
+
+                      if (!isProjectView) {
+                        if (threadDragItem.type === "collection-group" && group.collectionId) {
+                          setThreadDropIndicator({
+                            type: "collection-group",
+                            collectionId: group.collectionId,
+                            position: getVerticalDropPosition(event)
+                          })
+                          return
+                        }
+
+                        setThreadDropIndicator({
+                          type: "collection-append",
+                          collectionId: group.collectionId
+                        })
+                      }
+                    }
+                  }}
+                  onDragStart={event => {
+                    if (!group.canReorder) {
+                      return
+                    }
+
+                    event.dataTransfer.effectAllowed = "move"
+                    event.dataTransfer.setData("text/plain", group.id)
+                    setThreadDropIndicator(null)
+
+                    if (isProjectView && group.projectPath) {
+                      setThreadDragItem({
+                        type: "project-group",
+                        projectPath: group.projectPath
+                      })
+                    } else if (!isProjectView && group.collectionId) {
+                      setThreadDragItem({
+                        type: "collection-group",
+                        collectionId: group.collectionId
+                      })
+                    }
+                  }}
+                  onDrop={event => {
+                    event.preventDefault()
+                    event.stopPropagation()
+
+                    if (isProjectView && group.projectPath) {
+                      if (threadDragItem?.type === "project-group") {
+                        handleProjectGroupDrop(group.projectPath, event)
+                        return
+                      }
+
+                      if (threadDragItem?.type === "project-thread") {
+                        handleProjectThreadAppend(group.projectPath)
+                      }
+                      return
+                    }
+
+                    if (!isProjectView && group.collectionId) {
+                      handleCollectionGroupDrop(group.collectionId, event)
+                      return
+                    }
+
+                    if (!isProjectView && threadDragItem?.type === "collection-thread") {
+                      handleCollectionThreadDrop(null, group.sessions[0]?.id ?? "", event)
+                    }
+                  }}
+                >
+                  <button
+                    className="thread-group-header-main"
+                    onClick={() => {
+                      if (!canCollapse) {
+                        return
+                      }
+
+                      if (isProjectView && group.projectPath) {
+                        handleToggleProjectCollapsed(group.projectPath)
+                        return
+                      }
+
+                      if (!isProjectView && group.collectionId) {
+                        handleToggleCollectionCollapsed(group.collectionId)
+                      }
+                    }}
+                    type="button"
+                  >
+                    <span className={`thread-group-chevron ${!group.collapsed ? "is-open" : ""}`}>
+                      {canCollapse ? "›" : ""}
+                    </span>
+                    {isProjectView ? (
+                      <span className="thread-group-leading-icon">
+                        <FolderIcon />
+                      </span>
+                    ) : group.kind === "collection" ? (
+                      <span
+                        className="thread-group-leading-icon thread-group-leading-icon-collection"
+                        style={
+                          {
+                            "--collection-color": resolveCollectionColor(group.collectionColor)
+                          } as CSSProperties
+                        }
+                      >
+                        <CollectionSymbol icon={group.collectionIcon} />
+                      </span>
+                    ) : (
+                      <span className="thread-group-leading-icon">
+                        <CollectionIcon />
+                      </span>
+                    )}
+                    <span className="thread-group-title">{group.title}</span>
+                  </button>
+
+                  <div className="thread-group-header-actions">
+                    {group.subtitle ? (
+                      <span className="thread-group-subtitle" title={group.subtitle}>
+                        {group.subtitle}
+                      </span>
+                    ) : null}
+                    {group.canRename || group.canDelete ? (
+                      <ThreadGroupMenuButton
+                        canDelete={!isProjectView && group.collectionId !== null}
+                        kind={isProjectView ? "project" : "collection"}
+                        onDelete={
+                          !isProjectView && group.collectionId
+                            ? () => handleDeleteCollection(group.collectionId as string)
+                            : undefined
+                        }
+                        onEditAppearance={
+                          !isProjectView && group.collectionId
+                            ? () => handleOpenCollectionAppearanceEditor(group.collectionId as string)
+                            : undefined
+                        }
+                        onRename={() => {
+                          if (group.projectPath) {
+                            handleRenameProjectAlias(group.projectPath)
+                            return
+                          }
+
+                          if (group.collectionId) {
+                            handleRenameCollection(group.collectionId)
+                          }
+                        }}
+                      />
+                    ) : null}
+                  </div>
+                </div>
+
+                {!group.collapsed ? (
+                  <div
+                    className={`thread-group-body ${groupAppendIndicator ? "is-drop-append" : ""}`}
+                    onDragOver={event => {
+                      if (!threadDragItem) {
+                        return
+                      }
+
+                      if (
+                        (isProjectView &&
+                          threadDragItem.type === "project-thread" &&
+                          threadDragItem.projectPath === group.projectPath) ||
+                        (!isProjectView && threadDragItem.type === "collection-thread")
+                      ) {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        event.dataTransfer.dropEffect = "move"
+
+                        if (isProjectView && group.projectPath) {
+                          setThreadDropIndicator({
+                            type: "project-append",
+                            projectPath: group.projectPath
+                          })
+                          return
+                        }
+
+                        setThreadDropIndicator({
+                          type: "collection-append",
+                          collectionId: group.collectionId
+                        })
+                      }
+                    }}
+                    onDrop={event => {
+                      event.preventDefault()
+                      event.stopPropagation()
+
+                      if (isProjectView && group.projectPath) {
+                        handleProjectThreadAppend(group.projectPath)
+                        return
+                      }
+
+                      if (!isProjectView && group.collectionId) {
+                        handleCollectionGroupDrop(group.collectionId, event)
+                        return
+                      }
+
+                      if (!isProjectView && threadDragItem?.type === "collection-thread") {
+                        handleCollectionThreadDrop(null, group.sessions[0]?.id ?? "", event)
+                      }
+                    }}
+                  >
+                    {group.sessions.map(session => {
+                      const rowDropIndicator = isProjectView
+                        ? threadDropIndicator?.type === "project-thread" &&
+                          threadDropIndicator.projectPath === group.projectPath &&
+                          threadDropIndicator.threadId === session.id
+                          ? threadDropIndicator.position
+                          : null
+                        : threadDropIndicator?.type === "collection-thread" &&
+                            threadDropIndicator.collectionId === group.collectionId &&
+                            threadDropIndicator.threadId === session.id
+                          ? threadDropIndicator.position
+                          : null
+
+                      return (
+                        <ThreadSessionRow
+                          draggable={
+                            (isProjectView && group.projectPath !== null) ||
+                            !isProjectView
+                          }
+                          dropIndicator={rowDropIndicator}
+                          isActive={
+                            session.id === activeSessionId &&
+                            visibleSidebarSessionIds.has(session.id)
+                          }
+                          isGrouped={true}
+                          key={`${group.id}:${session.id}:${session.updatedAt}`}
+                          onDragEnd={handleThreadDragEnd}
+                          onDragOver={event => {
+                            if (!threadDragItem) {
+                              return
+                            }
+
+                            const acceptsProjectThread =
+                              isProjectView &&
+                              threadDragItem.type === "project-thread" &&
+                              threadDragItem.projectPath === group.projectPath
+                            const acceptsCollectionThread =
+                              !isProjectView && threadDragItem.type === "collection-thread"
+
+                            if (acceptsProjectThread || acceptsCollectionThread) {
+                              event.preventDefault()
+                              event.stopPropagation()
+                              event.dataTransfer.dropEffect = "move"
+
+                              if (isProjectView && group.projectPath) {
+                                setThreadDropIndicator({
+                                  type: "project-thread",
+                                  projectPath: group.projectPath,
+                                  threadId: session.id,
+                                  position: getVerticalDropPosition(event)
+                                })
+                                return
+                              }
+
+                              setThreadDropIndicator({
+                                type: "collection-thread",
+                                collectionId: group.collectionId,
+                                threadId: session.id,
+                                position: getVerticalDropPosition(event)
+                              })
+                            }
+                          }}
+                          onDragStart={event => {
+                            event.dataTransfer.effectAllowed = "move"
+                            event.dataTransfer.setData("text/plain", session.id)
+                            setThreadDropIndicator(null)
+
+                            if (isProjectView && group.projectPath) {
+                              setThreadDragItem({
+                                type: "project-thread",
+                                projectPath: group.projectPath,
+                                threadId: session.id
+                              })
+                              return
+                            }
+
+                            setThreadDragItem({
+                              type: "collection-thread",
+                              collectionId: group.collectionId,
+                              threadId: session.id
+                            })
+                          }}
+                          onDrop={event => {
+                            event.preventDefault()
+                            event.stopPropagation()
+
+                            if (isProjectView && group.projectPath) {
+                              handleProjectThreadDrop(group.projectPath, session.id, event)
+                              return
+                            }
+
+                            handleCollectionThreadDrop(group.collectionId, session.id, event)
+                          }}
+                          onSelect={() => handleSelectSessionFromSidebar(session.id)}
+                          session={session}
+                          stateInfo={stateInfo}
+                        />
+                      )
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            )
+          })
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="app-shell">
+      {isCreateCollectionDialogOpen ? (
+        <CollectionCreateDialog
+          inputRef={newCollectionInputRef}
+          onCancel={handleCancelCreateCollection}
+          onChange={setNewCollectionNameDraft}
+          onSubmit={handleConfirmCreateCollection}
+          value={newCollectionNameDraft}
+        />
+      ) : null}
+      {editingCollectionAppearanceId ? (
+        <CollectionAppearanceDialog
+          color={collectionAppearanceDraft.color}
+          icon={collectionAppearanceDraft.icon}
+          onCancel={handleCloseCollectionAppearanceEditor}
+          onColorSelect={color =>
+            setCollectionAppearanceDraft(current => ({
+              ...current,
+              color
+            }))
+          }
+          onIconSelect={icon =>
+            setCollectionAppearanceDraft(current => ({
+              ...current,
+              icon
+            }))
+          }
+          onSubmit={handleSaveCollectionAppearance}
+        />
+      ) : null}
+
       <div
         className={`workspace ${sidebarDragState ? "is-resizing" : ""} ${
           isSidebarCollapsed ? "is-sidebar-collapsed" : ""
@@ -5941,110 +8217,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="session-list" role="list">
-                    <div className="sidebar-filter-list-row">
-                      <button
-                        aria-expanded={isFilterPopoverOpen}
-                        aria-haspopup="dialog"
-                        aria-label={isFilterPopoverOpen ? "Close filters" : "Open filters"}
-                        aria-pressed={hasActiveSidebarFilters}
-                        className={`sidebar-filter-button sidebar-filter-list-button ${
-                          hasActiveSidebarFilters ? "is-active" : ""
-                        }`}
-                        onClick={handleFilterPopoverToggle}
-                        ref={filterButtonRef}
-                        type="button"
-                      >
-                        <FilterIcon />
-                        <span className="sidebar-filter-button-label">Filter</span>
-                        {hasActiveSidebarFilters ? (
-                          <span aria-hidden="true" className="sidebar-filter-button-dot" />
-                        ) : null}
-                      </button>
-
-                      {isFilterPopoverOpen ? (
-                        <div
-                          aria-label="Session filters"
-                          className="sidebar-filter-popover"
-                          ref={filterPopoverRef}
-                          role="dialog"
-                        >
-                          <div className="sidebar-filter-popover-header">
-                            <span className="sidebar-filter-popover-title">Filters</span>
-                            <button
-                              aria-label="Dismiss filter panel"
-                              className="sidebar-filter-close-button"
-                              onClick={() => setIsFilterPopoverOpen(false)}
-                              type="button"
-                            >
-                              ×
-                            </button>
-                          </div>
-                          <SidebarFilterContent
-                            filters={sidebarFilters}
-                            onArchivedChange={handleArchivedFilterChange}
-                            onDateChange={handleDateFilterChange}
-                            onProjectToggle={handleProjectFilterToggle}
-                            onProviderChange={handleProviderFilterChange}
-                            projectOptions={projectOptions}
-                          />
-                        </div>
-                      ) : null}
-                    </div>
-
-                    {isLoadingSessions && sessions.length === 0 ? (
-                      <EmptyState
-                        title="Loading sessions"
-                        detail="Reading Codex and Claude session indexes and resolving available conversation files."
-                      />
-                    ) : sessions.length === 0 ? (
-                      <EmptyState
-                        title="No sessions found"
-                        detail="No conversation entries were available from Codex or Claude."
-                      />
-                    ) : filteredSessions.length === 0 ? (
-                      <EmptyState
-                        title="No matching sessions"
-                        detail="No sessions match the current filters."
-                      />
-                    ) : (
-                      filteredSessions.map(session => (
-                        <button
-                          key={`${session.id}:${session.updatedAt}:${session.threadName}`}
-                          className={`session-row ${
-                            session.id === activeSessionId &&
-                            filteredSessions.some(
-                              visibleSession => visibleSession.id === activeSessionId
-                            )
-                              ? "is-active"
-                              : ""
-                          }`}
-                          onClick={() => handleSelectSessionFromSidebar(session.id)}
-                          type="button"
-                        >
-                          <div className="session-row-main">
-                            <div className="session-title-group">
-                              {session.archived ? (
-                                <span className="archived-indicator" title="Archived">
-                                  A
-                                </span>
-                              ) : null}
-                              <span className="session-title">{session.threadName}</span>
-                            </div>
-                            <div className="session-row-meta">
-                              <ProviderIcon provider={session.provider} stateInfo={stateInfo} />
-                              <span className="session-time">
-                                {formatRelativeTimestamp(session.updatedAt)}
-                              </span>
-                            </div>
-                          </div>
-                          {!session.sessionPath ? (
-                            <span className="session-subtitle">Missing session file</span>
-                          ) : null}
-                        </button>
-                      ))
-                    )}
-                  </div>
+                  {renderThreadSidebarList()}
                 </>
               ) : activeSection === "agents" ? (
                 <AgentsListPane

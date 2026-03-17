@@ -23,6 +23,7 @@ interface SearchDocument {
   provider: SessionListItem["provider"]
   archived: boolean
   threadName: string
+  createdAt: string
   updatedAt: string
   projectPath: string | null
   sessionPath: string
@@ -301,6 +302,7 @@ function buildSearchDocument(params: {
     provider: params.session.provider,
     archived: params.session.archived,
     threadName: params.session.threadName,
+    createdAt: params.session.createdAt,
     updatedAt: params.session.updatedAt,
     projectPath: transcript.projectPath ?? params.session.projectPath,
     sessionPath: params.session.sessionPath!,
@@ -413,6 +415,7 @@ export function createHandoffSearchService(
     const stat = await fs.stat(session.sessionPath)
     return JSON.stringify({
       threadName: session.threadName,
+      createdAt: session.createdAt,
       updatedAt: session.updatedAt,
       archived: session.archived,
       provider: session.provider,
@@ -458,6 +461,7 @@ export function createHandoffSearchService(
       if (existingDocument && existingDocument.signature === signature) {
         nextDocuments.set(session.id, {
           ...existingDocument,
+          createdAt: session.createdAt,
           updatedAt: session.updatedAt,
           threadName: session.threadName,
           archived: session.archived,
@@ -598,6 +602,7 @@ export function createHandoffSearchService(
             provider: document.provider,
             archived: document.archived,
             threadName: document.threadName,
+            createdAt: document.createdAt,
             updatedAt: document.updatedAt,
             projectPath: document.projectPath,
             sessionPath: document.sessionPath,
@@ -630,6 +635,7 @@ export function createHandoffSearchService(
             provider: document.provider,
             archived: document.archived,
             threadName: document.threadName,
+            createdAt: document.createdAt,
             updatedAt: document.updatedAt,
             projectPath: document.projectPath,
             sessionPath: document.sessionPath,
@@ -665,6 +671,7 @@ export function createHandoffSearchService(
           provider: document.provider,
           archived: document.archived,
           threadName: document.threadName,
+          createdAt: document.createdAt,
           updatedAt: document.updatedAt,
           projectPath: document.projectPath,
           sessionPath: document.sessionPath,

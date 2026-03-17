@@ -21,6 +21,8 @@ export type DateRangeFilterValue = "24h" | "3d" | "7d" | "30d" | "all"
 export type TerminalAppId = "terminal" | "ghostty" | "warp"
 export type ThreadLaunchMode = "app" | "cli"
 export type ThinkingLevel = "low" | "medium" | "high" | "max"
+export type ThreadViewMode = "chronological" | "project" | "collection"
+export type ThreadSortKey = "updated" | "created"
 
 export interface AgentDefinition {
   id: string
@@ -162,6 +164,7 @@ export interface SessionIndexEntry {
   provider: SessionProvider
   archived: boolean
   threadName: string
+  createdAt: string
   updatedAt: string
   projectPath: string | null
 }
@@ -342,6 +345,39 @@ export interface SearchStatus {
   documentCount: number
 }
 
+export interface ProjectGroupState {
+  projectPath: string
+  alias: string
+  collapsed: boolean
+  order: number | null
+  threadOrder: string[]
+}
+
+export type ThreadCollectionIcon =
+  | "stack"
+  | "bookmark"
+  | "star"
+  | "bolt"
+  | "target"
+  | "briefcase"
+
+export interface ThreadCollection {
+  id: string
+  name: string
+  icon?: ThreadCollectionIcon
+  color?: string
+  collapsed: boolean
+  order: number | null
+  threadIds: string[]
+}
+
+export interface ThreadOrganizationSettings {
+  viewMode: ThreadViewMode
+  sortKey: ThreadSortKey
+  projects: Record<string, ProjectGroupState>
+  collections: ThreadCollection[]
+}
+
 export interface ProviderLaunchOverrides {
   binaryPath: string
   homePath: string
@@ -361,6 +397,7 @@ export interface HandoffSettings {
   skills?: Record<SessionProvider, SkillProviderSettings>
   terminals: TerminalPreferences
   agents: AgentDefinition[]
+  threadOrganization: ThreadOrganizationSettings
 }
 
 export interface HandoffSettingsPatch {
@@ -425,6 +462,10 @@ export interface HandoffApi {
     update(id: string, patch: AgentUpdatePatch): Promise<AgentDefinition>
     delete(id: string): Promise<AgentDeleteResult>
     duplicate(id: string): Promise<AgentDefinition>
+  }
+  threads: {
+    get(): Promise<ThreadOrganizationSettings>
+    update(settings: ThreadOrganizationSettings): Promise<ThreadOrganizationSettings>
   }
   bridge: {
     getStatus(): Promise<AgentBridgeHealth>
