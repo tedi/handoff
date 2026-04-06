@@ -3486,7 +3486,9 @@ function AgentsListPane({
       ) : (
         sortAgentsByName(agents).map(agent => (
           <button
-            className={`session-row ${agent.id === selectedAgentId ? "is-active" : ""}`}
+            className={`session-row ${
+              !isDashboardSelected && agent.id === selectedAgentId ? "is-active" : ""
+            }`}
             key={agent.id}
             onClick={() => onSelect(agent.id)}
             title={getComposerModelLabel(agent.provider, agent.modelId)}
