@@ -1425,6 +1425,23 @@ function getLiveThreadDisplayStatusLabel(record: LiveThreadRecord) {
   return formatLiveThreadStatus(record.status)
 }
 
+function ControlCenterStatusIndicator({
+  tone
+}: {
+  tone: ReturnType<typeof getLiveThreadIndicatorTone>
+}) {
+  if (tone === "running") {
+    return <span aria-hidden="true" className="control-center-status-loader is-glowing-arc" />
+  }
+
+  return (
+    <span
+      aria-hidden="true"
+      className={`control-center-popout-dot${tone ? ` is-${tone}` : ""}`}
+    />
+  )
+}
+
 function getPendingRequestTone(request: ControlCenterPendingRequest) {
   if (request.type === "approval_request") {
     return "approval"
@@ -3587,12 +3604,7 @@ function ControlCenterPane({
               >
                 <div className="control-center-card-header">
                   <div className="control-center-title-group">
-                    <span
-                      aria-hidden="true"
-                      className={`control-center-popout-dot${
-                        indicatorTone ? ` is-${indicatorTone}` : ""
-                      }`}
-                    />
+                    <ControlCenterStatusIndicator tone={indicatorTone} />
                     <span className="control-center-title">{getLiveThreadTitle(record)}</span>
                   </div>
 
@@ -3753,12 +3765,7 @@ function ControlCenterPopoutPane({
                   <>
                     <div className="control-center-popout-row-header">
                       <span className="control-center-popout-row-title-group">
-                        <span
-                          aria-hidden="true"
-                          className={`control-center-popout-dot${
-                            indicatorTone ? ` is-${indicatorTone}` : ""
-                          }`}
-                        />
+                        <ControlCenterStatusIndicator tone={indicatorTone} />
                         <span className="control-center-popout-row-title">
                           {getLiveThreadTitle(record)}
                         </span>
@@ -3794,12 +3801,7 @@ function ControlCenterPopoutPane({
                   </>
                 ) : (
                   <>
-                    <span
-                      aria-hidden="true"
-                      className={`control-center-popout-dot${
-                        indicatorTone ? ` is-${indicatorTone}` : ""
-                      }`}
-                    />
+                    <ControlCenterStatusIndicator tone={indicatorTone} />
                     <span className="control-center-popout-row-title">
                       {getLiveThreadTitle(record)}
                     </span>

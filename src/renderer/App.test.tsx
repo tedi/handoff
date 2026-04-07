@@ -808,6 +808,11 @@ describe("Handoff App", () => {
         node?.textContent === "You: the placeholder text is still off center"
       )
     ).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: /client · Onboarding flow/i }).querySelector(
+        ".control-center-status-loader"
+      )
+    ).toBeInTheDocument()
     expect(screen.queryByText(/^Running$/)).not.toBeInTheDocument()
     expect(
       screen.getByText(
