@@ -808,6 +808,7 @@ describe("Handoff App", () => {
         node?.textContent === "You: the placeholder text is still off center"
       )
     ).toBeInTheDocument()
+    expect(screen.queryByText(/^Running$/)).not.toBeInTheDocument()
     expect(
       screen.getByText(
         /This takes a completely different approach: instead of fighting iOS's native placeholder rendering/i
@@ -1013,13 +1014,15 @@ describe("Handoff App", () => {
       name: /client · Review live output/i
     })
     const rowCard = rowButton.closest(".control-center-card")
+    const dot = rowCard?.querySelector(".control-center-popout-dot")
     const archiveButton = screen.getByRole("button", {
       name: /Archive Review live output/i
     })
 
     expect(rowCard).toHaveClass("is-completed-unseen")
+    expect(dot).toHaveClass("is-completed-unseen")
     expect(archiveButton).toBeInTheDocument()
-    expect(screen.getByText(/^Done$/)).toBeInTheDocument()
+    expect(screen.queryByText(/^Done$/)).not.toBeInTheDocument()
     expect(screen.queryByText(/^Dismiss$/)).not.toBeInTheDocument()
 
     await userEvent.click(rowButton)
@@ -1027,7 +1030,10 @@ describe("Handoff App", () => {
     await waitFor(() => {
       expect(api.controlCenter.open).toHaveBeenCalledWith("claude:done-1")
       expect(rowCard).not.toHaveClass("is-completed-unseen")
-      expect(screen.queryByText(/^Done$/)).not.toBeInTheDocument()
+      expect(rowCard?.querySelector(".control-center-popout-dot")).not.toHaveClass("is-ready")
+      expect(rowCard?.querySelector(".control-center-popout-dot")).not.toHaveClass(
+        "is-completed-unseen"
+      )
     })
   })
 
@@ -1076,13 +1082,14 @@ describe("Handoff App", () => {
       )
     ).toBeInTheDocument()
     expect(screen.getByText(/The pop-out updates are ready\./i)).toBeInTheDocument()
-    expect(screen.getByText(/^Done$/)).toBeInTheDocument()
+    expect(screen.queryByText(/^Done$/)).not.toBeInTheDocument()
 
     await userEvent.click(rowButton)
 
     await waitFor(() => {
       expect(api.controlCenter.open).toHaveBeenCalledWith("claude:done-2")
       expect(rowButton).not.toHaveClass("is-completed-unseen")
+      expect(rowButton.querySelector(".control-center-popout-dot")).not.toHaveClass("is-ready")
       expect(rowButton.querySelector(".control-center-popout-dot")).not.toHaveClass(
         "is-completed-unseen"
       )
@@ -1091,7 +1098,6 @@ describe("Handoff App", () => {
           node?.textContent === "You: Can you ship the pop-out changes?"
         )
       ).not.toBeInTheDocument()
-      expect(screen.queryByText(/^Done$/)).not.toBeInTheDocument()
     })
   })
 

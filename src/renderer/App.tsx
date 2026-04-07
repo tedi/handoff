@@ -1405,8 +1405,20 @@ function getLiveThreadDisplayTone(record: LiveThreadRecord) {
   return getLiveThreadStatusTone(record.status)
 }
 
+function getLiveThreadIndicatorTone(record: LiveThreadRecord) {
+  if (isCompletedUnseen(record)) {
+    return "completed-unseen"
+  }
+
+  if (record.status === "completed") {
+    return null
+  }
+
+  return getLiveThreadStatusTone(record.status)
+}
+
 function getLiveThreadDisplayStatusLabel(record: LiveThreadRecord) {
-  if (isCompletedSeen(record)) {
+  if (record.status === "running" || record.status === "completed") {
     return null
   }
 
@@ -3556,6 +3568,7 @@ function ControlCenterPane({
       <div className="control-center-list" role="list">
         {records.map(record => {
           const displayTone = getLiveThreadDisplayTone(record)
+          const indicatorTone = getLiveThreadIndicatorTone(record)
           const statusLabel = record.pendingRequest
             ? null
             : getLiveThreadDisplayStatusLabel(record)
@@ -3574,6 +3587,12 @@ function ControlCenterPane({
               >
                 <div className="control-center-card-header">
                   <div className="control-center-title-group">
+                    <span
+                      aria-hidden="true"
+                      className={`control-center-popout-dot${
+                        indicatorTone ? ` is-${indicatorTone}` : ""
+                      }`}
+                    />
                     <span className="control-center-title">{getLiveThreadTitle(record)}</span>
                   </div>
 
@@ -3685,6 +3704,7 @@ function ControlCenterPopoutPane({
         <div className="control-center-popout-list" role="list">
           {records.map(record => {
             const displayTone = getLiveThreadDisplayTone(record)
+            const indicatorTone = getLiveThreadIndicatorTone(record)
             const statusLabel = record.pendingRequest
               ? null
               : getLiveThreadDisplayStatusLabel(record)
@@ -3736,7 +3756,7 @@ function ControlCenterPopoutPane({
                         <span
                           aria-hidden="true"
                           className={`control-center-popout-dot${
-                            displayTone ? ` is-${displayTone}` : ""
+                            indicatorTone ? ` is-${indicatorTone}` : ""
                           }`}
                         />
                         <span className="control-center-popout-row-title">
@@ -3777,7 +3797,7 @@ function ControlCenterPopoutPane({
                     <span
                       aria-hidden="true"
                       className={`control-center-popout-dot${
-                        displayTone ? ` is-${displayTone}` : ""
+                        indicatorTone ? ` is-${indicatorTone}` : ""
                       }`}
                     />
                     <span className="control-center-popout-row-title">
