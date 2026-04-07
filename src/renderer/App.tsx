@@ -3791,13 +3791,13 @@ function ControlCenterPopoutPane({
                               {statusLabel}
                             </span>
                           ) : null}
-                          <span className="control-center-meta-slot">
+                          <span className="control-center-meta-slot control-center-meta-slot-popout">
                             <span className="control-center-time">
                               {formatRelativeTimestamp(record.lastEventAt)}
                             </span>
                             <button
                               aria-label={`Archive ${record.threadName}`}
-                              className="control-center-archive-button"
+                              className="control-center-archive-button control-center-archive-button-popout"
                               onClick={event => {
                                 event.stopPropagation()
                                 onDismiss(record.id)
@@ -3839,16 +3839,16 @@ function ControlCenterPopoutPane({
                             {statusLabel}
                           </span>
                         ) : null}
-                        <span className="control-center-meta-slot">
-                          <span className="control-center-time">
-                            {formatRelativeTimestamp(record.lastEventAt)}
-                          </span>
-                          <button
-                            aria-label={`Archive ${record.threadName}`}
-                            className="control-center-archive-button"
-                            onClick={event => {
-                              event.stopPropagation()
-                              onDismiss(record.id)
+                      <span className="control-center-meta-slot control-center-meta-slot-popout">
+                        <span className="control-center-time">
+                          {formatRelativeTimestamp(record.lastEventAt)}
+                        </span>
+                        <button
+                          aria-label={`Archive ${record.threadName}`}
+                          className="control-center-archive-button control-center-archive-button-popout"
+                          onClick={event => {
+                            event.stopPropagation()
+                            onDismiss(record.id)
                             }}
                             type="button"
                           >

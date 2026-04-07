@@ -2697,6 +2697,18 @@ pre {
     min-height: 24px;
 }
 
+.control-center-meta-slot-popout {
+    min-width: 0;
+    width: max-content;
+}
+
+.control-center-meta-slot-popout .control-center-archive-button {
+    left: auto;
+    right: 0;
+    width: 16px;
+    justify-content: center;
+}
+
 .control-center-archive-button {
     position: absolute;
     inset: 0;
