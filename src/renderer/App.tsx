@@ -90,6 +90,10 @@ import {
   SelectorSidebarPane,
   useSelectorSection
 } from "./selector-section"
+import {
+  CONTROL_CENTER_POPOUT_WINDOW_MODE,
+  getAppWindowModeFromSearch
+} from "../shared/window-mode"
 
 function formatTimestamp(value: string) {
   return new Intl.DateTimeFormat("en-US", {
@@ -3388,6 +3392,83 @@ function ControlCenterPane({
   )
 }
 
+function ControlCenterPopoutPane({
+  snapshot,
+  error,
+  isLoading,
+  onClose,
+  onOpenThread
+}: {
+  snapshot: ControlCenterSnapshot | null
+  error: string | null
+  isLoading: boolean
+  onClose(): void
+  onOpenThread(threadId: string): void
+}) {
+  const records = snapshot?.records ?? []
+
+  return (
+    <div className="control-center-popout-shell">
+      <header className="control-center-popout-header">
+        <div className="control-center-popout-title-group">
+          <span className="control-center-popout-title">Control Center</span>
+          <span className="count-pill">{records.length}</span>
+        </div>
+        <button
+          aria-label="Close pop-out"
+          className="control-center-popout-close"
+          onClick={onClose}
+          type="button"
+        >
+          ×
+        </button>
+      </header>
+
+      {error ? (
+        <div className="control-center-popout-empty">{error}</div>
+      ) : isLoading && records.length === 0 ? (
+        <div className="control-center-popout-empty">Loading live threads…</div>
+      ) : records.length === 0 ? (
+        <div className="control-center-popout-empty">No live threads</div>
+      ) : (
+        <div className="control-center-popout-list" role="list">
+          {records.map(record => {
+            const statusTone = getLiveThreadStatusTone(record.status)
+
+            return (
+              <button
+                className="control-center-popout-row"
+                key={`${record.id}:${record.lastEventAt}`}
+                onClick={() => onOpenThread(record.id)}
+                type="button"
+              >
+                <span
+                  aria-hidden="true"
+                  className={`control-center-popout-dot is-${statusTone}`}
+                />
+                <span className="control-center-popout-row-title">
+                  {getLiveThreadTitle(record)}
+                </span>
+                <span className="control-center-popout-row-meta">
+                  <span className={`control-center-pill is-provider-${record.provider}`}>
+                    {formatProviderLabel(record.provider)}
+                  </span>
+                  {record.hostAppExact && record.hostAppLabel ? (
+                    <span className="control-center-pill">{record.hostAppLabel}</span>
+                  ) : null}
+                  <span className="control-center-time">
+                    {formatRelativeTimestamp(record.lastEventAt)}
+                  </span>
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function SettingsValue({
   value,
   monospace = false
@@ -5294,6 +5375,14 @@ function getHandoffApi(): HandoffApi | null {
   return typeof window !== "undefined" ? window.handoffApp ?? null : null
 }
 
+function getAppWindowMode() {
+  if (typeof window === "undefined") {
+    return "main" as const
+  }
+
+  return getAppWindowModeFromSearch(window.location.search)
+}
+
 function getControlCenterBridge(api: HandoffApi | null): HandoffApi["controlCenter"] | null {
   if (!api || !("controlCenter" in api) || !api.controlCenter) {
     return null
@@ -5303,6 +5392,9 @@ function getControlCenterBridge(api: HandoffApi | null): HandoffApi["controlCent
 }
 
 export default function App() {
+  const windowMode = getAppWindowMode()
+  const isControlCenterPopoutWindow =
+    windowMode === CONTROL_CENTER_POPOUT_WINDOW_MODE
   const [activeSection, setActiveSection] = useState<AppSection>("threads")
   const [rightPaneMode, setRightPaneMode] = useState<"conversation" | "search" | "new-thread">(
     "conversation"
@@ -6499,6 +6591,11 @@ export default function App() {
         throw new Error("The preload bridge did not load. Restart the app.")
       }
 
+      if (isControlCenterPopoutWindow) {
+        await loadControlCenterSnapshot()
+        return
+      }
+
       const info = await api.app.getStateInfo()
       if (!isMounted) {
         return
@@ -6563,6 +6660,7 @@ export default function App() {
       isMounted = false
     }
   }, [
+    isControlCenterPopoutWindow,
     loadAgents,
     loadBridgeInfo,
     loadControlCenterSnapshot,
@@ -6572,6 +6670,10 @@ export default function App() {
   ])
 
   useEffect(() => {
+    if (isControlCenterPopoutWindow) {
+      return () => undefined
+    }
+
     const api = getHandoffApi()
     if (!api) {
       return () => undefined
@@ -6580,7 +6682,7 @@ export default function App() {
     return api.search.onStatusChanged(nextStatus => {
       setSearchStatus(nextStatus)
     })
-  }, [])
+  }, [isControlCenterPopoutWindow])
 
   useEffect(() => {
     const api = getHandoffApi()
@@ -7063,6 +7165,10 @@ export default function App() {
   }, [sidebarDragState])
 
   useEffect(() => {
+    if (isControlCenterPopoutWindow) {
+      return () => undefined
+    }
+
     const api = getHandoffApi()
     if (!api) {
       return () => undefined
@@ -7078,7 +7184,13 @@ export default function App() {
 
       void loadSessions(activeSessionId)
     })
-  }, [activeSessionId, loadConversation, loadSessions, sessions])
+  }, [
+    activeSessionId,
+    isControlCenterPopoutWindow,
+    loadConversation,
+    loadSessions,
+    sessions
+  ])
 
   const handleSidebarToggle = useCallback(() => {
     setIsSidebarCollapsed(current => !current)
@@ -8055,6 +8167,40 @@ export default function App() {
     [loadControlCenterSnapshot, showToast]
   )
 
+  const handleOpenControlCenterPopout = useCallback(async () => {
+    const api = getHandoffApi()
+    if (!api) {
+      showToast("Preload bridge unavailable", "error")
+      return
+    }
+
+    try {
+      await api.app.openControlCenterPopout()
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : "Unable to open the Control Center pop-out.",
+        "error"
+      )
+    }
+  }, [showToast])
+
+  const handleCloseControlCenterPopout = useCallback(async () => {
+    const api = getHandoffApi()
+    if (!api) {
+      window.close()
+      return
+    }
+
+    try {
+      await api.app.closeControlCenterPopout()
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : "Unable to close the Control Center pop-out.",
+        "error"
+      )
+    }
+  }, [showToast])
+
   const handleDismissControlCenterThread = useCallback(async (threadId: string) => {
     const api = getHandoffApi()
     const controlCenter = getControlCenterBridge(api)
@@ -8594,6 +8740,35 @@ export default function App() {
     )
   }
 
+  if (isControlCenterPopoutWindow) {
+    return (
+      <div className="control-center-popout-app">
+        {toastState ? (
+          <div
+            aria-live="polite"
+            className={`top-toast is-${toastState.tone} ${
+              toastState.visible ? "is-visible" : ""
+            }`}
+            role="status"
+          >
+            <span className="top-toast-message">{toastState.message}</span>
+          </div>
+        ) : null}
+        <ControlCenterPopoutPane
+          error={controlCenterError}
+          isLoading={isLoadingControlCenter}
+          onClose={() => {
+            void handleCloseControlCenterPopout()
+          }}
+          onOpenThread={threadId => {
+            void handleOpenControlCenterThread(threadId)
+          }}
+          snapshot={controlCenterSnapshot}
+        />
+      </div>
+    )
+  }
+
   return (
     <div className="app-shell">
       {isCreateCollectionDialogOpen ? (
@@ -8874,6 +9049,17 @@ export default function App() {
                   type="button"
                 >
                   Back to results
+                </button>
+              ) : null}
+              {!isSettingsOpen && activeSection === "control-center" ? (
+                <button
+                  className="topbar-button"
+                  onClick={() => {
+                    void handleOpenControlCenterPopout()
+                  }}
+                  type="button"
+                >
+                  Pop out
                 </button>
               ) : null}
               {!isSettingsOpen && activeSection === "control-center" ? (

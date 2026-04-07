@@ -293,6 +293,60 @@ describe("registerIpcHandlers", () => {
     expect(service.controlCenter.acknowledge).toHaveBeenCalledWith("codex:live-1")
   })
 
+  it("routes Control Center pop-out open and close through window callbacks", async () => {
+    const ipcMain = createIpcMainStub()
+    const openControlCenterPopout = vi.fn().mockResolvedValue(undefined)
+    const closeControlCenterPopout = vi.fn().mockResolvedValue(undefined)
+    const service = {
+      app: {
+        getStateInfo: vi.fn(),
+        refresh: vi.fn()
+      },
+      settings: {
+        get: vi.fn().mockResolvedValue(settingsSnapshot),
+        update: vi.fn(),
+        resetProvider: vi.fn()
+      },
+      agents: {
+        list: vi.fn().mockResolvedValue([]),
+        create: vi.fn(),
+        update: vi.fn(),
+        delete: vi.fn(),
+        duplicate: vi.fn()
+      },
+      controlCenter: {
+        getSnapshot: vi.fn().mockResolvedValue({ records: [] }),
+        getRecord: vi.fn().mockResolvedValue(null),
+        acknowledge: vi.fn().mockResolvedValue(null),
+        dismiss: vi.fn().mockResolvedValue({ records: [] }),
+        dismissCompleted: vi.fn().mockResolvedValue({ records: [] })
+      },
+      sessions: {
+        list: vi.fn(),
+        getTranscript: vi.fn()
+      },
+      search: {
+        getStatus: vi.fn(),
+        query: vi.fn()
+      },
+      startWatching: vi.fn(),
+      onStateChanged: vi.fn(),
+      onSearchStatusChanged: vi.fn(),
+      dispose: vi.fn()
+    } as any
+
+    registerIpcHandlers(ipcMain as any, service, {
+      openControlCenterPopout,
+      closeControlCenterPopout
+    })
+
+    await ipcMain.invoke(IPC_CHANNELS.app.openControlCenterPopout)
+    await ipcMain.invoke(IPC_CHANNELS.app.closeControlCenterPopout)
+
+    expect(openControlCenterPopout).toHaveBeenCalledTimes(1)
+    expect(closeControlCenterPopout).toHaveBeenCalledTimes(1)
+  })
+
   it("focuses an existing Ghostty live Claude thread before launching a new shell", async () => {
     terminalMocks.focusExistingGhosttyThread.mockResolvedValueOnce(true)
 

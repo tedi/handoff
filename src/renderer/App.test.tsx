@@ -183,6 +183,8 @@ function createMockApi({
         fallbackMessage: null
       }),
       openProjectPath: vi.fn().mockResolvedValue({ fallbackMessage: null }),
+      openControlCenterPopout: vi.fn().mockResolvedValue(undefined),
+      closeControlCenterPopout: vi.fn().mockResolvedValue(undefined),
       onStateChanged(listener) {
         listeners.add(listener)
 
@@ -515,6 +517,7 @@ describe("Handoff App", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     window.localStorage.clear()
+    window.history.replaceState({}, "", "/")
   })
 
   it("renders Control Center above Threads and opens live rows through the control center bridge", async () => {
@@ -586,7 +589,13 @@ describe("Handoff App", () => {
     ).toBeTruthy()
 
     await userEvent.click(controlCenterButton)
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: /Pop out/i
+      })
+    )
 
+    expect(api.app.openControlCenterPopout).toHaveBeenCalledTimes(1)
     expect(await screen.findByText("client · Live onboarding flow")).toBeInTheDocument()
     await userEvent.click(
       screen.getByRole("button", { name: /client · Live onboarding flow/i })
@@ -646,6 +655,84 @@ describe("Handoff App", () => {
     expect(
       await screen.findByText(/Control Center is unavailable\. Restart the app/i)
     ).toBeInTheDocument()
+  })
+
+  it("renders the compact Control Center pop-out mode and keeps row clicks source-aware", async () => {
+    const { api } = createMockApi({
+      sessions: [
+        {
+          id: "codex:session-1",
+          sourceSessionId: "session-1",
+          provider: "codex",
+          archived: false,
+          threadName: "Codex session",
+          updatedAt: "2026-03-14T01:00:00.000Z",
+          projectPath: "/tmp/codex-project",
+          sessionPath: "/tmp/session-1.jsonl"
+        }
+      ],
+      controlCenterRecords: [
+        {
+          id: "claude:live-1",
+          sourceSessionId: "live-1",
+          provider: "claude",
+          threadName: "Investigate live focus",
+          projectPath: "/Users/tedikonda/topchallenger/apps/client",
+          transcriptPath: "/tmp/live-1.jsonl",
+          status: "waiting_user",
+          lastEventAt: "2026-03-14T02:00:00.000Z",
+          lastUserPreview: "PLEASE IMPLEMENT THIS PLAN",
+          lastAssistantPreview: "Implemented the onboarding flow changes.",
+          assistantPreviewKind: "message",
+          launchMode: "cli",
+          hostAppLabel: "Ghostty",
+          hostAppExact: true,
+          acknowledgedAt: null,
+          dismissedAt: null
+        }
+      ],
+      transcriptById: {
+        "codex:session-1": {
+          id: "codex:session-1",
+          sourceSessionId: "session-1",
+          provider: "codex",
+          archived: false,
+          threadName: "Codex session",
+          updatedAt: "2026-03-14T01:00:00.000Z",
+          projectPath: "/tmp/codex-project",
+          sessionPath: "/tmp/session-1.jsonl",
+          sessionClient: "desktop",
+          sessionCwd: "/tmp/codex-project",
+          entries: [],
+          markdown: "# Transcript\n",
+          lastAssistantMarkdown: null,
+          hasDiffs: false
+        }
+      }
+    })
+
+    window.history.replaceState({}, "", "/?window=control-center-popout")
+    window.handoffApp = api
+
+    render(<App />)
+
+    expect(await screen.findByText("Control Center")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /^Threads$/i })).not.toBeInTheDocument()
+    expect(screen.queryByText("PLEASE IMPLEMENT THIS PLAN")).not.toBeInTheDocument()
+    expect(
+      screen.queryByText("Implemented the onboarding flow changes.")
+    ).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /Dismiss completed/i })).not.toBeInTheDocument()
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /client · Investigate live focus/i })
+    )
+    await waitFor(() => {
+      expect(api.controlCenter.open).toHaveBeenCalledWith("claude:live-1")
+    })
+
+    await userEvent.click(screen.getByRole("button", { name: /Close pop-out/i }))
+    expect(api.app.closeControlCenterPopout).toHaveBeenCalledTimes(1)
   })
 
   it("renders a mixed-source sidebar and switches source-aware actions with the selected transcript", async () => {

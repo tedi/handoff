@@ -508,6 +508,8 @@ export interface HandoffApi {
       target: ProjectLocationTarget,
       projectPath: string
     ): Promise<OpenActionResult>
+    openControlCenterPopout(): Promise<void>
+    closeControlCenterPopout(): Promise<void>
     onStateChanged(listener: (event: HandoffStateChangeEvent) => void): () => void
   }
   settings: {

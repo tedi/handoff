@@ -6,7 +6,9 @@ const IPC_CHANNELS = {
     refresh: "handoff:refresh",
     openSourceSession: "handoff:open-source-session",
     startNewThread: "handoff:start-new-thread",
-    openProjectPath: "handoff:open-project-path"
+    openProjectPath: "handoff:open-project-path",
+    openControlCenterPopout: "handoff:open-control-center-popout",
+    closeControlCenterPopout: "handoff:close-control-center-popout"
   },
   settings: {
     get: "handoff:settings:get",
@@ -121,6 +123,12 @@ contextBridge.exposeInMainWorld("handoffApp", {
         target,
         projectPath
       )
+    },
+    openControlCenterPopout() {
+      return ipcRenderer.invoke(IPC_CHANNELS.app.openControlCenterPopout)
+    },
+    closeControlCenterPopout() {
+      return ipcRenderer.invoke(IPC_CHANNELS.app.closeControlCenterPopout)
     },
     onStateChanged(listener) {
       const wrappedListener = (_event, payload) => {

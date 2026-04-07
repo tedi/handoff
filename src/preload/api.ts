@@ -94,6 +94,14 @@ export function createHandoffBridge(
         ) as Promise<OpenActionResult>
       },
 
+      openControlCenterPopout() {
+        return ipcRenderer.invoke(IPC_CHANNELS.app.openControlCenterPopout) as Promise<void>
+      },
+
+      closeControlCenterPopout() {
+        return ipcRenderer.invoke(IPC_CHANNELS.app.closeControlCenterPopout) as Promise<void>
+      },
+
       onStateChanged(listener) {
         const wrappedListener = (_event: IpcRendererEvent | Event, payload: unknown) => {
           listener(payload as HandoffStateChangeEvent)

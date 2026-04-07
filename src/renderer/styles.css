@@ -72,6 +72,152 @@ pre {
     background: var(--bg-base);
 }
 
+.control-center-popout-app {
+    height: 100vh;
+    overflow: hidden;
+    background: #050505;
+}
+
+.control-center-popout-shell {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    padding: 10px;
+    gap: 8px;
+    background:
+        radial-gradient(circle at top right, rgba(93, 177, 255, 0.12), transparent 30%),
+        #050505;
+}
+
+.control-center-popout-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 28px;
+    padding: 2px 2px 2px 6px;
+    -webkit-app-region: drag;
+}
+
+.control-center-popout-title-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.control-center-popout-title {
+    font-size: 0.74rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.72);
+}
+
+.control-center-popout-close {
+    width: 24px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--ink);
+    font-size: 1rem;
+    line-height: 1;
+    -webkit-app-region: no-drag;
+}
+
+.control-center-popout-close:hover {
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.control-center-popout-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-height: 0;
+    overflow: auto;
+    padding-right: 2px;
+}
+
+.control-center-popout-row {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+    padding: 10px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.02);
+    color: inherit;
+    text-align: left;
+}
+
+.control-center-popout-row:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.12);
+}
+
+.control-center-popout-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    flex-shrink: 0;
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.control-center-popout-dot.is-running {
+    background: #34d399;
+}
+
+.control-center-popout-dot.is-attention {
+    background: #facc15;
+}
+
+.control-center-popout-dot.is-warning {
+    background: #fb923c;
+}
+
+.control-center-popout-dot.is-ready {
+    background: #4ade80;
+}
+
+.control-center-popout-dot.is-error {
+    background: #f87171;
+}
+
+.control-center-popout-row-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.88);
+}
+
+.control-center-popout-row-meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.control-center-popout-empty {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    background: rgba(255, 255, 255, 0.02);
+    color: var(--muted);
+}
+
 
 /* ── Top bar ──────────────────────────────────────────── */
 

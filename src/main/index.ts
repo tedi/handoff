@@ -1,11 +1,19 @@
-import { app, BrowserWindow, ipcMain } from "electron"
+import { app, BrowserWindow, ipcMain, screen } from "electron"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { IPC_CHANNELS } from "../shared/channels"
+import {
+  APP_WINDOW_MODE_QUERY_PARAM,
+  CONTROL_CENTER_POPOUT_WINDOW_MODE
+} from "../shared/window-mode"
 import { AGENT_BRIDGE_MODE_ARG, AGENT_BRIDGE_WORKER_MODE_ARG, runAgentBridgeWorkerJob } from "./bridge"
 import { runAgentBridgeMcpServer } from "./bridge-server"
+import {
+  createControlCenterPopoutWindowManager,
+  type ControlCenterPopoutWindowManager
+} from "./control-center-popout-window"
 import { CONTROL_CENTER_HOOK_MODE_ARG, runControlCenterHookBridge } from "./control-center"
 import { registerIpcHandlers } from "./ipc"
 import { createHandoffService } from "./service"
@@ -54,10 +62,35 @@ const service = isBridgeMode || isWorkerMode || isHookMode
 
 let disposeIpcHandlers: (() => void) | null = null
 let disposeStateSubscription: (() => void) | null = null
+let mainWindow: BrowserWindow | null = null
+let controlCenterPopoutWindowManager: ControlCenterPopoutWindowManager | null = null
 
 function resolveAppIconPath() {
   const iconPath = path.join(app.getAppPath(), "build", "icon.png")
   return fs.existsSync(iconPath) ? iconPath : null
+}
+
+async function loadRendererWindow(
+  window: BrowserWindow,
+  windowMode: "main" | typeof CONTROL_CENTER_POPOUT_WINDOW_MODE = "main"
+) {
+  if (process.env.ELECTRON_RENDERER_URL) {
+    const rendererUrl = new URL(process.env.ELECTRON_RENDERER_URL)
+    if (windowMode !== "main") {
+      rendererUrl.searchParams.set(APP_WINDOW_MODE_QUERY_PARAM, windowMode)
+    }
+    await window.loadURL(rendererUrl.toString())
+    return
+  }
+
+  const query =
+    windowMode === "main"
+      ? undefined
+      : {
+          [APP_WINDOW_MODE_QUERY_PARAM]: windowMode
+        }
+
+  await window.loadFile(path.join(__dirname, "../renderer/index.html"), query ? { query } : undefined)
 }
 
 async function createMainWindow() {
@@ -76,12 +109,14 @@ async function createMainWindow() {
       nodeIntegration: false
     }
   })
+  mainWindow = window
+  window.on("closed", () => {
+    if (mainWindow === window) {
+      mainWindow = null
+    }
+  })
 
-  if (process.env.ELECTRON_RENDERER_URL) {
-    await window.loadURL(process.env.ELECTRON_RENDERER_URL)
-  } else {
-    await window.loadFile(path.join(__dirname, "../renderer/index.html"))
-  }
+  await loadRendererWindow(window)
 
   return window
 }
@@ -138,12 +173,35 @@ app.whenReady().then(async () => {
   }
 
   const iconPath = resolveAppIconPath()
+  const preloadPath = path.join(app.getAppPath(), "preload.cjs")
+  controlCenterPopoutWindowManager = createControlCenterPopoutWindowManager({
+    createBrowserWindow(options) {
+      return new BrowserWindow(options)
+    },
+    dataDir: app.getPath("userData"),
+    iconPath,
+    async loadWindowContent(window) {
+      await loadRendererWindow(
+        window as BrowserWindow,
+        CONTROL_CENTER_POPOUT_WINDOW_MODE
+      )
+    },
+    preloadPath,
+    screen
+  })
 
   if (process.platform === "darwin" && iconPath) {
     app.dock?.setIcon(iconPath)
   }
 
-  disposeIpcHandlers = registerIpcHandlers(ipcMain, service)
+  disposeIpcHandlers = registerIpcHandlers(ipcMain, service, {
+    async closeControlCenterPopout() {
+      await controlCenterPopoutWindowManager?.close()
+    },
+    async openControlCenterPopout() {
+      await controlCenterPopoutWindowManager?.open()
+    }
+  })
   disposeStateSubscription = service.onStateChanged(payload => {
     BrowserWindow.getAllWindows().forEach(window => {
       if (!window.isDestroyed()) {
@@ -184,7 +242,7 @@ app.whenReady().then(async () => {
   await createMainWindow()
 
   app.on("activate", async () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
+    if (!mainWindow || mainWindow.isDestroyed()) {
       await createMainWindow()
     }
   })
@@ -199,5 +257,6 @@ app.on("window-all-closed", () => {
 app.on("before-quit", async () => {
   disposeIpcHandlers?.()
   disposeStateSubscription?.()
+  await controlCenterPopoutWindowManager?.dispose()
   await service?.dispose()
 })

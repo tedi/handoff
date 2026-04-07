@@ -66,6 +66,8 @@ describe("createHandoffBridge", () => {
       fast: true
     })
     await bridge.app.openProjectPath("editor", "/tmp/project")
+    await bridge.app.openControlCenterPopout()
+    await bridge.app.closeControlCenterPopout()
     await bridge.clipboard.writeText("copied")
 
     expect(invoke).toHaveBeenNthCalledWith(1, IPC_CHANNELS.sessions.list)
@@ -208,8 +210,10 @@ describe("createHandoffBridge", () => {
       "editor",
       "/tmp/project"
     )
+    expect(invoke).toHaveBeenNthCalledWith(25, IPC_CHANNELS.app.openControlCenterPopout)
+    expect(invoke).toHaveBeenNthCalledWith(26, IPC_CHANNELS.app.closeControlCenterPopout)
     expect(invoke).toHaveBeenNthCalledWith(
-      25,
+      27,
       IPC_CHANNELS.clipboard.writeText,
       "copied"
     )

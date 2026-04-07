@@ -56,6 +56,11 @@ const EDITOR_APP_CANDIDATES = [
 const execFileAsync = promisify(execFile)
 const DIRECT_PROMPT_BYTE_LIMIT = 8_000
 
+interface RegisterIpcHandlersOptions {
+  closeControlCenterPopout?(): Promise<void> | void
+  openControlCenterPopout?(): Promise<void> | void
+}
+
 let cachedCodexIconDataUrl: string | null | undefined
 let cachedClaudeIconDataUrl: string | null | undefined
 
@@ -487,7 +492,11 @@ async function startNewThread(
   }
 }
 
-export function registerIpcHandlers(ipcMain: IpcMain, service: HandoffService) {
+export function registerIpcHandlers(
+  ipcMain: IpcMain,
+  service: HandoffService,
+  options: RegisterIpcHandlersOptions = {}
+) {
   ipcMain.handle(IPC_CHANNELS.app.getStateInfo, async () => ({
     ...(await service.app.getStateInfo()),
     codexIconDataUrl: getCodexIconDataUrl(),
@@ -697,6 +706,12 @@ export function registerIpcHandlers(ipcMain: IpcMain, service: HandoffService) {
     async (_event, target: ProjectLocationTarget, projectPath: string) =>
       openProjectPath(await service.settings.get(), target, projectPath)
   )
+  ipcMain.handle(IPC_CHANNELS.app.openControlCenterPopout, async () => {
+    await options.openControlCenterPopout?.()
+  })
+  ipcMain.handle(IPC_CHANNELS.app.closeControlCenterPopout, async () => {
+    await options.closeControlCenterPopout?.()
+  })
   ipcMain.handle(
     IPC_CHANNELS.app.startNewThread,
     async (_event, params: NewThreadLaunchParams) =>
@@ -759,6 +774,8 @@ export function registerIpcHandlers(ipcMain: IpcMain, service: HandoffService) {
     ipcMain.removeHandler(IPC_CHANNELS.selector.exports.regenerateAndCopy)
     ipcMain.removeHandler(IPC_CHANNELS.app.openSourceSession)
     ipcMain.removeHandler(IPC_CHANNELS.app.openProjectPath)
+    ipcMain.removeHandler(IPC_CHANNELS.app.openControlCenterPopout)
+    ipcMain.removeHandler(IPC_CHANNELS.app.closeControlCenterPopout)
     ipcMain.removeHandler(IPC_CHANNELS.app.startNewThread)
     ipcMain.removeHandler(IPC_CHANNELS.sessions.list)
     ipcMain.removeHandler(IPC_CHANNELS.sessions.getTranscript)
