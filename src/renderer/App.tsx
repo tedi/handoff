@@ -1466,6 +1466,16 @@ function getLiveThreadAssistantFallback(record: LiveThreadRecord) {
   return "Working…"
 }
 
+function shouldShowControlCenterPopoutPreviews(record: LiveThreadRecord) {
+  return (
+    !record.pendingRequest &&
+    (record.status === "running" ||
+      record.status === "waiting_user" ||
+      record.status === "waiting_permission" ||
+      isCompletedUnseen(record))
+  )
+}
+
 function buildMarkdownExport(
   transcript: ConversationTranscript,
   includeDiffs: boolean
@@ -1998,6 +2008,36 @@ function SettingsIcon() {
         strokeWidth="1.05"
       />
       <circle cx="8" cy="8" r="1.85" stroke="currentColor" strokeWidth="1.05" />
+    </svg>
+  )
+}
+
+function ArchiveIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="sidebar-filter-icon"
+      fill="none"
+      viewBox="0 0 16 16"
+    >
+      <path
+        d="M2.5 4.1h11v2.35h-11Z"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.1"
+      />
+      <path
+        d="M4.2 6.55h7.6v5.55a1 1 0 0 1-1 1H5.2a1 1 0 0 1-1-1Z"
+        stroke="currentColor"
+        strokeLinejoin="round"
+        strokeWidth="1.1"
+      />
+      <path
+        d="M6.2 8.35h3.6"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.1"
+      />
     </svg>
   )
 }
@@ -3549,8 +3589,23 @@ function ControlCenterPane({
                         {statusLabel}
                       </span>
                     ) : null}
-                    <span className="control-center-time">
-                      {formatRelativeTimestamp(record.lastEventAt)}
+                    <span className="control-center-meta-slot">
+                      <span className="control-center-time">
+                        {formatRelativeTimestamp(record.lastEventAt)}
+                      </span>
+                      {!record.pendingRequest ? (
+                        <button
+                          aria-label={`Archive ${record.threadName}`}
+                          className="control-center-archive-button"
+                          onClick={event => {
+                            event.stopPropagation()
+                            onDismiss(record.id)
+                          }}
+                          type="button"
+                        >
+                          <ArchiveIcon />
+                        </button>
+                      ) : null}
                     </span>
                   </div>
                 </div>
@@ -3575,17 +3630,6 @@ function ControlCenterPane({
                   pendingActionKey={pendingActionKey}
                   record={record}
                 />
-              ) : null}
-
-              {!record.pendingRequest ? (
-                <button
-                  aria-label={`Dismiss ${record.threadName}`}
-                  className="control-center-dismiss-button"
-                  onClick={() => onDismiss(record.id)}
-                  type="button"
-                >
-                  Dismiss
-                </button>
               ) : null}
             </article>
           )
@@ -3644,6 +3688,7 @@ function ControlCenterPopoutPane({
             const statusLabel = record.pendingRequest
               ? null
               : getLiveThreadDisplayStatusLabel(record)
+            const shouldShowPreviews = shouldShowControlCenterPopoutPreviews(record)
 
             if (record.pendingRequest) {
               return (
@@ -3679,36 +3724,83 @@ function ControlCenterPopoutPane({
               <button
                 className={`control-center-popout-row${
                   displayTone ? ` is-${displayTone}` : ""
-                }`}
+                }${shouldShowPreviews ? " has-previews" : ""}`}
                 key={`${record.id}:${record.lastEventAt}`}
                 onClick={() => onOpenThread(record.id)}
                 type="button"
               >
-                <span
-                  aria-hidden="true"
-                  className={`control-center-popout-dot${
-                    displayTone ? ` is-${displayTone}` : ""
-                  }`}
-                />
-                <span className="control-center-popout-row-title">
-                  {getLiveThreadTitle(record)}
-                </span>
-                <span className="control-center-popout-row-meta">
-                  <span className={`control-center-pill is-provider-${record.provider}`}>
-                    {formatProviderLabel(record.provider)}
-                  </span>
-                  {record.hostAppExact && record.hostAppLabel ? (
-                    <span className="control-center-pill">{record.hostAppLabel}</span>
-                  ) : null}
-                  {statusLabel ? (
-                    <span className={`control-center-pill is-${displayTone ?? "running"}`}>
-                      {statusLabel}
+                {shouldShowPreviews ? (
+                  <>
+                    <div className="control-center-popout-row-header">
+                      <span className="control-center-popout-row-title-group">
+                        <span
+                          aria-hidden="true"
+                          className={`control-center-popout-dot${
+                            displayTone ? ` is-${displayTone}` : ""
+                          }`}
+                        />
+                        <span className="control-center-popout-row-title">
+                          {getLiveThreadTitle(record)}
+                        </span>
+                      </span>
+                      <span className="control-center-popout-row-meta">
+                        <span className={`control-center-pill is-provider-${record.provider}`}>
+                          {formatProviderLabel(record.provider)}
+                        </span>
+                        {record.hostAppExact && record.hostAppLabel ? (
+                          <span className="control-center-pill">{record.hostAppLabel}</span>
+                        ) : null}
+                        {statusLabel ? (
+                          <span className={`control-center-pill is-${displayTone ?? "running"}`}>
+                            {statusLabel}
+                          </span>
+                        ) : null}
+                        <span className="control-center-time">
+                          {formatRelativeTimestamp(record.lastEventAt)}
+                        </span>
+                      </span>
+                    </div>
+                    <div className="control-center-popout-row-previews">
+                      <span className="control-center-popout-preview-line">
+                        <span className="control-center-preview-label">You:</span>{" "}
+                        {record.lastUserPreview ?? "No prompt captured yet."}
+                      </span>
+                      <span
+                        className={`control-center-popout-preview-line is-${record.assistantPreviewKind}`}
+                      >
+                        {record.lastAssistantPreview ?? getLiveThreadAssistantFallback(record)}
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <span
+                      aria-hidden="true"
+                      className={`control-center-popout-dot${
+                        displayTone ? ` is-${displayTone}` : ""
+                      }`}
+                    />
+                    <span className="control-center-popout-row-title">
+                      {getLiveThreadTitle(record)}
                     </span>
-                  ) : null}
-                  <span className="control-center-time">
-                    {formatRelativeTimestamp(record.lastEventAt)}
-                  </span>
-                </span>
+                    <span className="control-center-popout-row-meta">
+                      <span className={`control-center-pill is-provider-${record.provider}`}>
+                        {formatProviderLabel(record.provider)}
+                      </span>
+                      {record.hostAppExact && record.hostAppLabel ? (
+                        <span className="control-center-pill">{record.hostAppLabel}</span>
+                      ) : null}
+                      {statusLabel ? (
+                        <span className={`control-center-pill is-${displayTone ?? "running"}`}>
+                          {statusLabel}
+                        </span>
+                      ) : null}
+                      <span className="control-center-time">
+                        {formatRelativeTimestamp(record.lastEventAt)}
+                      </span>
+                    </span>
+                  </>
+                )}
               </button>
             )
           })}

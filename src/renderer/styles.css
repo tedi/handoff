@@ -154,11 +154,19 @@ pre {
     background: rgba(255, 255, 255, 0.02);
     color: inherit;
     text-align: left;
+    transition: background-color 80ms ease, border-color 80ms ease, transform 80ms ease;
+}
+
+.control-center-popout-row.has-previews {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
 }
 
 .control-center-popout-row:hover {
     background: rgba(255, 255, 255, 0.05);
     border-color: rgba(255, 255, 255, 0.12);
+    transform: translateY(-1px);
 }
 
 .control-center-popout-row.is-completed-unseen {
@@ -177,6 +185,13 @@ pre {
     border: 1px solid rgba(255, 255, 255, 0.05);
     border-radius: 16px;
     background: rgba(255, 255, 255, 0.02);
+    transition: background-color 80ms ease, border-color 80ms ease, transform 80ms ease;
+}
+
+.control-center-popout-inline-card:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.12);
+    transform: translateY(-1px);
 }
 
 .control-center-popout-inline-meta {
@@ -230,12 +245,51 @@ pre {
     color: rgba(255, 255, 255, 0.88);
 }
 
+.control-center-popout-row-title-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    flex: 1;
+}
+
+.control-center-popout-row-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+}
+
 .control-center-popout-row-meta {
     display: inline-flex;
     align-items: center;
     gap: 6px;
     flex-shrink: 0;
     white-space: nowrap;
+}
+
+.control-center-popout-row-previews {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 0;
+}
+
+.control-center-popout-preview-line {
+    font-size: 0.8rem;
+    line-height: 1.4;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.control-center-popout-preview-line.is-thinking {
+    color: #c7d2fe;
+}
+
+.control-center-popout-preview-line.is-message {
+    color: var(--ink);
 }
 
 .control-center-popout-empty {
@@ -2520,6 +2574,45 @@ pre {
     font-size: 0.72rem;
     color: var(--muted);
     white-space: nowrap;
+    transition: opacity 80ms ease;
+}
+
+.control-center-meta-slot {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    min-width: 28px;
+    min-height: 24px;
+}
+
+.control-center-archive-button {
+    position: absolute;
+    inset: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.62);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 80ms ease, color 80ms ease;
+}
+
+.control-center-card:hover .control-center-archive-button,
+.control-center-card:focus-within .control-center-archive-button {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.control-center-card:hover .control-center-time,
+.control-center-card:focus-within .control-center-time {
+    opacity: 0;
+}
+
+.control-center-archive-button:hover {
+    color: var(--ink);
 }
 
 .control-center-previews {
@@ -2549,23 +2642,6 @@ pre {
 .control-center-preview-label {
     color: var(--ink);
     font-weight: 600;
-}
-
-.control-center-dismiss-button {
-    align-self: center;
-    border: none;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.06);
-    color: var(--muted);
-    font-size: 0.7rem;
-    font-weight: 600;
-    padding: 6px 10px;
-    transition: background-color 80ms ease, color 80ms ease;
-}
-
-.control-center-dismiss-button:hover {
-    background: rgba(255, 255, 255, 0.12);
-    color: var(--ink);
 }
 
 .agent-run-expanded {
