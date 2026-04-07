@@ -115,6 +115,18 @@ type HookSocketServerMessage =
       resolution: HookResolutionEnvelope
     }
 
+function isBenignHookSocketError(error: unknown) {
+  if (!error || typeof error !== "object" || !("code" in error)) {
+    return false
+  }
+
+  return (
+    error.code === "EPIPE" ||
+    error.code === "ECONNRESET" ||
+    error.code === "ERR_STREAM_DESTROYED"
+  )
+}
+
 interface HookCommandConfig {
   command: string
   args: string[]
@@ -1675,6 +1687,23 @@ export function createControlCenterService(
     pendingHookResolutions.delete(requestId)
   }
 
+  function writeHookSocketMessage(socket: net.Socket, message: HookSocketServerMessage) {
+    if (socket.destroyed || socket.writableEnded) {
+      return
+    }
+
+    socket.write(`${JSON.stringify(message)}\n`, error => {
+      if (error && !isBenignHookSocketError(error)) {
+        socket.destroy(error)
+        return
+      }
+
+      if (!socket.destroyed && !socket.writableEnded) {
+        socket.end()
+      }
+    })
+  }
+
   function resolvePendingHookRequest(
     requestId: string,
     message: HookSocketServerMessage
@@ -2107,6 +2136,13 @@ export function createControlCenterService(
           let buffer = ""
           const connectionRequestIds = new Set<string>()
           socket.setEncoding("utf8")
+          socket.on("error", error => {
+            if (isBenignHookSocketError(error)) {
+              return
+            }
+
+            socket.destroy()
+          })
           socket.on("close", () => {
             for (const requestId of connectionRequestIds) {
               pendingHookResolutions.delete(requestId)
@@ -2137,18 +2173,14 @@ export function createControlCenterService(
                     pendingHookResolutions.set(message.event.pendingRequest.requestId, {
                       threadId: message.event.id,
                       resolve(serverMessage) {
-                        socket.write(`${JSON.stringify(serverMessage)}\n`)
-                        socket.end()
+                        writeHookSocketMessage(socket, serverMessage)
                       }
                     })
                   }
 
                   void ingestNormalizedHookEvent(message.event)
-                  if (!message.awaitResolution) {
-                    const ack: HookSocketServerMessage = {
-                      type: "ack"
-                    }
-                    socket.write(`${JSON.stringify(ack)}\n`)
+                  if (!message.awaitResolution && !socket.destroyed && !socket.writableEnded) {
+                    socket.end()
                   }
                   continue
                 }
