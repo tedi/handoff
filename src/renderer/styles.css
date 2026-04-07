@@ -169,9 +169,6 @@ pre {
 
 .control-center-popout-row {
     width: 100%;
-    display: flex;
-    align-items: center;
-    gap: 10px;
     min-width: 0;
     padding: 9px 10px;
     border: 1px solid rgba(255, 255, 255, 0.05);
@@ -180,12 +177,6 @@ pre {
     color: inherit;
     text-align: left;
     transition: background-color 80ms ease, border-color 80ms ease, transform 80ms ease;
-}
-
-.control-center-popout-row.has-previews {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 8px;
 }
 
 .control-center-popout-row:hover {
@@ -229,6 +220,25 @@ pre {
     justify-content: flex-end;
     gap: 8px;
     flex-wrap: wrap;
+}
+
+.control-center-popout-row-main {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    border: none;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    padding: 0;
+}
+
+.control-center-popout-row-main.has-previews {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
 }
 
 .control-center-popout-dot {
@@ -2702,13 +2712,17 @@ pre {
 }
 
 .control-center-card:hover .control-center-archive-button,
-.control-center-card:focus-within .control-center-archive-button {
+.control-center-card:focus-within .control-center-archive-button,
+.control-center-popout-row:hover .control-center-archive-button,
+.control-center-popout-row:focus-within .control-center-archive-button {
     opacity: 1;
     pointer-events: auto;
 }
 
 .control-center-card:hover .control-center-time,
-.control-center-card:focus-within .control-center-time {
+.control-center-card:focus-within .control-center-time,
+.control-center-popout-row:hover .control-center-time,
+.control-center-popout-row:focus-within .control-center-time {
     opacity: 0;
 }
 

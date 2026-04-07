@@ -770,6 +770,51 @@ describe("Handoff App", () => {
     expect(api.app.closeControlCenterPopout).toHaveBeenCalledTimes(1)
   })
 
+  it("archives passive rows from the compact Control Center pop-out without opening them", async () => {
+    const { api } = createMockApi({
+      sessions: [],
+      controlCenterRecords: [
+        {
+          id: "claude:archive-1",
+          sourceSessionId: "archive-1",
+          provider: "claude",
+          threadName: "Archive from pop-out",
+          projectPath: "/Users/tedikonda/topchallenger/apps/client",
+          transcriptPath: "/tmp/archive-1.jsonl",
+          status: "waiting_user",
+          lastEventAt: "2026-03-14T02:00:00.000Z",
+          lastUserPreview: "Need a quick answer",
+          lastAssistantPreview: "Waiting on your response.",
+          assistantPreviewKind: "message",
+          launchMode: "cli",
+          hostAppLabel: "Ghostty",
+          hostAppExact: true,
+          pendingRequest: null,
+          acknowledgedAt: null,
+          dismissedAt: null
+        }
+      ],
+      transcriptById: {}
+    })
+
+    window.history.replaceState({}, "", "/?window=control-center-popout")
+    window.handoffApp = api
+
+    render(<App />)
+
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: /Archive Archive from pop-out/i
+      })
+    )
+
+    await waitFor(() => {
+      expect(api.controlCenter.dismiss).toHaveBeenCalledWith("claude:archive-1")
+      expect(api.controlCenter.open).not.toHaveBeenCalled()
+      expect(screen.queryByRole("button", { name: /Archive from pop-out/i })).not.toBeInTheDocument()
+    })
+  })
+
   it("shows previews for running rows in the compact Control Center pop-out", async () => {
     const { api } = createMockApi({
       sessions: [],
@@ -1077,9 +1122,10 @@ describe("Handoff App", () => {
     const rowButton = await screen.findByRole("button", {
       name: /client · Ship pop-out polish/i
     })
+    const rowContainer = rowButton.closest(".control-center-popout-row")
     const dot = rowButton.querySelector(".control-center-popout-dot")
 
-    expect(rowButton).toHaveClass("is-completed-unseen")
+    expect(rowContainer).toHaveClass("is-completed-unseen")
     expect(dot).toHaveClass("is-completed-unseen")
     expect(
       screen.getByText((_content, node) =>
@@ -1093,7 +1139,7 @@ describe("Handoff App", () => {
 
     await waitFor(() => {
       expect(api.controlCenter.open).toHaveBeenCalledWith("claude:done-2")
-      expect(rowButton).not.toHaveClass("is-completed-unseen")
+      expect(rowContainer).not.toHaveClass("is-completed-unseen")
       expect(rowButton.querySelector(".control-center-popout-dot")).not.toHaveClass("is-ready")
       expect(rowButton.querySelector(".control-center-popout-dot")).not.toHaveClass(
         "is-completed-unseen"

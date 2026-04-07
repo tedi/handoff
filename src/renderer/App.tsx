@@ -3675,6 +3675,7 @@ function ControlCenterPopoutPane({
   error,
   isLoading,
   onClose,
+  onDismiss,
   onOpenThread,
   onPerformAction,
   pendingActionKey
@@ -3683,6 +3684,7 @@ function ControlCenterPopoutPane({
   error: string | null
   isLoading: boolean
   onClose(): void
+  onDismiss(threadId: string): void
   onOpenThread(threadId: string): void
   onPerformAction(threadId: string, requestId: string, actionId: string): void
   pendingActionKey: string | null
@@ -3737,8 +3739,10 @@ function ControlCenterPopoutPane({
                     {record.hostAppExact && record.hostAppLabel ? (
                       <span className="control-center-pill">{record.hostAppLabel}</span>
                     ) : null}
-                    <span className="control-center-time">
-                      {formatRelativeTimestamp(record.lastEventAt)}
+                    <span className="control-center-meta-slot">
+                      <span className="control-center-time">
+                        {formatRelativeTimestamp(record.lastEventAt)}
+                      </span>
                     </span>
                   </div>
                   <ControlCenterPendingRequestCard
@@ -3753,22 +3757,75 @@ function ControlCenterPopoutPane({
             }
 
             return (
-              <button
+              <article
                 className={`control-center-popout-row${
                   displayTone ? ` is-${displayTone}` : ""
                 }${shouldShowPreviews ? " has-previews" : ""}`}
                 key={`${record.id}:${record.lastEventAt}`}
-                onClick={() => onOpenThread(record.id)}
-                type="button"
               >
-                {shouldShowPreviews ? (
-                  <>
-                    <div className="control-center-popout-row-header">
-                      <span className="control-center-popout-row-title-group">
-                        <ControlCenterStatusIndicator tone={indicatorTone} />
-                        <span className="control-center-popout-row-title">
-                          {getLiveThreadTitle(record)}
+                <button
+                  className={`control-center-popout-row-main${
+                    shouldShowPreviews ? " has-previews" : ""
+                  }`}
+                  onClick={() => onOpenThread(record.id)}
+                  type="button"
+                >
+                  {shouldShowPreviews ? (
+                    <>
+                      <div className="control-center-popout-row-header">
+                        <span className="control-center-popout-row-title-group">
+                          <ControlCenterStatusIndicator tone={indicatorTone} />
+                          <span className="control-center-popout-row-title">
+                            {getLiveThreadTitle(record)}
+                          </span>
                         </span>
+                        <span className="control-center-popout-row-meta">
+                          <span className={`control-center-pill is-provider-${record.provider}`}>
+                            {formatProviderLabel(record.provider)}
+                          </span>
+                          {record.hostAppExact && record.hostAppLabel ? (
+                            <span className="control-center-pill">{record.hostAppLabel}</span>
+                          ) : null}
+                          {statusLabel ? (
+                            <span className={`control-center-pill is-${displayTone ?? "running"}`}>
+                              {statusLabel}
+                            </span>
+                          ) : null}
+                          <span className="control-center-meta-slot">
+                            <span className="control-center-time">
+                              {formatRelativeTimestamp(record.lastEventAt)}
+                            </span>
+                            <button
+                              aria-label={`Archive ${record.threadName}`}
+                              className="control-center-archive-button"
+                              onClick={event => {
+                                event.stopPropagation()
+                                onDismiss(record.id)
+                              }}
+                              type="button"
+                            >
+                              <ArchiveIcon />
+                            </button>
+                          </span>
+                        </span>
+                      </div>
+                      <div className="control-center-popout-row-previews">
+                        <span className="control-center-popout-preview-line">
+                          <span className="control-center-preview-label">You:</span>{" "}
+                          {record.lastUserPreview ?? "No prompt captured yet."}
+                        </span>
+                        <span
+                          className={`control-center-popout-preview-line is-${record.assistantPreviewKind}`}
+                        >
+                          {record.lastAssistantPreview ?? getLiveThreadAssistantFallback(record)}
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <ControlCenterStatusIndicator tone={indicatorTone} />
+                      <span className="control-center-popout-row-title">
+                        {getLiveThreadTitle(record)}
                       </span>
                       <span className="control-center-popout-row-meta">
                         <span className={`control-center-pill is-provider-${record.provider}`}>
@@ -3782,48 +3839,27 @@ function ControlCenterPopoutPane({
                             {statusLabel}
                           </span>
                         ) : null}
-                        <span className="control-center-time">
-                          {formatRelativeTimestamp(record.lastEventAt)}
+                        <span className="control-center-meta-slot">
+                          <span className="control-center-time">
+                            {formatRelativeTimestamp(record.lastEventAt)}
+                          </span>
+                          <button
+                            aria-label={`Archive ${record.threadName}`}
+                            className="control-center-archive-button"
+                            onClick={event => {
+                              event.stopPropagation()
+                              onDismiss(record.id)
+                            }}
+                            type="button"
+                          >
+                            <ArchiveIcon />
+                          </button>
                         </span>
                       </span>
-                    </div>
-                    <div className="control-center-popout-row-previews">
-                      <span className="control-center-popout-preview-line">
-                        <span className="control-center-preview-label">You:</span>{" "}
-                        {record.lastUserPreview ?? "No prompt captured yet."}
-                      </span>
-                      <span
-                        className={`control-center-popout-preview-line is-${record.assistantPreviewKind}`}
-                      >
-                        {record.lastAssistantPreview ?? getLiveThreadAssistantFallback(record)}
-                      </span>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <ControlCenterStatusIndicator tone={indicatorTone} />
-                    <span className="control-center-popout-row-title">
-                      {getLiveThreadTitle(record)}
-                    </span>
-                    <span className="control-center-popout-row-meta">
-                      <span className={`control-center-pill is-provider-${record.provider}`}>
-                        {formatProviderLabel(record.provider)}
-                      </span>
-                      {record.hostAppExact && record.hostAppLabel ? (
-                        <span className="control-center-pill">{record.hostAppLabel}</span>
-                      ) : null}
-                      {statusLabel ? (
-                        <span className={`control-center-pill is-${displayTone ?? "running"}`}>
-                          {statusLabel}
-                        </span>
-                      ) : null}
-                      <span className="control-center-time">
-                        {formatRelativeTimestamp(record.lastEventAt)}
-                      </span>
-                    </span>
-                  </>
-                )}
-              </button>
+                    </>
+                  )}
+                </button>
+              </article>
             )
           })}
         </div>
@@ -9160,6 +9196,9 @@ export default function App() {
           isLoading={isLoadingControlCenter}
           onClose={() => {
             void handleCloseControlCenterPopout()
+          }}
+          onDismiss={threadId => {
+            void handleDismissControlCenterThread(threadId)
           }}
           onOpenThread={threadId => {
             void handleOpenControlCenterThread(threadId)
