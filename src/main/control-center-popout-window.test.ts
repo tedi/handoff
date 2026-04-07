@@ -67,7 +67,7 @@ describe("control-center-popout-window", () => {
         bounds: {
           x: 32,
           y: 48,
-          width: 1120,
+          width: 340,
           height: 240
         },
         iconPath: null,
@@ -76,8 +76,9 @@ describe("control-center-popout-window", () => {
     ).toMatchObject({
       x: 32,
       y: 48,
-      width: 1120,
+      width: 340,
       height: 240,
+      minWidth: 340,
       frame: false,
       alwaysOnTop: true,
       skipTaskbar: true,

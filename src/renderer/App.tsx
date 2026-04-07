@@ -3434,6 +3434,7 @@ function ControlCenterPopoutPane({
         <div className="control-center-popout-list" role="list">
           {records.map(record => {
             const statusTone = getLiveThreadStatusTone(record.status)
+            const shouldShowStatusPill = record.status !== "completed"
 
             return (
               <button
@@ -3455,6 +3456,11 @@ function ControlCenterPopoutPane({
                   </span>
                   {record.hostAppExact && record.hostAppLabel ? (
                     <span className="control-center-pill">{record.hostAppLabel}</span>
+                  ) : null}
+                  {shouldShowStatusPill ? (
+                    <span className={`control-center-pill is-${statusTone}`}>
+                      {formatLiveThreadStatus(record.status)}
+                    </span>
                   ) : null}
                   <span className="control-center-time">
                     {formatRelativeTimestamp(record.lastEventAt)}

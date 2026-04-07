@@ -3,9 +3,9 @@ import path from "node:path"
 
 import type { BrowserWindowConstructorOptions, Display, Rectangle } from "electron"
 
-const DEFAULT_WIDTH = 1180
+const DEFAULT_WIDTH = 340
 const DEFAULT_HEIGHT = 272
-const MIN_WIDTH = 680
+const MIN_WIDTH = 340
 const MIN_HEIGHT = 148
 const WINDOW_MARGIN = 24
 const SAVE_DEBOUNCE_MS = 180

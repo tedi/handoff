@@ -146,9 +146,9 @@ pre {
     width: 100%;
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     min-width: 0;
-    padding: 10px 12px;
+    padding: 9px 10px;
     border: 1px solid rgba(255, 255, 255, 0.05);
     border-radius: 14px;
     background: rgba(255, 255, 255, 0.02);
@@ -203,8 +203,9 @@ pre {
 .control-center-popout-row-meta {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     flex-shrink: 0;
+    white-space: nowrap;
 }
 
 .control-center-popout-empty {

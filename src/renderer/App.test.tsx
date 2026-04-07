@@ -723,6 +723,7 @@ describe("Handoff App", () => {
       screen.queryByText("Implemented the onboarding flow changes.")
     ).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /Dismiss completed/i })).not.toBeInTheDocument()
+    expect(await screen.findByText("Needs reply")).toBeInTheDocument()
 
     await userEvent.click(
       screen.getByRole("button", { name: /client · Investigate live focus/i })
