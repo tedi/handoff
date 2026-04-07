@@ -4,7 +4,32 @@ import path from "node:path"
 
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { createControlCenterService } from "./control-center"
+import {
+  classifyLiveThreadStatusFromHook,
+  createControlCenterService
+} from "./control-center"
+
+describe("classifyLiveThreadStatusFromHook", () => {
+  it("treats ambiguous Stop events as completed", () => {
+    expect(
+      classifyLiveThreadStatusFromHook({
+        eventName: "Stop",
+        payload: {}
+      })
+    ).toBe("completed")
+  })
+
+  it("keeps waiting-user only for explicit input-needed signals", () => {
+    expect(
+      classifyLiveThreadStatusFromHook({
+        eventName: "Stop",
+        payload: {
+          reason: "waiting for your input"
+        }
+      })
+    ).toBe("waiting_user")
+  })
+})
 
 describe("createControlCenterService", () => {
   const tempDirs: string[] = []

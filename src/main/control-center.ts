@@ -276,7 +276,45 @@ function mapExplicitStatus(value: string | null) {
   return null
 }
 
-function inferStatusFromHook(params: {
+function buildHookReasonText(input: Record<string, unknown>) {
+  const fields = [
+    findFirstString(input, [["stop_reason"]]),
+    findFirstString(input, [["reason"]]),
+    findFirstString(input, [["notification_type"]]),
+    findFirstString(input, [["message"]]),
+    findFirstString(input, [["title"]]),
+    findFirstString(input, [["payload", "stop_reason"]]),
+    findFirstString(input, [["payload", "reason"]]),
+    findFirstString(input, [["payload", "notification_type"]]),
+    findFirstString(input, [["payload", "message"]]),
+    findFirstString(input, [["payload", "title"]])
+  ]
+    .filter((field): field is string => Boolean(field))
+    .join(" ")
+
+  return fields.toLowerCase()
+}
+
+function inferWaitingUserFromReason(reasonText: string) {
+  const waitingUserPhrases = [
+    "waiting for your input",
+    "waiting for input",
+    "needs input",
+    "needs reply",
+    "needs response",
+    "waiting for a reply",
+    "waiting for a response",
+    "waiting on user",
+    "waiting on your response",
+    "your input",
+    "your response",
+    "clarification"
+  ]
+
+  return waitingUserPhrases.some(phrase => reasonText.includes(phrase))
+}
+
+export function classifyLiveThreadStatusFromHook(params: {
   eventName: string
   payload: Record<string, unknown>
 }) {
@@ -311,34 +349,42 @@ function inferStatusFromHook(params: {
     return "completed" as const
   }
 
-  if (params.eventName === "Stop") {
-    const reason = (
-      findFirstString(params.payload, [
-        ["stop_reason"],
-        ["reason"],
-        ["payload", "stop_reason"],
-        ["payload", "reason"],
-        ["notification_type"]
-      ]) ?? ""
-    ).toLowerCase()
+  const reasonText = buildHookReasonText(params.payload)
 
-    if (reason.includes("permission")) {
+  if (params.eventName === "Notification") {
+    if (reasonText.includes("permission")) {
       return "waiting_permission" as const
     }
 
-    if (reason.includes("error") || reason.includes("fail") || reason.includes("denied")) {
+    if (reasonText.includes("error") || reasonText.includes("fail") || reasonText.includes("denied")) {
       return "failed" as const
     }
 
-    if (
-      reason.includes("complete") ||
-      reason.includes("success") ||
-      reason.includes("session_end")
-    ) {
-      return "completed" as const
+    if (inferWaitingUserFromReason(reasonText)) {
+      return "waiting_user" as const
     }
 
-    return "waiting_user" as const
+    return "running" as const
+  }
+
+  if (params.eventName === "Stop") {
+    if (reasonText.includes("permission")) {
+      return "waiting_permission" as const
+    }
+
+    if (
+      reasonText.includes("error") ||
+      reasonText.includes("fail") ||
+      reasonText.includes("denied")
+    ) {
+      return "failed" as const
+    }
+
+    if (inferWaitingUserFromReason(reasonText)) {
+      return "waiting_user" as const
+    }
+
+    return "completed" as const
   }
 
   return "running" as const
@@ -541,7 +587,7 @@ function buildNormalizedHookEvent(params: {
         ["payload", "codex_transcript_path"],
         ["payload", "fullPath"]
       ]) ?? null,
-    status: inferStatusFromHook({
+    status: classifyLiveThreadStatusFromHook({
       eventName: params.eventName,
       payload: params.payload
     }),
