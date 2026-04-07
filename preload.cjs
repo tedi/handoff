@@ -24,6 +24,12 @@ const IPC_CHANNELS = {
     get: "handoff:threads:get",
     update: "handoff:threads:update"
   },
+  controlCenter: {
+    getSnapshot: "handoff:control-center:get-snapshot",
+    open: "handoff:control-center:open",
+    dismiss: "handoff:control-center:dismiss",
+    dismissCompleted: "handoff:control-center:dismiss-completed"
+  },
   bridge: {
     getStatus: "handoff:bridge:get-status",
     getConfigSnippets: "handoff:bridge:get-config-snippets",
@@ -84,6 +90,7 @@ const IPC_CHANNELS = {
     writeText: "handoff:clipboard:write-text"
   },
   stateChanged: "handoff:state-changed",
+  controlCenterStateChanged: "handoff:control-center-state-changed",
   searchStatusChanged: "handoff:search-status-changed",
   selectorStateChanged: "handoff:selector-state-changed"
 }
@@ -161,6 +168,34 @@ contextBridge.exposeInMainWorld("handoffApp", {
     },
     update(settings) {
       return ipcRenderer.invoke(IPC_CHANNELS.threads.update, settings)
+    }
+  },
+  controlCenter: {
+    getSnapshot() {
+      return ipcRenderer.invoke(IPC_CHANNELS.controlCenter.getSnapshot)
+    },
+    open(threadId) {
+      return ipcRenderer.invoke(IPC_CHANNELS.controlCenter.open, threadId)
+    },
+    dismiss(threadId) {
+      return ipcRenderer.invoke(IPC_CHANNELS.controlCenter.dismiss, threadId)
+    },
+    dismissCompleted() {
+      return ipcRenderer.invoke(IPC_CHANNELS.controlCenter.dismissCompleted)
+    },
+    onStateChanged(listener) {
+      const wrappedListener = (_event, payload) => {
+        listener(payload)
+      }
+
+      ipcRenderer.on(IPC_CHANNELS.controlCenterStateChanged, wrappedListener)
+
+      return () => {
+        ipcRenderer.removeListener(
+          IPC_CHANNELS.controlCenterStateChanged,
+          wrappedListener
+        )
+      }
     }
   },
   bridge: {

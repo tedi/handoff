@@ -152,6 +152,13 @@ describe("registerIpcHandlers", () => {
         delete: vi.fn(),
         duplicate: vi.fn()
       },
+      controlCenter: {
+        getSnapshot: vi.fn().mockResolvedValue({ records: [] }),
+        getRecord: vi.fn().mockResolvedValue(null),
+        acknowledge: vi.fn().mockResolvedValue(null),
+        dismiss: vi.fn().mockResolvedValue({ records: [] }),
+        dismissCompleted: vi.fn().mockResolvedValue({ records: [] })
+      },
       sessions: {
         list: vi.fn(),
         getTranscript: vi.fn()
@@ -205,6 +212,80 @@ describe("registerIpcHandlers", () => {
     })
   })
 
+  it("opens control center CLI threads in the exact stored host when available", async () => {
+    const ipcMain = createIpcMainStub()
+    const service = {
+      app: {
+        getStateInfo: vi.fn(),
+        refresh: vi.fn()
+      },
+      settings: {
+        get: vi.fn().mockResolvedValue(settingsSnapshot),
+        update: vi.fn(),
+        resetProvider: vi.fn()
+      },
+      agents: {
+        list: vi.fn().mockResolvedValue([]),
+        create: vi.fn(),
+        update: vi.fn(),
+        delete: vi.fn(),
+        duplicate: vi.fn()
+      },
+      controlCenter: {
+        getSnapshot: vi.fn().mockResolvedValue({ records: [] }),
+        getRecord: vi.fn().mockResolvedValue({
+          id: "codex:live-1",
+          provider: "codex",
+          sourceSessionId: "live-1",
+          threadName: "Live thread",
+          projectPath: "/tmp/project",
+          transcriptPath: "/tmp/live-1.jsonl",
+          status: "waiting_user",
+          lastEventAt: "2026-03-14T02:00:00.000Z",
+          lastUserPreview: "Please implement the plan",
+          lastAssistantPreview: "Implemented the plan",
+          assistantPreviewKind: "message",
+          launchMode: "cli",
+          hostAppLabel: "Ghostty",
+          hostAppExact: true,
+          acknowledgedAt: null,
+          dismissedAt: null
+        }),
+        acknowledge: vi.fn().mockResolvedValue(null),
+        dismiss: vi.fn().mockResolvedValue({ records: [] }),
+        dismissCompleted: vi.fn().mockResolvedValue({ records: [] })
+      },
+      sessions: {
+        list: vi.fn(),
+        getTranscript: vi.fn()
+      },
+      search: {
+        getStatus: vi.fn(),
+        query: vi.fn()
+      },
+      startWatching: vi.fn(),
+      onStateChanged: vi.fn(),
+      onSearchStatusChanged: vi.fn(),
+      dispose: vi.fn()
+    } as any
+
+    registerIpcHandlers(ipcMain as any, service)
+
+    await ipcMain.invoke(IPC_CHANNELS.controlCenter.open, "codex:live-1")
+
+    expect(terminalMocks.buildCodexResumeCommand).toHaveBeenCalledWith({
+      sessionId: "live-1",
+      sessionCwd: "/tmp/project",
+      binaryPath: "/custom/bin/codex",
+      homePath: "/custom/.codex"
+    })
+    expect(terminalMocks.openShellCommandInTerminal).toHaveBeenCalledWith({
+      preferredTerminalId: "ghostty",
+      command: "codex-launch-command"
+    })
+    expect(service.controlCenter.acknowledge).toHaveBeenCalledWith("codex:live-1")
+  })
+
   it("uses the selected default terminal for project terminal opens", async () => {
     const ipcMain = createIpcMainStub()
     const service = {
@@ -223,6 +304,13 @@ describe("registerIpcHandlers", () => {
         update: vi.fn(),
         delete: vi.fn(),
         duplicate: vi.fn()
+      },
+      controlCenter: {
+        getSnapshot: vi.fn().mockResolvedValue({ records: [] }),
+        getRecord: vi.fn().mockResolvedValue(null),
+        acknowledge: vi.fn().mockResolvedValue(null),
+        dismiss: vi.fn().mockResolvedValue({ records: [] }),
+        dismissCompleted: vi.fn().mockResolvedValue({ records: [] })
       },
       sessions: {
         list: vi.fn(),
@@ -270,6 +358,13 @@ describe("registerIpcHandlers", () => {
         update: vi.fn(),
         delete: vi.fn(),
         duplicate: vi.fn()
+      },
+      controlCenter: {
+        getSnapshot: vi.fn().mockResolvedValue({ records: [] }),
+        getRecord: vi.fn().mockResolvedValue(null),
+        acknowledge: vi.fn().mockResolvedValue(null),
+        dismiss: vi.fn().mockResolvedValue({ records: [] }),
+        dismissCompleted: vi.fn().mockResolvedValue({ records: [] })
       },
       sessions: {
         list: vi.fn(),
@@ -388,6 +483,13 @@ describe("registerIpcHandlers", () => {
         delete: vi.fn(),
         duplicate: vi.fn()
       },
+      controlCenter: {
+        getSnapshot: vi.fn().mockResolvedValue({ records: [] }),
+        getRecord: vi.fn().mockResolvedValue(null),
+        acknowledge: vi.fn().mockResolvedValue(null),
+        dismiss: vi.fn().mockResolvedValue({ records: [] }),
+        dismissCompleted: vi.fn().mockResolvedValue({ records: [] })
+      },
       sessions: {
         list: vi.fn(),
         getTranscript: vi.fn()
@@ -436,6 +538,13 @@ describe("registerIpcHandlers", () => {
         update: vi.fn(),
         delete: vi.fn(),
         duplicate: vi.fn()
+      },
+      controlCenter: {
+        getSnapshot: vi.fn().mockResolvedValue({ records: [] }),
+        getRecord: vi.fn().mockResolvedValue(null),
+        acknowledge: vi.fn().mockResolvedValue(null),
+        dismiss: vi.fn().mockResolvedValue({ records: [] }),
+        dismissCompleted: vi.fn().mockResolvedValue({ records: [] })
       },
       bridge: {
         getStatus: vi.fn().mockResolvedValue({ status: "ready" }),

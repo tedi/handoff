@@ -4,6 +4,10 @@ import path from "node:path"
 
 import { afterEach, describe, expect, it } from "vitest"
 
+import {
+  CONTROL_CENTER_CLAUDE_EVENTS,
+  CONTROL_CENTER_CODEX_EVENTS
+} from "./control-center"
 import { createHandoffSkillsService } from "./skills"
 
 interface SkillsTestContext {
@@ -50,6 +54,10 @@ describe("createHandoffSkillsService", () => {
       bridgeCommand: {
         command: "/Applications/Handoff.app/Contents/MacOS/Handoff",
         args: ["--agent-bridge-mcp"]
+      },
+      liveHookCommand: {
+        command: "/Applications/Handoff.app/Contents/MacOS/Handoff",
+        args: []
       }
     })
 
@@ -60,10 +68,15 @@ describe("createHandoffSkillsService", () => {
     const afterInstall = await skills.install("both")
     expect(afterInstall.providers.codex.skillInstalled).toBe(true)
     expect(afterInstall.providers.codex.mcpInstalled).toBe(true)
+    expect(afterInstall.providers.codex.liveHooksInstalled).toBe(true)
     expect(afterInstall.providers.claude.skillInstalled).toBe(true)
     expect(afterInstall.providers.claude.mcpInstalled).toBe(true)
+    expect(afterInstall.providers.claude.liveHooksInstalled).toBe(true)
 
     const codexConfig = await fs.readFile(path.join(context.codexHome, "config.toml"), "utf8")
+    const codexHooks = JSON.parse(
+      await fs.readFile(path.join(context.codexHome, "hooks.json"), "utf8")
+    ) as Record<string, unknown>
     const claudeConfig = JSON.parse(
       await fs.readFile(path.join(context.claudeHome, "settings.json"), "utf8")
     ) as Record<string, unknown>
@@ -74,12 +87,24 @@ describe("createHandoffSkillsService", () => {
     expect(codexConfig).toContain(
       path.join(context.codexHome, "skills", "handoff-agent-bridge", "SKILL.md")
     )
+    expect(codexHooks).toMatchObject({
+      hooks: {
+        SessionStart: expect.any(Array),
+        UserPromptSubmit: expect.any(Array),
+        Stop: expect.any(Array)
+      }
+    })
     expect(claudeConfig).toMatchObject({
       mcpServers: {
         "handoff-agent-bridge": {
           command: "/Applications/Handoff.app/Contents/MacOS/Handoff",
           args: ["--agent-bridge-mcp"]
         }
+      },
+      hooks: {
+        SessionStart: expect.any(Array),
+        UserPromptSubmit: expect.any(Array),
+        Stop: expect.any(Array)
       }
     })
 
@@ -108,6 +133,10 @@ describe("createHandoffSkillsService", () => {
       bridgeCommand: {
         command: "/Applications/Handoff.app/Contents/MacOS/Handoff",
         args: ["--agent-bridge-mcp"]
+      },
+      liveHookCommand: {
+        command: "/Applications/Handoff.app/Contents/MacOS/Handoff",
+        args: []
       }
     })
 
@@ -122,6 +151,110 @@ describe("createHandoffSkillsService", () => {
       .toContain("threadName")
     await expect(fs.readFile(exportResult.claudePluginPath, "utf8")).resolves.toContain(
       "\"handoff-agent-bridge\""
+    )
+  })
+
+  it("preserves existing provider hooks while merging Handoff live hooks idempotently", async () => {
+    context = await createSkillsTestContext()
+    await fs.writeFile(
+      path.join(context.codexHome, "hooks.json"),
+      JSON.stringify(
+        {
+          hooks: {
+            SessionStart: [
+              {
+                hooks: [
+                  {
+                    command: "/Users/tedikonda/.vibe-island/bin/vibe-island-bridge --source codex",
+                    type: "command"
+                  }
+                ]
+              }
+            ],
+            Stop: [
+              {
+                hooks: [
+                  {
+                    command: "echo custom-codex-stop",
+                    type: "command"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    )
+    await fs.writeFile(
+      path.join(context.claudeHome, "settings.json"),
+      JSON.stringify(
+        {
+          hooks: {
+            SessionStart: [
+              {
+                hooks: [
+                  {
+                    command: "/Users/tedikonda/.vibe-island/bin/vibe-island-bridge --source claude",
+                    type: "command"
+                  }
+                ]
+              }
+            ],
+            Stop: [
+              {
+                hooks: [
+                  {
+                    command: "afplay /System/Library/Sounds/Glass.aiff",
+                    type: "command"
+                  }
+                ],
+                matcher: ""
+              }
+            ]
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    )
+
+    const skills = createHandoffSkillsService({
+      dataDir: context.dataDir,
+      codexHome: context.codexHome,
+      claudeHome: context.claudeHome,
+      bridgeCommand: {
+        command: "/Applications/Handoff.app/Contents/MacOS/Handoff",
+        args: ["--agent-bridge-mcp"]
+      },
+      liveHookCommand: {
+        command: "/Applications/Handoff.app/Contents/MacOS/Handoff",
+        args: []
+      }
+    })
+
+    await skills.install("both")
+    await skills.install("both")
+
+    const codexHooks = await fs.readFile(path.join(context.codexHome, "hooks.json"), "utf8")
+    const claudeSettings = await fs.readFile(
+      path.join(context.claudeHome, "settings.json"),
+      "utf8"
+    )
+
+    expect(codexHooks).toContain("vibe-island-bridge --source codex")
+    expect(codexHooks).toContain("custom-codex-stop")
+    expect(codexHooks.match(/--control-center-hook/g)?.length).toBe(
+      CONTROL_CENTER_CODEX_EVENTS.length
+    )
+
+    expect(claudeSettings).toContain("vibe-island-bridge --source claude")
+    expect(claudeSettings).toContain("afplay /System/Library/Sounds/Glass.aiff")
+    expect(claudeSettings.match(/--control-center-hook/g)?.length).toBe(
+      CONTROL_CENTER_CLAUDE_EVENTS.length
     )
   })
 
@@ -158,6 +291,10 @@ describe("createHandoffSkillsService", () => {
       bridgeCommand: {
         command: "/Applications/Handoff.app/Contents/MacOS/Handoff",
         args: ["--agent-bridge-mcp"]
+      },
+      liveHookCommand: {
+        command: "/Applications/Handoff.app/Contents/MacOS/Handoff",
+        args: []
       }
     })
 

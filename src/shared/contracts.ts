@@ -14,7 +14,7 @@ import type {
 
 export type SessionProvider = "codex" | "claude"
 export type ThreadLaunchVendor = SessionProvider
-export type AppSection = "threads" | "agents" | "selector"
+export type AppSection = "control-center" | "threads" | "agents" | "selector"
 export type ArchivedFilterValue = "all" | "not-archived" | "archived"
 export type ProviderFilterValue = "all" | SessionProvider
 export type DateRangeFilterValue = "24h" | "3d" | "7d" | "30d" | "all"
@@ -140,6 +140,7 @@ export interface HandoffSkillProviderStatus {
   skillPath: string
   skillInstalled: boolean
   mcpInstalled: boolean
+  liveHooksInstalled: boolean
   managedConfigBlock: boolean
   error: string | null
 }
@@ -289,6 +290,64 @@ export interface HandoffStateChangeEvent {
   at: string
   reason: HandoffStateChangeReason
   changedPath: string | null
+}
+
+export type LiveThreadStatus =
+  | "running"
+  | "waiting_user"
+  | "waiting_permission"
+  | "completed"
+  | "failed"
+
+export type LiveAssistantPreviewKind = "thinking" | "message" | "none"
+
+export interface LiveThreadRecord {
+  id: string
+  provider: SessionProvider
+  sourceSessionId: string
+  threadName: string
+  projectPath: string | null
+  transcriptPath: string | null
+  status: LiveThreadStatus
+  lastEventAt: string
+  lastUserPreview: string | null
+  lastAssistantPreview: string | null
+  assistantPreviewKind: LiveAssistantPreviewKind
+  launchMode: ThreadLaunchMode
+  hostAppLabel: string | null
+  hostAppExact: boolean
+  acknowledgedAt: string | null
+  dismissedAt: string | null
+}
+
+export interface ControlCenterSnapshot {
+  records: LiveThreadRecord[]
+}
+
+export type ControlCenterStateChangeReason = "records-changed"
+
+export interface ControlCenterStateChangeEvent {
+  at: string
+  reason: ControlCenterStateChangeReason
+  threadId: string | null
+}
+
+export interface LiveThreadEvent {
+  id: string
+  provider: SessionProvider
+  sourceSessionId: string
+  eventName: string
+  eventAt: string
+  threadName: string | null
+  projectPath: string | null
+  transcriptPath: string | null
+  status: LiveThreadStatus
+  lastUserPreview: string | null
+  lastAssistantPreview: string | null
+  assistantPreviewKind: LiveAssistantPreviewKind
+  launchMode: ThreadLaunchMode
+  hostAppLabel: string | null
+  hostAppExact: boolean
 }
 
 export interface ClipboardWriteResult {
@@ -466,6 +525,13 @@ export interface HandoffApi {
   threads: {
     get(): Promise<ThreadOrganizationSettings>
     update(settings: ThreadOrganizationSettings): Promise<ThreadOrganizationSettings>
+  }
+  controlCenter: {
+    getSnapshot(): Promise<ControlCenterSnapshot>
+    open(threadId: string): Promise<OpenActionResult>
+    dismiss(threadId: string): Promise<ControlCenterSnapshot>
+    dismissCompleted(): Promise<ControlCenterSnapshot>
+    onStateChanged(listener: (event: ControlCenterStateChangeEvent) => void): () => void
   }
   bridge: {
     getStatus(): Promise<AgentBridgeHealth>

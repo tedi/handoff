@@ -36,9 +36,11 @@ import type {
   AssistantThoughtChainEntry,
   ConversationPatch,
   ConversationTranscript,
+  ControlCenterSnapshot,
   DateRangeFilterValue,
   HandoffApi,
   HandoffSkillsStatus,
+  LiveThreadRecord,
   NewThreadDraft,
   HandoffSettingsPatch,
   HandoffSettingsSnapshot,
@@ -1217,12 +1219,13 @@ function formatAgentRunStatus(status: AgentRunRecord["status"]) {
 function formatSkillInstallState(params: {
   skillInstalled: boolean
   mcpInstalled: boolean
+  liveHooksInstalled: boolean
 }) {
-  if (params.skillInstalled && params.mcpInstalled) {
+  if (params.skillInstalled && params.mcpInstalled && params.liveHooksInstalled) {
     return "Installed"
   }
 
-  if (params.skillInstalled || params.mcpInstalled) {
+  if (params.skillInstalled || params.mcpInstalled || params.liveHooksInstalled) {
     return "Partial"
   }
 
@@ -1317,15 +1320,92 @@ function getAutomationStatusTone(params: {
     return "partial"
   }
 
-  if (params.providerStatus.skillInstalled && params.providerStatus.mcpInstalled) {
+  if (
+    params.providerStatus.skillInstalled &&
+    params.providerStatus.mcpInstalled &&
+    params.providerStatus.liveHooksInstalled
+  ) {
     return "ready"
   }
 
-  if (params.providerStatus.skillInstalled || params.providerStatus.mcpInstalled) {
+  if (
+    params.providerStatus.skillInstalled ||
+    params.providerStatus.mcpInstalled ||
+    params.providerStatus.liveHooksInstalled
+  ) {
     return "partial"
   }
 
   return "error"
+}
+
+function formatLiveThreadStatus(status: LiveThreadRecord["status"]) {
+  if (status === "waiting_permission") {
+    return "Needs permission"
+  }
+
+  if (status === "waiting_user") {
+    return "Needs reply"
+  }
+
+  if (status === "completed") {
+    return "Done"
+  }
+
+  if (status === "failed") {
+    return "Failed"
+  }
+
+  return "Running"
+}
+
+function getLiveThreadStatusTone(status: LiveThreadRecord["status"]) {
+  if (status === "waiting_permission") {
+    return "warning"
+  }
+
+  if (status === "waiting_user") {
+    return "attention"
+  }
+
+  if (status === "completed") {
+    return "ready"
+  }
+
+  if (status === "failed") {
+    return "error"
+  }
+
+  return "running"
+}
+
+function getLiveThreadProjectLabel(projectPath: string | null) {
+  return projectPath ? formatProjectFilterLabel(projectPath) : null
+}
+
+function getLiveThreadTitle(record: LiveThreadRecord) {
+  const projectLabel = getLiveThreadProjectLabel(record.projectPath)
+  return projectLabel ? `${projectLabel} · ${record.threadName}` : record.threadName
+}
+
+function getLiveThreadAssistantFallback(record: LiveThreadRecord) {
+  if (record.status === "waiting_permission") {
+    return "Awaiting permission approval."
+  }
+
+  if (record.status === "waiting_user") {
+    return "Waiting for your response."
+  }
+
+  if (record.status === "completed") {
+    return "Conversation completed."
+  }
+
+  if (record.status === "failed") {
+    return "The latest run failed."
+  }
+
+  return "Working…"
 }
 
 function buildMarkdownExport(
@@ -1897,6 +1977,30 @@ function ThreadsIcon() {
         strokeLinecap="round"
         strokeWidth="1.2"
       />
+    </svg>
+  )
+}
+
+function ControlCenterIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="sidebar-filter-icon"
+      fill="none"
+      viewBox="0 0 16 16"
+    >
+      <rect
+        height="8.6"
+        rx="1.8"
+        stroke="currentColor"
+        strokeWidth="1.15"
+        width="11"
+        x="2.5"
+        y="3.7"
+      />
+      <circle cx="5.2" cy="8" fill="currentColor" r="0.9" />
+      <circle cx="8" cy="8" fill="currentColor" r="0.9" />
+      <circle cx="10.8" cy="8" fill="currentColor" r="0.9" />
     </svg>
   )
 }
@@ -3015,6 +3119,275 @@ function SearchResultsPane({
   )
 }
 
+function ControlCenterSidebarPane({
+  snapshot,
+  isLoading,
+  isBusy,
+  skillsError,
+  skillsStatus,
+  onDismissCompleted,
+  onInstall
+}: {
+  snapshot: ControlCenterSnapshot | null
+  isLoading: boolean
+  isBusy: boolean
+  skillsError: string | null
+  skillsStatus: HandoffSkillsStatus | null
+  onDismissCompleted(): void
+  onInstall(target: SkillInstallTarget): void
+}) {
+  const records = snapshot?.records ?? []
+  const needsAttentionCount = records.filter(record =>
+    record.status === "waiting_permission" || record.status === "waiting_user"
+  ).length
+  const completedCount = records.filter(record =>
+    record.status === "completed" || record.status === "failed"
+  ).length
+  const missingProviders =
+    skillsStatus === null
+      ? []
+      : (["codex", "claude"] as const).filter(
+          provider => !skillsStatus.providers[provider].liveHooksInstalled
+        )
+
+  return (
+    <div className="control-center-sidebar">
+      <section className="control-center-sidebar-card">
+        <div className="control-center-sidebar-header">
+          <span className="control-center-sidebar-title">Live threads</span>
+          <span className="count-pill">{records.length}</span>
+        </div>
+        <div className="control-center-sidebar-metrics">
+          <span className="control-center-sidebar-metric">
+            <strong>{needsAttentionCount}</strong>
+            <span>Needs attention</span>
+          </span>
+          <span className="control-center-sidebar-metric">
+            <strong>{completedCount}</strong>
+            <span>Completed</span>
+          </span>
+        </div>
+        <button
+          className="ghost-button"
+          disabled={completedCount === 0}
+          onClick={onDismissCompleted}
+          type="button"
+        >
+          Dismiss completed
+        </button>
+      </section>
+
+      <section className="control-center-sidebar-card">
+        <div className="control-center-sidebar-header">
+          <span className="control-center-sidebar-title">Live hooks</span>
+        </div>
+        {isLoading ? (
+          <span className="control-center-sidebar-note">Loading live hook status.</span>
+        ) : skillsError ? (
+          <span className="control-center-sidebar-note">{skillsError}</span>
+        ) : skillsStatus ? (
+          <div className="control-center-hook-list">
+            {(["codex", "claude"] as const).map(provider => (
+              <div className="control-center-hook-row" key={provider}>
+                <span>{formatProviderLabel(provider)}</span>
+                <span
+                  className={`automation-provider-state is-${
+                    skillsStatus.providers[provider].liveHooksInstalled ? "ready" : "idle"
+                  }`}
+                >
+                  {skillsStatus.providers[provider].liveHooksInstalled ? "Ready" : "Missing"}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {missingProviders.length > 0 ? (
+          <div className="control-center-inline-actions">
+            {missingProviders.map(provider => (
+              <button
+                className="ghost-button"
+                disabled={isBusy}
+                key={provider}
+                onClick={() => onInstall(provider)}
+                type="button"
+              >
+                Install {formatProviderLabel(provider)}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </section>
+    </div>
+  )
+}
+
+function ControlCenterPane({
+  snapshot,
+  error,
+  isBusy,
+  isLoading,
+  skillsStatus,
+  onDismiss,
+  onDismissCompleted,
+  onInstall,
+  onOpenThread
+}: {
+  snapshot: ControlCenterSnapshot | null
+  error: string | null
+  isBusy: boolean
+  isLoading: boolean
+  skillsStatus: HandoffSkillsStatus | null
+  onDismiss(threadId: string): void
+  onDismissCompleted(): void
+  onInstall(target: SkillInstallTarget): void
+  onOpenThread(threadId: string): void
+}) {
+  const records = snapshot?.records ?? []
+  const completedCount = records.filter(record =>
+    record.status === "completed" || record.status === "failed"
+  ).length
+  const missingLiveHookProviders =
+    skillsStatus === null
+      ? []
+      : (["codex", "claude"] as const).filter(
+          provider => !skillsStatus.providers[provider].liveHooksInstalled
+        )
+
+  if (error) {
+    return <EmptyState title="Unable to load Control Center" detail={error} />
+  }
+
+  if (isLoading && records.length === 0) {
+    return <EmptyState title="Loading Control Center" detail="Listening for live provider updates." />
+  }
+
+  if (records.length === 0) {
+    return (
+      <div className="control-center-layout">
+        <EmptyState
+          title="No live threads"
+          detail={
+            missingLiveHookProviders.length > 0
+              ? "Install live hooks for Codex and Claude to populate Control Center as threads update."
+              : "Start a Codex or Claude thread and it will appear here as soon as Handoff receives live events."
+          }
+        />
+        <div className="control-center-inline-actions is-centered">
+          {missingLiveHookProviders.length === 0 ? (
+            <button className="ghost-button" onClick={onDismissCompleted} type="button">
+              Dismiss completed
+            </button>
+          ) : (
+            <>
+              {missingLiveHookProviders.map(provider => (
+                <button
+                  className="ghost-button"
+                  disabled={isBusy}
+                  key={provider}
+                  onClick={() => onInstall(provider)}
+                  type="button"
+                >
+                  Install {formatProviderLabel(provider)} live hooks
+                </button>
+              ))}
+              <button
+                className="ghost-button"
+                disabled={isBusy}
+                onClick={() => onInstall("both")}
+                type="button"
+              >
+                Install both
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="control-center-layout">
+      <div className="control-center-toolbar">
+        <div className="control-center-toolbar-copy">
+          <h2>Live threads</h2>
+          <p>Updates arrive from provider hooks and transcript reconciliation. Click any row to reopen it in the source app.</p>
+        </div>
+        <button
+          className="ghost-button"
+          disabled={completedCount === 0}
+          onClick={onDismissCompleted}
+          type="button"
+        >
+          Dismiss completed
+        </button>
+      </div>
+
+      <div className="control-center-list" role="list">
+        {records.map(record => {
+          const statusTone = getLiveThreadStatusTone(record.status)
+
+          return (
+            <article
+              className={`control-center-card is-${statusTone} ${
+                record.acknowledgedAt ? "is-acknowledged" : ""
+              }`}
+              key={`${record.id}:${record.lastEventAt}`}
+            >
+              <button
+                className="control-center-card-main"
+                onClick={() => onOpenThread(record.id)}
+                type="button"
+              >
+                <div className="control-center-card-header">
+                  <div className="control-center-title-group">
+                    <span className="control-center-title">{getLiveThreadTitle(record)}</span>
+                  </div>
+
+                  <div className="control-center-card-meta">
+                    <span className={`control-center-pill is-provider-${record.provider}`}>
+                      {formatProviderLabel(record.provider)}
+                    </span>
+                    {record.hostAppExact && record.hostAppLabel ? (
+                      <span className="control-center-pill">{record.hostAppLabel}</span>
+                    ) : null}
+                    <span className={`control-center-pill is-${statusTone}`}>
+                      {formatLiveThreadStatus(record.status)}
+                    </span>
+                    <span className="control-center-time">
+                      {formatRelativeTimestamp(record.lastEventAt)}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="control-center-previews">
+                  <span className="control-center-preview-line">
+                    <span className="control-center-preview-label">You:</span>{" "}
+                    {record.lastUserPreview ?? "No prompt captured yet."}
+                  </span>
+                  <span
+                    className={`control-center-preview-line is-${record.assistantPreviewKind}`}
+                  >
+                    {record.lastAssistantPreview ?? getLiveThreadAssistantFallback(record)}
+                  </span>
+                </div>
+              </button>
+
+              <button
+                aria-label={`Dismiss ${record.threadName}`}
+                className="control-center-dismiss-button"
+                onClick={() => onDismiss(record.id)}
+                type="button"
+              >
+                Dismiss
+              </button>
+            </article>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function SettingsValue({
   value,
   monospace = false
@@ -4023,9 +4396,13 @@ function AgentAutomationPane({
                   </span>
                   <span
                     className={`automation-provider-state is-${
-                      providerStatus.skillInstalled && providerStatus.mcpInstalled
+                      providerStatus.skillInstalled &&
+                      providerStatus.mcpInstalled &&
+                      providerStatus.liveHooksInstalled
                         ? "ready"
-                        : providerStatus.skillInstalled || providerStatus.mcpInstalled
+                        : providerStatus.skillInstalled ||
+                            providerStatus.mcpInstalled ||
+                            providerStatus.liveHooksInstalled
                           ? "partial"
                           : "idle"
                     }`}
@@ -4042,6 +4419,12 @@ function AgentAutomationPane({
                     <span className="settings-meta-label">Skill</span>
                     <SettingsValue
                       value={providerStatus.skillInstalled ? "Installed" : "Missing"}
+                    />
+                  </div>
+                  <div className="settings-meta-item">
+                    <span className="settings-meta-label">Live hooks</span>
+                    <SettingsValue
+                      value={providerStatus.liveHooksInstalled ? "Installed" : "Missing"}
                     />
                   </div>
                   <div className="settings-meta-item settings-meta-item-wide">
@@ -4911,6 +5294,14 @@ function getHandoffApi(): HandoffApi | null {
   return typeof window !== "undefined" ? window.handoffApp ?? null : null
 }
 
+function getControlCenterBridge(api: HandoffApi | null): HandoffApi["controlCenter"] | null {
+  if (!api || !("controlCenter" in api) || !api.controlCenter) {
+    return null
+  }
+
+  return api.controlCenter
+}
+
 export default function App() {
   const [activeSection, setActiveSection] = useState<AppSection>("threads")
   const [rightPaneMode, setRightPaneMode] = useState<"conversation" | "search" | "new-thread">(
@@ -4930,6 +5321,11 @@ export default function App() {
   const [bridgeError, setBridgeError] = useState<string | null>(null)
   const [skillsStatus, setSkillsStatus] = useState<HandoffSkillsStatus | null>(null)
   const [skillsError, setSkillsError] = useState<string | null>(null)
+  const [controlCenterSnapshot, setControlCenterSnapshot] = useState<ControlCenterSnapshot | null>(
+    null
+  )
+  const [controlCenterError, setControlCenterError] = useState<string | null>(null)
+  const [isLoadingControlCenter, setIsLoadingControlCenter] = useState(true)
   const [isMutatingSkills, setIsMutatingSkills] = useState(false)
   const [agents, setAgents] = useState<AgentDefinition[]>([])
   const [isLoadingAgents, setIsLoadingAgents] = useState(true)
@@ -5447,6 +5843,41 @@ export default function App() {
     } catch (error) {
       setSkillsStatus(null)
       setSkillsError(error instanceof Error ? error.message : "Unable to load skills status.")
+    }
+  }, [])
+
+  const loadControlCenterSnapshot = useCallback(async () => {
+    setIsLoadingControlCenter(true)
+    const api = getHandoffApi()
+    const controlCenter = getControlCenterBridge(api)
+
+    if (!api) {
+      setControlCenterSnapshot(null)
+      setControlCenterError("The preload bridge did not load. Restart the app.")
+      setIsLoadingControlCenter(false)
+      return
+    }
+
+    if (!controlCenter) {
+      setControlCenterSnapshot(null)
+      setControlCenterError(
+        "Control Center is unavailable. Restart the app to refresh the preload bridge."
+      )
+      setIsLoadingControlCenter(false)
+      return
+    }
+
+    try {
+      const nextSnapshot = await controlCenter.getSnapshot()
+      setControlCenterSnapshot(nextSnapshot)
+      setControlCenterError(null)
+    } catch (error) {
+      setControlCenterSnapshot(null)
+      setControlCenterError(
+        error instanceof Error ? error.message : "Unable to load Control Center."
+      )
+    } finally {
+      setIsLoadingControlCenter(false)
     }
   }, [])
 
@@ -6116,6 +6547,7 @@ export default function App() {
         loadAgents(),
         loadBridgeInfo(),
         loadSkillsStatus(),
+        loadControlCenterSnapshot(),
         loadThreadOrganization()
       ])
     }
@@ -6130,7 +6562,14 @@ export default function App() {
     return () => {
       isMounted = false
     }
-  }, [loadAgents, loadBridgeInfo, loadSessions, loadSkillsStatus, loadThreadOrganization])
+  }, [
+    loadAgents,
+    loadBridgeInfo,
+    loadControlCenterSnapshot,
+    loadSessions,
+    loadSkillsStatus,
+    loadThreadOrganization
+  ])
 
   useEffect(() => {
     const api = getHandoffApi()
@@ -6142,6 +6581,18 @@ export default function App() {
       setSearchStatus(nextStatus)
     })
   }, [])
+
+  useEffect(() => {
+    const api = getHandoffApi()
+    const controlCenter = getControlCenterBridge(api)
+    if (!controlCenter) {
+      return () => undefined
+    }
+
+    return controlCenter.onStateChanged(() => {
+      void loadControlCenterSnapshot()
+    })
+  }, [loadControlCenterSnapshot])
 
   useEffect(() => {
     void loadConversation(activeSession)
@@ -7581,6 +8032,67 @@ export default function App() {
     [showToast]
   )
 
+  const handleOpenControlCenterThread = useCallback(
+    async (threadId: string) => {
+      const api = getHandoffApi()
+      const controlCenter = getControlCenterBridge(api)
+      if (!controlCenter) {
+        showToast("Preload bridge unavailable", "error")
+        return
+      }
+
+      try {
+        const result = await controlCenter.open(threadId)
+        showToast(result.fallbackMessage ?? "Opened live thread")
+        await loadControlCenterSnapshot()
+      } catch (error) {
+        showToast(
+          error instanceof Error ? error.message : "Unable to open live thread.",
+          "error"
+        )
+      }
+    },
+    [loadControlCenterSnapshot, showToast]
+  )
+
+  const handleDismissControlCenterThread = useCallback(async (threadId: string) => {
+    const api = getHandoffApi()
+    const controlCenter = getControlCenterBridge(api)
+    if (!controlCenter) {
+      showToast("Preload bridge unavailable", "error")
+      return
+    }
+
+    try {
+      setControlCenterSnapshot(await controlCenter.dismiss(threadId))
+      setControlCenterError(null)
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : "Unable to dismiss live thread.",
+        "error"
+      )
+    }
+  }, [showToast])
+
+  const handleDismissCompletedControlCenterThreads = useCallback(async () => {
+    const api = getHandoffApi()
+    const controlCenter = getControlCenterBridge(api)
+    if (!controlCenter) {
+      showToast("Preload bridge unavailable", "error")
+      return
+    }
+
+    try {
+      setControlCenterSnapshot(await controlCenter.dismissCompleted())
+      setControlCenterError(null)
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : "Unable to dismiss completed threads.",
+        "error"
+      )
+    }
+  }, [showToast])
+
   const handleSidebarResizeStart = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
       if (isSidebarCollapsed) {
@@ -8139,6 +8651,17 @@ export default function App() {
 
             <div className="section-rail-nav">
               <button
+                aria-pressed={activeSection === "control-center"}
+                className={`section-rail-button ${
+                  activeSection === "control-center" ? "is-active" : ""
+                }`}
+                onClick={() => handleSelectSection("control-center")}
+                type="button"
+              >
+                <ControlCenterIcon />
+                <span className="section-rail-label">Control Center</span>
+              </button>
+              <button
                 aria-pressed={activeSection === "threads"}
                 className={`section-rail-button ${activeSection === "threads" ? "is-active" : ""}`}
                 onClick={() => handleSelectSection("threads")}
@@ -8187,7 +8710,21 @@ export default function App() {
         <section className={`sidebar-pane ${isSidebarCollapsed ? "is-collapsed" : ""}`}>
           {!isSidebarCollapsed ? (
             <>
-              {activeSection === "threads" ? (
+              {activeSection === "control-center" ? (
+                <ControlCenterSidebarPane
+                  isLoading={isLoadingControlCenter}
+                  isBusy={isMutatingSkills}
+                  onDismissCompleted={() => {
+                    void handleDismissCompletedControlCenterThreads()
+                  }}
+                  onInstall={target => {
+                    void handleInstallSkills(target)
+                  }}
+                  skillsError={skillsError}
+                  skillsStatus={skillsStatus}
+                  snapshot={controlCenterSnapshot}
+                />
+              ) : activeSection === "threads" ? (
                 <>
                   <div className="sidebar-header">
                     <div className="sidebar-header-controls">
@@ -8264,6 +8801,8 @@ export default function App() {
             <div className="topbar-left">
               {isSettingsOpen ? (
                 <span className="topbar-thread">Settings</span>
+              ) : activeSection === "control-center" ? (
+                <span className="topbar-thread">Control Center</span>
               ) : activeSection === "agents" ? (
                 agentsPaneView === "automation" ? (
                   <span className="topbar-thread">Automation / Skills</span>
@@ -8337,15 +8876,36 @@ export default function App() {
                   Back to results
                 </button>
               ) : null}
+              {!isSettingsOpen && activeSection === "control-center" ? (
+                <button
+                  className="topbar-button"
+                  disabled={
+                    !(controlCenterSnapshot?.records ?? []).some(
+                      record => record.status === "completed" || record.status === "failed"
+                    )
+                  }
+                  onClick={() => {
+                    void handleDismissCompletedControlCenterThreads()
+                  }}
+                  type="button"
+                >
+                  Dismiss completed
+                </button>
+              ) : null}
               {!isSettingsOpen &&
-              activeSection === "threads" &&
-              rightPaneMode !== "new-thread" ? (
+              ((activeSection === "threads" && rightPaneMode !== "new-thread") ||
+                activeSection === "control-center") ? (
                 <button
                   className="topbar-button"
                   onClick={() => {
                     const api = getHandoffApi()
                     if (!api) {
                       setListError("The preload bridge did not load. Restart the app.")
+                      return
+                    }
+
+                    if (activeSection === "control-center") {
+                      void Promise.all([api.app.refresh(), loadControlCenterSnapshot()])
                       return
                     }
 
@@ -8391,6 +8951,26 @@ export default function App() {
                   onTerminalToggle={handleTerminalToggle}
                   settingsError={settingsError}
                   settingsSnapshot={settingsSnapshot}
+                />
+              ) : activeSection === "control-center" ? (
+                <ControlCenterPane
+                  error={controlCenterError}
+                  isBusy={isMutatingSkills}
+                  isLoading={isLoadingControlCenter}
+                  onDismiss={threadId => {
+                    void handleDismissControlCenterThread(threadId)
+                  }}
+                  onDismissCompleted={() => {
+                    void handleDismissCompletedControlCenterThreads()
+                  }}
+                  onInstall={target => {
+                    void handleInstallSkills(target)
+                  }}
+                  onOpenThread={threadId => {
+                    void handleOpenControlCenterThread(threadId)
+                  }}
+                  skillsStatus={skillsStatus}
+                  snapshot={controlCenterSnapshot}
                 />
               ) : activeSection === "agents" ? (
                 isLoadingAgents && agents.length === 0 && agentsPaneView !== "dashboard" ? (

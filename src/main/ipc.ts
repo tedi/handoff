@@ -15,6 +15,7 @@ import type {
   SearchFilters,
   SessionClient,
   SessionProvider,
+  TerminalAppId,
   ThinkingLevel,
   TranscriptOptions
 } from "../shared/contracts"
@@ -219,8 +220,11 @@ async function openCodexCliSession(params: {
   settingsSnapshot: HandoffSettingsSnapshot
   sessionId: string
   sessionCwd?: string | null
+  preferredTerminalId?: TerminalAppId | null
 }): Promise<OpenActionResult> {
-  const terminalId = getSelectedTerminalId(params.settingsSnapshot)
+  const terminalId =
+    params.preferredTerminalId ??
+    getSelectedTerminalId(params.settingsSnapshot)
   const launchInfo = getCodexLaunchInfo(params.settingsSnapshot)
 
   return openShellCommandInTerminal({
@@ -238,8 +242,11 @@ async function openClaudeCliSession(params: {
   settingsSnapshot: HandoffSettingsSnapshot
   sessionId: string
   workingDirectory?: string | null
+  preferredTerminalId?: TerminalAppId | null
 }): Promise<OpenActionResult> {
-  const terminalId = getSelectedTerminalId(params.settingsSnapshot)
+  const terminalId =
+    params.preferredTerminalId ??
+    getSelectedTerminalId(params.settingsSnapshot)
   const launchInfo = getClaudeLaunchInfo(params.settingsSnapshot)
 
   return openShellCommandInTerminal({
@@ -273,6 +280,62 @@ async function openProjectPath(
 
   await openProjectInFinder(projectPath)
   return { fallbackMessage: null }
+}
+
+function getTerminalIdForHostLabel(hostAppLabel: string | null) {
+  if (hostAppLabel === "Ghostty") {
+    return "ghostty" as const
+  }
+
+  if (hostAppLabel === "Warp") {
+    return "warp" as const
+  }
+
+  if (hostAppLabel === "Terminal") {
+    return "terminal" as const
+  }
+
+  return null
+}
+
+async function openControlCenterThread(params: {
+  service: HandoffService
+  threadId: string
+}): Promise<OpenActionResult> {
+  const record = await params.service.controlCenter.getRecord(params.threadId)
+  if (!record) {
+    throw new Error(`Unknown live thread "${params.threadId}".`)
+  }
+
+  const settingsSnapshot = await params.service.settings.get()
+  const exactTerminalId =
+    record.hostAppExact ? getTerminalIdForHostLabel(record.hostAppLabel) : null
+
+  let result: OpenActionResult
+
+  if (record.provider === "codex") {
+    if (record.launchMode === "app") {
+      await shell.openExternal(`codex://threads/${encodeURIComponent(record.sourceSessionId)}`)
+      result = { fallbackMessage: null }
+    } else {
+      result = await openCodexCliSession({
+        settingsSnapshot,
+        sessionId: record.sourceSessionId,
+        sessionCwd: record.projectPath,
+        preferredTerminalId: exactTerminalId
+      })
+    }
+  } else {
+    result = await openClaudeCliSession({
+      settingsSnapshot,
+      sessionId: record.sourceSessionId,
+      workingDirectory: record.projectPath,
+      preferredTerminalId: exactTerminalId
+    })
+  }
+
+  await params.service.controlCenter.acknowledge(params.threadId)
+  return result
 }
 
 async function openCodexAppProject(params: {
@@ -440,6 +503,21 @@ export function registerIpcHandlers(ipcMain: IpcMain, service: HandoffService) {
   ipcMain.handle(IPC_CHANNELS.threads.get, () => service.threads.get())
   ipcMain.handle(IPC_CHANNELS.threads.update, (_event, settings) =>
     service.threads.update(settings)
+  )
+  ipcMain.handle(IPC_CHANNELS.controlCenter.getSnapshot, () =>
+    service.controlCenter.getSnapshot()
+  )
+  ipcMain.handle(IPC_CHANNELS.controlCenter.dismiss, (_event, threadId: string) =>
+    service.controlCenter.dismiss(threadId)
+  )
+  ipcMain.handle(IPC_CHANNELS.controlCenter.dismissCompleted, () =>
+    service.controlCenter.dismissCompleted()
+  )
+  ipcMain.handle(IPC_CHANNELS.controlCenter.open, (_event, threadId: string) =>
+    openControlCenterThread({
+      service,
+      threadId
+    })
   )
   ipcMain.handle(IPC_CHANNELS.bridge.getStatus, () => service.bridge.getStatus())
   ipcMain.handle(IPC_CHANNELS.bridge.getConfigSnippets, () =>
@@ -640,6 +718,10 @@ export function registerIpcHandlers(ipcMain: IpcMain, service: HandoffService) {
     ipcMain.removeHandler(IPC_CHANNELS.agents.duplicate)
     ipcMain.removeHandler(IPC_CHANNELS.threads.get)
     ipcMain.removeHandler(IPC_CHANNELS.threads.update)
+    ipcMain.removeHandler(IPC_CHANNELS.controlCenter.getSnapshot)
+    ipcMain.removeHandler(IPC_CHANNELS.controlCenter.dismiss)
+    ipcMain.removeHandler(IPC_CHANNELS.controlCenter.dismissCompleted)
+    ipcMain.removeHandler(IPC_CHANNELS.controlCenter.open)
     ipcMain.removeHandler(IPC_CHANNELS.selector.app.getStateInfo)
     ipcMain.removeHandler(IPC_CHANNELS.selector.app.openPath)
     ipcMain.removeHandler(IPC_CHANNELS.selector.app.refresh)

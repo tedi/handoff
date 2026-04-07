@@ -1818,6 +1818,84 @@ pre {
     gap: 8px;
 }
 
+.control-center-sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px;
+}
+
+.control-center-sidebar-card {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.025);
+}
+
+.control-center-sidebar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.control-center-sidebar-title {
+    font-size: 0.78rem;
+    font-weight: 600;
+}
+
+.control-center-sidebar-metrics {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.control-center-sidebar-metric {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 0.68rem;
+    color: var(--muted);
+}
+
+.control-center-sidebar-metric strong {
+    color: var(--ink);
+    font-size: 0.9rem;
+    font-weight: 700;
+}
+
+.control-center-sidebar-note {
+    font-size: 0.68rem;
+    line-height: 1.45;
+    color: var(--muted);
+}
+
+.control-center-hook-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.control-center-hook-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 0.72rem;
+}
+
+.control-center-inline-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.control-center-inline-actions.is-centered {
+    justify-content: center;
+}
+
 .agent-run-stack {
     display: flex;
     flex-direction: column;
@@ -1909,6 +1987,233 @@ pre {
     color: var(--muted);
     font-size: 0.68rem;
     white-space: nowrap;
+}
+
+.control-center-layout {
+    width: 100%;
+    max-width: 980px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.control-center-toolbar {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 14px 16px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    background:
+        radial-gradient(circle at top right, rgba(93, 177, 255, 0.16), transparent 35%),
+        rgba(255, 255, 255, 0.03);
+}
+
+.control-center-toolbar-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.control-center-toolbar-copy h2 {
+    margin: 0;
+    font-size: 1rem;
+}
+
+.control-center-toolbar-copy p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.78rem;
+    line-height: 1.5;
+}
+
+.control-center-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.control-center-card {
+    display: flex;
+    align-items: stretch;
+    gap: 10px;
+    padding: 10px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: rgba(255, 255, 255, 0.025);
+    transition: border-color 80ms ease, background-color 80ms ease, transform 80ms ease;
+}
+
+.control-center-card:hover {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.12);
+    transform: translateY(-1px);
+}
+
+.control-center-card.is-attention {
+    border-color: rgba(251, 191, 36, 0.3);
+}
+
+.control-center-card.is-warning {
+    border-color: rgba(251, 146, 60, 0.3);
+}
+
+.control-center-card.is-ready {
+    border-color: rgba(74, 222, 128, 0.26);
+}
+
+.control-center-card.is-error {
+    border-color: rgba(248, 113, 113, 0.28);
+}
+
+.control-center-card.is-acknowledged {
+    opacity: 0.82;
+}
+
+.control-center-card-main {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.control-center-card-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.control-center-title-group {
+    min-width: 0;
+    flex: 1;
+}
+
+.control-center-title {
+    display: block;
+    font-size: 0.94rem;
+    font-weight: 600;
+    line-height: 1.35;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.control-center-card-meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    flex-shrink: 0;
+}
+
+.control-center-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px 8px;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    color: var(--ink);
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.control-center-pill.is-provider-codex {
+    color: #8ec5ff;
+    background: rgba(66, 133, 244, 0.16);
+}
+
+.control-center-pill.is-provider-claude {
+    color: #ffc48a;
+    background: rgba(245, 158, 11, 0.16);
+}
+
+.control-center-pill.is-running {
+    color: #a7f3d0;
+    background: rgba(16, 185, 129, 0.16);
+}
+
+.control-center-pill.is-attention {
+    color: #fde68a;
+    background: rgba(234, 179, 8, 0.18);
+}
+
+.control-center-pill.is-warning {
+    color: #fdba74;
+    background: rgba(249, 115, 22, 0.18);
+}
+
+.control-center-pill.is-ready {
+    color: #86efac;
+    background: rgba(34, 197, 94, 0.18);
+}
+
+.control-center-pill.is-error {
+    color: #fca5a5;
+    background: rgba(220, 38, 38, 0.16);
+}
+
+.control-center-time {
+    font-size: 0.72rem;
+    color: var(--muted);
+    white-space: nowrap;
+}
+
+.control-center-previews {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+}
+
+.control-center-preview-line {
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.control-center-preview-line.is-thinking {
+    color: #c7d2fe;
+}
+
+.control-center-preview-line.is-message {
+    color: var(--ink);
+}
+
+.control-center-preview-label {
+    color: var(--ink);
+    font-weight: 600;
+}
+
+.control-center-dismiss-button {
+    align-self: center;
+    border: none;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--muted);
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 6px 10px;
+    transition: background-color 80ms ease, color 80ms ease;
+}
+
+.control-center-dismiss-button:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: var(--ink);
 }
 
 .agent-run-expanded {

@@ -8,6 +8,7 @@ import type {
   AgentBridgeHealth,
   AgentRunRecord,
   ClipboardWriteResult,
+  ControlCenterStateChangeEvent,
   HandoffSkillsExportResult,
   HandoffSkillsStatus,
   HandoffSettingsPatch,
@@ -168,6 +169,49 @@ export function createHandoffBridge(
           IPC_CHANNELS.threads.update,
           settings
         ) as Promise<ThreadOrganizationSettings>
+      }
+    },
+
+    controlCenter: {
+      getSnapshot() {
+        return ipcRenderer.invoke(IPC_CHANNELS.controlCenter.getSnapshot) as Promise<
+          Awaited<ReturnType<HandoffApi["controlCenter"]["getSnapshot"]>>
+        >
+      },
+
+      open(threadId: string) {
+        return ipcRenderer.invoke(
+          IPC_CHANNELS.controlCenter.open,
+          threadId
+        ) as Promise<Awaited<ReturnType<HandoffApi["controlCenter"]["open"]>>>
+      },
+
+      dismiss(threadId: string) {
+        return ipcRenderer.invoke(
+          IPC_CHANNELS.controlCenter.dismiss,
+          threadId
+        ) as Promise<Awaited<ReturnType<HandoffApi["controlCenter"]["dismiss"]>>>
+      },
+
+      dismissCompleted() {
+        return ipcRenderer.invoke(
+          IPC_CHANNELS.controlCenter.dismissCompleted
+        ) as Promise<Awaited<ReturnType<HandoffApi["controlCenter"]["dismissCompleted"]>>>
+      },
+
+      onStateChanged(listener) {
+        const wrappedListener = (_event: IpcRendererEvent | Event, payload: unknown) => {
+          listener(payload as ControlCenterStateChangeEvent)
+        }
+
+        ipcRenderer.on(IPC_CHANNELS.controlCenterStateChanged, wrappedListener)
+
+        return () => {
+          ipcRenderer.removeListener(
+            IPC_CHANNELS.controlCenterStateChanged,
+            wrappedListener
+          )
+        }
       }
     },
 

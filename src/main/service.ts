@@ -15,12 +15,15 @@ import type {
   AgentUpdatePatch,
   AppStateInfo,
   AskAgentResult,
+  ControlCenterSnapshot,
+  ControlCenterStateChangeEvent,
   ConversationTranscript,
   HandoffSettingsPatch,
   HandoffSettingsSnapshot,
-  SelectorAppStateChangeEvent,
   HandoffStateChangeEvent,
   HandoffStateChangeReason,
+  LiveThreadRecord,
+  SelectorAppStateChangeEvent,
   SearchFilters,
   SearchResult,
   SearchStatus,
@@ -31,6 +34,10 @@ import type {
   TranscriptOptions
 } from "../shared/contracts"
 import { createAgentBridgeService, type AgentBridgeService } from "./bridge"
+import {
+  createControlCenterService,
+  type ControlCenterService
+} from "./control-center"
 import {
   createHandoffSearchService,
   type HandoffSearchService
@@ -66,6 +73,10 @@ export interface HandoffServiceOptions {
     command: string
     args: string[]
   }
+  liveHookCommand?: {
+    command: string
+    args: string[]
+  }
 }
 
 export interface HandoffService {
@@ -88,6 +99,13 @@ export interface HandoffService {
   threads: {
     get(): Promise<ThreadOrganizationSettings>
     update(settings: ThreadOrganizationSettings): Promise<ThreadOrganizationSettings>
+  }
+  controlCenter: {
+    getSnapshot(): Promise<ControlCenterSnapshot>
+    getRecord(id: string): Promise<LiveThreadRecord | null>
+    acknowledge(id: string): Promise<LiveThreadRecord | null>
+    dismiss(id: string): Promise<ControlCenterSnapshot>
+    dismissCompleted(): Promise<ControlCenterSnapshot>
   }
   bridge: {
     getStatus(): Promise<AgentBridgeHealth>
@@ -124,6 +142,9 @@ export interface HandoffService {
   }
   startWatching(): Promise<void>
   onStateChanged(listener: (event: HandoffStateChangeEvent) => void): () => void
+  onControlCenterStateChanged(
+    listener: (event: ControlCenterStateChangeEvent) => void
+  ): () => void
   onSearchStatusChanged(listener: (status: SearchStatus) => void): () => void
   onSelectorStateChanged(
     listener: (event: SelectorAppStateChangeEvent) => void
@@ -159,6 +180,27 @@ interface ClaudeSessionFileMetadata {
 
 function createSessionKey(provider: SessionProvider, sessionId: string) {
   return `${provider}:${sessionId}`
+}
+
+function serializeLiveThreadRecord(record: LiveThreadRecord): LiveThreadRecord {
+  return {
+    id: record.id,
+    provider: record.provider,
+    sourceSessionId: record.sourceSessionId,
+    threadName: record.threadName,
+    projectPath: record.projectPath,
+    transcriptPath: record.transcriptPath,
+    status: record.status,
+    lastEventAt: record.lastEventAt,
+    lastUserPreview: record.lastUserPreview,
+    lastAssistantPreview: record.lastAssistantPreview,
+    assistantPreviewKind: record.assistantPreviewKind,
+    launchMode: record.launchMode,
+    hostAppLabel: record.hostAppLabel,
+    hostAppExact: record.hostAppExact,
+    acknowledgedAt: record.acknowledgedAt,
+    dismissedAt: record.dismissedAt
+  }
 }
 
 function fileExists(filePath: string) {
@@ -799,6 +841,9 @@ export function createHandoffService(
     cwd: appDir,
     stateDir: options.selectorStateDir
   })
+  const controlCenterService: ControlCenterService = createControlCenterService({
+    dataDir
+  })
   const bridgeService =
     createAgentBridgeService({
       dataDir,
@@ -808,8 +853,8 @@ export function createHandoffService(
         options.bridgeCommand ?? {
           command: process.execPath,
           args: [appDir, "--agent-bridge-mcp"]
-        }
-    })
+      }
+  })
   const skillsService: HandoffSkillsService = createHandoffSkillsService({
     dataDir,
     codexHome,
@@ -818,6 +863,11 @@ export function createHandoffService(
       options.bridgeCommand ?? {
         command: process.execPath,
         args: [appDir, "--agent-bridge-mcp"]
+      },
+    liveHookCommand:
+      options.liveHookCommand ?? {
+        command: process.execPath,
+        args: [appDir]
       }
   })
   const normalizedIndexPath = indexPath.replaceAll("\\", "/")
@@ -914,14 +964,16 @@ export function createHandoffService(
       pathById
     }
 
+    const resolvedSessions = entries.map(entry => ({
+      ...entry,
+      sessionPath: pathById.get(entry.id) ?? null
+    }))
+
     if (searchService) {
-      void searchService.syncSessions(
-        entries.map(entry => ({
-          ...entry,
-          sessionPath: pathById.get(entry.id) ?? null
-        }))
-      )
+      void searchService.syncSessions(resolvedSessions)
     }
+
+    await controlCenterService.reconcileSessions(resolvedSessions)
 
     return cache
   }
@@ -1021,6 +1073,30 @@ export function createHandoffService(
 
       async update(settings) {
         return settingsStore.updateThreadOrganization(settings)
+      }
+    },
+
+    controlCenter: {
+      async getSnapshot() {
+        return controlCenterService.getSnapshot()
+      },
+
+      async getRecord(id) {
+        const record = await controlCenterService.getRecord(id)
+        return record ? serializeLiveThreadRecord(record) : null
+      },
+
+      async acknowledge(id) {
+        const record = await controlCenterService.acknowledge(id)
+        return record ? serializeLiveThreadRecord(record) : null
+      },
+
+      async dismiss(id) {
+        return controlCenterService.dismiss(id)
+      },
+
+      async dismissCompleted() {
+        return controlCenterService.dismissCompleted()
       }
     },
 
@@ -1124,11 +1200,13 @@ export function createHandoffService(
     async startWatching() {
       if (listWatcher) {
         await selectorService.startWatching()
+        await controlCenterService.startWatching()
         return
       }
 
       await loadCache()
       await selectorService.startWatching()
+      await controlCenterService.startWatching()
 
       listWatcher = chokidar.watch([indexPath, claudeProjectsRoot, archivedSessionsRoot], {
         ignoreInitial: true,
@@ -1174,6 +1252,10 @@ export function createHandoffService(
       }
     },
 
+    onControlCenterStateChanged(listener) {
+      return controlCenterService.onStateChanged(listener)
+    },
+
     onSearchStatusChanged(listener) {
       if (!searchService) {
         return () => undefined
@@ -1205,6 +1287,7 @@ export function createHandoffService(
       }
 
       await selectorService.dispose()
+      await controlCenterService.dispose()
       await searchService?.dispose()
     }
   }

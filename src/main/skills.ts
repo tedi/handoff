@@ -12,6 +12,12 @@ import type {
   SkillInstallTarget
 } from "../shared/contracts"
 import { AGENT_BRIDGE_SERVER_NAME } from "./bridge"
+import {
+  buildLiveHookCommandString,
+  CONTROL_CENTER_CLAUDE_EVENTS,
+  CONTROL_CENTER_CODEX_EVENTS,
+  isHandoffLiveHookCommand
+} from "./control-center"
 import { createHandoffSettingsStore } from "./settings"
 
 const HANDOFF_SKILL_NAME = AGENT_BRIDGE_SERVER_NAME
@@ -28,6 +34,7 @@ export interface HandoffSkillsServiceOptions {
   codexHome: string
   claudeHome: string
   bridgeCommand: BridgeCommandConfig
+  liveHookCommand: BridgeCommandConfig
 }
 
 export interface HandoffSkillsService {
@@ -245,6 +252,210 @@ function upsertManagedBlock(content: string, block: string) {
   return ensureTrailingNewline(`${content.trimEnd()}\n\n${block}`)
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null
+}
+
+function buildCodexLiveHookEntry(command: string) {
+  return {
+    hooks: [
+      {
+        command,
+        timeout: 10,
+        type: "command"
+      }
+    ]
+  }
+}
+
+function buildClaudeLiveHookEntry(command: string, matcher?: string) {
+  return {
+    hooks: [
+      {
+        command,
+        timeout: 10,
+        type: "command"
+      }
+    ],
+    ...(matcher !== undefined ? { matcher } : {})
+  }
+}
+
+function getClaudeHookMatcher(eventName: (typeof CONTROL_CENTER_CLAUDE_EVENTS)[number]) {
+  if (
+    eventName === "Notification" ||
+    eventName === "PermissionRequest" ||
+    eventName === "PreToolUse" ||
+    eventName === "PostToolUse" ||
+    eventName === "Stop" ||
+    eventName === "UserPromptSubmit"
+  ) {
+    return "*"
+  }
+
+  return undefined
+}
+
+function filterManagedHookCommands(entries: unknown[]) {
+  return entries
+    .map(entry => {
+      if (!isRecord(entry)) {
+        return entry
+      }
+
+      const entryHooks = Array.isArray(entry.hooks) ? entry.hooks : []
+      const nextHooks = entryHooks.filter(hook => {
+        return !(
+          isRecord(hook) &&
+          typeof hook.command === "string" &&
+          isHandoffLiveHookCommand(hook.command)
+        )
+      })
+
+      if (entryHooks.length === nextHooks.length) {
+        return entry
+      }
+
+      if (nextHooks.length === 0) {
+        return null
+      }
+
+      return {
+        ...entry,
+        hooks: nextHooks
+      }
+    })
+    .filter((entry): entry is Record<string, unknown> => entry !== null && isRecord(entry))
+}
+
+function mergeCodexHooksConfig(
+  currentConfig: Record<string, unknown>,
+  liveHookCommand: BridgeCommandConfig
+) {
+  const currentHooks =
+    currentConfig.hooks && typeof currentConfig.hooks === "object"
+      ? (currentConfig.hooks as Record<string, unknown>)
+      : {}
+
+  const nextHooks: Record<string, unknown> = {
+    ...currentHooks
+  }
+
+  for (const eventName of CONTROL_CENTER_CODEX_EVENTS) {
+    const command = buildLiveHookCommandString({
+      bridgeCommand: liveHookCommand,
+      provider: "codex",
+      eventName
+    })
+    const existingEntries = Array.isArray(currentHooks[eventName])
+      ? (currentHooks[eventName] as unknown[])
+      : []
+
+    nextHooks[eventName] = [
+      ...filterManagedHookCommands(existingEntries),
+      buildCodexLiveHookEntry(command)
+    ]
+  }
+
+  return {
+    ...currentConfig,
+    hooks: nextHooks
+  }
+}
+
+function mergeClaudeHooksConfig(
+  currentConfig: Record<string, unknown>,
+  liveHookCommand: BridgeCommandConfig
+) {
+  const currentHooks =
+    currentConfig.hooks && typeof currentConfig.hooks === "object"
+      ? (currentConfig.hooks as Record<string, unknown>)
+      : {}
+
+  const nextHooks: Record<string, unknown> = {
+    ...currentHooks
+  }
+
+  for (const eventName of CONTROL_CENTER_CLAUDE_EVENTS) {
+    const command = buildLiveHookCommandString({
+      bridgeCommand: liveHookCommand,
+      provider: "claude",
+      eventName
+    })
+    const existingEntries = Array.isArray(currentHooks[eventName])
+      ? (currentHooks[eventName] as unknown[])
+      : []
+
+    nextHooks[eventName] = [
+      ...filterManagedHookCommands(existingEntries),
+      buildClaudeLiveHookEntry(command, getClaudeHookMatcher(eventName))
+    ]
+  }
+
+  return {
+    ...currentConfig,
+    hooks: nextHooks
+  }
+}
+
+function hasCodexLiveHooks(
+  parsedConfig: Record<string, unknown>,
+  liveHookCommand: BridgeCommandConfig
+) {
+  const parsedHooks =
+    parsedConfig.hooks && typeof parsedConfig.hooks === "object"
+      ? (parsedConfig.hooks as Record<string, unknown>)
+      : {}
+
+  return CONTROL_CENTER_CODEX_EVENTS.every(eventName => {
+    const expectedCommand = buildLiveHookCommandString({
+      bridgeCommand: liveHookCommand,
+      provider: "codex",
+      eventName
+    })
+    const entries = Array.isArray(parsedHooks[eventName]) ? parsedHooks[eventName] : []
+
+    return entries.some(entry => {
+      if (!isRecord(entry) || !Array.isArray(entry.hooks)) {
+        return false
+      }
+
+      return entry.hooks.some(hook => {
+        return isRecord(hook) && hook.command === expectedCommand
+      })
+    })
+  })
+}
+
+function hasClaudeLiveHooks(
+  parsedConfig: Record<string, unknown>,
+  liveHookCommand: BridgeCommandConfig
+) {
+  const parsedHooks =
+    parsedConfig.hooks && typeof parsedConfig.hooks === "object"
+      ? (parsedConfig.hooks as Record<string, unknown>)
+      : {}
+
+  return CONTROL_CENTER_CLAUDE_EVENTS.every(eventName => {
+    const expectedCommand = buildLiveHookCommandString({
+      bridgeCommand: liveHookCommand,
+      provider: "claude",
+      eventName
+    })
+    const entries = Array.isArray(parsedHooks[eventName]) ? parsedHooks[eventName] : []
+
+    return entries.some(entry => {
+      if (!isRecord(entry) || !Array.isArray(entry.hooks)) {
+        return false
+      }
+
+      return entry.hooks.some(hook => {
+        return isRecord(hook) && hook.command === expectedCommand
+      })
+    })
+  })
+}
+
 async function writeSkillDirectory(skillDir: string, files: Record<string, string>) {
   await fsPromises.mkdir(skillDir, { recursive: true })
 
@@ -324,6 +535,7 @@ function normalizeSettingsPaths(settings: HandoffSettings, options: HandoffSkill
     codexHomePath,
     claudeHomePath,
     codexConfigPath: path.join(codexHomePath, "config.toml"),
+    codexHooksPath: path.join(codexHomePath, "hooks.json"),
     claudeConfigPath: path.join(claudeHomePath, "settings.json"),
     codexSkillPath: path.join(
       codexHomePath,
@@ -344,10 +556,27 @@ function normalizeSettingsPaths(settings: HandoffSettings, options: HandoffSkill
 
 async function getCodexProviderStatus(params: {
   configPath: string
+  hooksPath: string
   skillPath: string
+  liveHookCommand: BridgeCommandConfig
 }) {
   const configExists = await fileExists(params.configPath)
   const skillInstalled = await fileExists(params.skillPath)
+  const hooksExist = await fileExists(params.hooksPath)
+  let liveHooksInstalled = false
+  let hookError: string | null = null
+
+  if (hooksExist) {
+    try {
+      liveHooksInstalled = hasCodexLiveHooks(
+        await readJsonObject(params.hooksPath),
+        params.liveHookCommand
+      )
+    } catch (error) {
+      hookError =
+        error instanceof Error ? error.message : "Unable to read Codex hooks settings."
+    }
+  }
 
   if (!configExists) {
     return {
@@ -357,8 +586,9 @@ async function getCodexProviderStatus(params: {
       skillPath: params.skillPath,
       skillInstalled,
       mcpInstalled: false,
+      liveHooksInstalled,
       managedConfigBlock: false,
-      error: null
+      error: hookError
     }
   }
 
@@ -377,8 +607,9 @@ async function getCodexProviderStatus(params: {
     skillPath: params.skillPath,
     skillInstalled,
     mcpInstalled: managedBlockContent.includes(AGENT_BRIDGE_SERVER_NAME),
+    liveHooksInstalled,
     managedConfigBlock,
-    error: null
+    error: hookError
   }
 }
 
@@ -387,6 +618,7 @@ async function getClaudeProviderStatus(params: {
   skillPath: string
   command: string
   args: string[]
+  liveHookCommand: BridgeCommandConfig
 }) {
   const configExists = await fileExists(params.configPath)
   const skillInstalled = await fileExists(params.skillPath)
@@ -399,6 +631,7 @@ async function getClaudeProviderStatus(params: {
       skillPath: params.skillPath,
       skillInstalled,
       mcpInstalled: false,
+      liveHooksInstalled: false,
       managedConfigBlock: false,
       error: null
     }
@@ -426,6 +659,7 @@ async function getClaudeProviderStatus(params: {
       skillPath: params.skillPath,
       skillInstalled,
       mcpInstalled: Boolean(server) && commandMatches && argsMatch,
+      liveHooksInstalled: hasClaudeLiveHooks(parsedConfig, params.liveHookCommand),
       managedConfigBlock: false,
       error: null
     }
@@ -437,6 +671,7 @@ async function getClaudeProviderStatus(params: {
       skillPath: params.skillPath,
       skillInstalled,
       mcpInstalled: false,
+      liveHooksInstalled: false,
       managedConfigBlock: false,
       error: error instanceof Error ? error.message : "Unable to read Claude settings."
     }
@@ -474,13 +709,16 @@ export function createHandoffSkillsService(
     const [codexStatus, claudeStatus] = await Promise.all([
       getCodexProviderStatus({
         configPath: paths.codexConfigPath,
-        skillPath: paths.codexSkillPath
+        hooksPath: paths.codexHooksPath,
+        skillPath: paths.codexSkillPath,
+        liveHookCommand: options.liveHookCommand
       }),
       getClaudeProviderStatus({
         configPath: paths.claudeConfigPath,
         skillPath: paths.claudeSkillPath,
         command: options.bridgeCommand.command,
-        args: options.bridgeCommand.args
+        args: options.bridgeCommand.args,
+        liveHookCommand: options.liveHookCommand
       })
     ])
 
@@ -507,6 +745,7 @@ export function createHandoffSkillsService(
     const currentConfig = (await fileExists(paths.codexConfigPath))
       ? await fsPromises.readFile(paths.codexConfigPath, "utf8")
       : ""
+    const currentHooks = await readJsonObject(paths.codexHooksPath)
     const nextConfig = upsertManagedBlock(
       currentConfig,
       buildCodexManagedBlock(
@@ -518,6 +757,11 @@ export function createHandoffSkillsService(
     )
 
     await fsPromises.writeFile(paths.codexConfigPath, nextConfig, "utf8")
+    await fsPromises.writeFile(
+      paths.codexHooksPath,
+      `${JSON.stringify(mergeCodexHooksConfig(currentHooks, options.liveHookCommand), null, 2)}\n`,
+      "utf8"
+    )
   }
 
   async function installClaude(settings: HandoffSettings) {
@@ -530,11 +774,14 @@ export function createHandoffSkillsService(
     await fsPromises.mkdir(path.dirname(paths.claudeConfigPath), { recursive: true })
 
     const currentConfig = await readJsonObject(paths.claudeConfigPath)
-    const nextConfig = mergeClaudeMcpConfig(
-      currentConfig,
-      options.bridgeCommand.command,
-      options.bridgeCommand.args,
-      skillSettings.toolTimeoutSec
+    const nextConfig = mergeClaudeHooksConfig(
+      mergeClaudeMcpConfig(
+        currentConfig,
+        options.bridgeCommand.command,
+        options.bridgeCommand.args,
+        skillSettings.toolTimeoutSec
+      ),
+      options.liveHookCommand
     )
     await fsPromises.writeFile(paths.claudeConfigPath, `${JSON.stringify(nextConfig, null, 2)}\n`, "utf8")
   }
@@ -607,7 +854,8 @@ export function createHandoffSkillsService(
           `- Client-side MCP tool-call timeout: ${
             codexTimeoutSec === null ? "provider default" : `${codexTimeoutSec} seconds`
           }`,
-          "- Add or update the Handoff managed block in config.toml so it declares the handoff-agent-bridge MCP server and the skills.config path."
+          "- Add or update the Handoff managed block in config.toml so it declares the handoff-agent-bridge MCP server and the skills.config path.",
+          "- Merge Handoff live hook commands into ~/.codex/hooks.json for SessionStart, UserPromptSubmit, and Stop."
         ].join("\n")
       )
     }
@@ -623,7 +871,8 @@ export function createHandoffSkillsService(
             claudeTimeoutSec === null ? "provider default" : `${claudeTimeoutSec} seconds`
           }`,
           `- Copy the skill folder into ~/.claude/skills/${HANDOFF_SKILL_NAME}`,
-          "- Merge the handoff-agent-bridge mcpServers entry into settings.json."
+          "- Merge the handoff-agent-bridge mcpServers entry into settings.json.",
+          "- Merge Handoff live hook commands into settings.json hooks for SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop, SessionEnd, PermissionRequest, Notification, SubagentStart, and SubagentStop."
         ].join("\n")
       )
     }

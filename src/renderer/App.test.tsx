@@ -12,6 +12,7 @@ import type {
   HandoffSkillsStatus,
   HandoffSettingsSnapshot,
   HandoffStateChangeEvent,
+  LiveThreadRecord,
   SearchResult,
   SearchStatus,
   SessionListItem
@@ -22,6 +23,7 @@ function createMockApi({
   agents = [],
   sessions,
   threadOrganization,
+  controlCenterRecords = [],
   transcriptById,
   transcriptErrors = {},
   searchStatus,
@@ -30,6 +32,7 @@ function createMockApi({
   agents?: AgentDefinition[]
   sessions: Array<Omit<SessionListItem, "createdAt"> & Partial<Pick<SessionListItem, "createdAt">>>
   threadOrganization?: import("../shared/contracts").ThreadOrganizationSettings
+  controlCenterRecords?: LiveThreadRecord[]
   transcriptById: Record<string, ConversationTranscript>
   transcriptErrors?: Record<string, Error>
   searchStatus?: SearchStatus
@@ -127,6 +130,9 @@ function createMockApi({
   const searchStatusListeners = new Set<
     (status: import("../shared/contracts").SearchStatus) => void
   >()
+  const controlCenterStateListeners = new Set<
+    (event: import("../shared/contracts").ControlCenterStateChangeEvent) => void
+  >()
   const selectorStateListeners = new Set<
     (event: import("../shared/contracts").SelectorAppStateChangeEvent) => void
   >()
@@ -143,6 +149,7 @@ function createMockApi({
         skillPath: "/Users/tedikonda/.codex/skills/handoff-agent-bridge/SKILL.md",
         skillInstalled: false,
         mcpInstalled: false,
+        liveHooksInstalled: false,
         managedConfigBlock: false,
         error: null
       },
@@ -153,11 +160,13 @@ function createMockApi({
         skillPath: "/Users/tedikonda/.claude/skills/handoff-agent-bridge/SKILL.md",
         skillInstalled: false,
         mcpInstalled: false,
+        liveHooksInstalled: false,
         managedConfigBlock: false,
         error: null
       }
     }
   }
+  let controlCenterState = controlCenterRecords.map(record => ({ ...record }))
 
   const api: HandoffApi = {
     app: {
@@ -272,6 +281,33 @@ function createMockApi({
       get: vi.fn().mockResolvedValue(settingsSnapshot.settings.threadOrganization),
       update: vi.fn().mockImplementation(async nextOrganization => nextOrganization)
     },
+    controlCenter: {
+      getSnapshot: vi.fn().mockImplementation(async () => ({
+        records: controlCenterState.map(record => ({ ...record }))
+      })),
+      open: vi.fn().mockResolvedValue({ fallbackMessage: null }),
+      dismiss: vi.fn().mockImplementation(async (threadId: string) => {
+        controlCenterState = controlCenterState.filter(record => record.id !== threadId)
+        return {
+          records: controlCenterState.map(record => ({ ...record }))
+        }
+      }),
+      dismissCompleted: vi.fn().mockImplementation(async () => {
+        controlCenterState = controlCenterState.filter(
+          record => record.status !== "completed" && record.status !== "failed"
+        )
+        return {
+          records: controlCenterState.map(record => ({ ...record }))
+        }
+      }),
+      onStateChanged(listener) {
+        controlCenterStateListeners.add(listener)
+
+        return () => {
+          controlCenterStateListeners.delete(listener)
+        }
+      }
+    },
     bridge: {
       getStatus: vi.fn().mockResolvedValue({
         status: "ready",
@@ -317,6 +353,7 @@ function createMockApi({
                     ...skillsStatusState.providers.codex,
                     skillInstalled: true,
                     mcpInstalled: true,
+                    liveHooksInstalled: true,
                     managedConfigBlock: true
                   }
                 : skillsStatusState.providers.codex,
@@ -325,7 +362,8 @@ function createMockApi({
                 ? {
                     ...skillsStatusState.providers.claude,
                     skillInstalled: true,
-                    mcpInstalled: true
+                    mcpInstalled: true,
+                    liveHooksInstalled: true
                   }
                 : skillsStatusState.providers.claude
           }
@@ -464,6 +502,11 @@ function createMockApi({
     },
     emitSearchStatus(status: import("../shared/contracts").SearchStatus) {
       searchStatusListeners.forEach(listener => listener(status))
+    },
+    emitControlCenter(
+      event: import("../shared/contracts").ControlCenterStateChangeEvent
+    ) {
+      controlCenterStateListeners.forEach(listener => listener(event))
     }
   }
 }
@@ -472,6 +515,137 @@ describe("Handoff App", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     window.localStorage.clear()
+  })
+
+  it("renders Control Center above Threads and opens live rows through the control center bridge", async () => {
+    const { api } = createMockApi({
+      sessions: [
+        {
+          id: "codex:session-1",
+          sourceSessionId: "session-1",
+          provider: "codex",
+          archived: false,
+          threadName: "Codex session",
+          updatedAt: "2026-03-14T01:00:00.000Z",
+          projectPath: "/tmp/codex-project",
+          sessionPath: "/tmp/session-1.jsonl"
+        }
+      ],
+      controlCenterRecords: [
+        {
+          id: "codex:live-1",
+          sourceSessionId: "live-1",
+          provider: "codex",
+          threadName: "Live onboarding flow",
+          projectPath: "/Users/tedikonda/topchallenger/apps/client",
+          transcriptPath: "/tmp/live-1.jsonl",
+          status: "waiting_user",
+          lastEventAt: "2026-03-14T02:00:00.000Z",
+          lastUserPreview: "PLEASE IMPLEMENT THIS PLAN",
+          lastAssistantPreview: "Implemented the onboarding flow changes.",
+          assistantPreviewKind: "message",
+          launchMode: "app",
+          hostAppLabel: "Codex.app",
+          hostAppExact: true,
+          acknowledgedAt: null,
+          dismissedAt: null
+        }
+      ],
+      transcriptById: {
+        "codex:session-1": {
+          id: "codex:session-1",
+          sourceSessionId: "session-1",
+          provider: "codex",
+          archived: false,
+          threadName: "Codex session",
+          updatedAt: "2026-03-14T01:00:00.000Z",
+          projectPath: "/tmp/codex-project",
+          sessionPath: "/tmp/session-1.jsonl",
+          sessionClient: "desktop",
+          sessionCwd: "/tmp/codex-project",
+          entries: [],
+          markdown: "# Transcript\n",
+          lastAssistantMarkdown: null,
+          hasDiffs: false
+        }
+      }
+    })
+
+    window.handoffApp = api
+    render(<App />)
+
+    const controlCenterButton = await screen.findByRole("button", {
+      name: /Control Center/i
+    })
+    const threadsButton = screen.getByRole("button", {
+      name: /^Threads$/i
+    })
+
+    expect(
+      controlCenterButton.compareDocumentPosition(threadsButton) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+
+    await userEvent.click(controlCenterButton)
+
+    expect(await screen.findByText("client · Live onboarding flow")).toBeInTheDocument()
+    await userEvent.click(
+      screen.getByRole("button", { name: /client · Live onboarding flow/i })
+    )
+
+    await waitFor(() => {
+      expect(api.controlCenter.open).toHaveBeenCalledWith("codex:live-1")
+    })
+  })
+
+  it("keeps rendering when the preload bridge is missing Control Center", async () => {
+    const { api } = createMockApi({
+      sessions: [
+        {
+          id: "codex:session-1",
+          sourceSessionId: "session-1",
+          provider: "codex",
+          archived: false,
+          threadName: "Codex session",
+          updatedAt: "2026-03-14T01:00:00.000Z",
+          projectPath: "/tmp/codex-project",
+          sessionPath: "/tmp/session-1.jsonl"
+        }
+      ],
+      transcriptById: {
+        "codex:session-1": {
+          id: "codex:session-1",
+          sourceSessionId: "session-1",
+          provider: "codex",
+          archived: false,
+          threadName: "Codex session",
+          updatedAt: "2026-03-14T01:00:00.000Z",
+          projectPath: "/tmp/codex-project",
+          sessionPath: "/tmp/session-1.jsonl",
+          sessionClient: "desktop",
+          sessionCwd: "/tmp/codex-project",
+          entries: [],
+          markdown: "# Transcript\n",
+          lastAssistantMarkdown: null,
+          hasDiffs: false
+        }
+      }
+    })
+
+    delete (api as Partial<HandoffApi>).controlCenter
+    window.handoffApp = api
+
+    render(<App />)
+
+    await screen.findByRole("button", { name: /^Threads$/i })
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: /Control Center/i
+      })
+    )
+
+    expect(
+      await screen.findByText(/Control Center is unavailable\. Restart the app/i)
+    ).toBeInTheDocument()
   })
 
   it("renders a mixed-source sidebar and switches source-aware actions with the selected transcript", async () => {

@@ -6,15 +6,28 @@ import { fileURLToPath } from "node:url"
 import { IPC_CHANNELS } from "../shared/channels"
 import { AGENT_BRIDGE_MODE_ARG, AGENT_BRIDGE_WORKER_MODE_ARG, runAgentBridgeWorkerJob } from "./bridge"
 import { runAgentBridgeMcpServer } from "./bridge-server"
+import { CONTROL_CENTER_HOOK_MODE_ARG, runControlCenterHookBridge } from "./control-center"
 import { registerIpcHandlers } from "./ipc"
 import { createHandoffService } from "./service"
+import type { SessionProvider } from "../shared/contracts"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isBridgeMode = process.argv.includes(AGENT_BRIDGE_MODE_ARG)
 const workerModeIndex = process.argv.indexOf(AGENT_BRIDGE_WORKER_MODE_ARG)
 const isWorkerMode = workerModeIndex >= 0
 const workerRunId = isWorkerMode ? process.argv[workerModeIndex + 1] ?? null : null
-const service = isBridgeMode || isWorkerMode
+const hookModeIndex = process.argv.indexOf(CONTROL_CENTER_HOOK_MODE_ARG)
+const isHookMode = hookModeIndex >= 0
+
+function getArgValue(flag: string) {
+  const index = process.argv.indexOf(flag)
+  return index >= 0 ? process.argv[index + 1] ?? null : null
+}
+
+const hookProvider = getArgValue("--provider")
+const hookEventName = getArgValue("--event")
+
+const service = isBridgeMode || isWorkerMode || isHookMode
   ? null
   : createHandoffService({
       appDir: app.getAppPath(),
@@ -27,6 +40,15 @@ const service = isBridgeMode || isWorkerMode
         : {
             command: process.execPath,
             args: [app.getAppPath(), AGENT_BRIDGE_MODE_ARG]
+          },
+      liveHookCommand: app.isPackaged
+        ? {
+            command: process.execPath,
+            args: []
+          }
+        : {
+            command: process.execPath,
+            args: [app.getAppPath()]
           }
     })
 
@@ -86,6 +108,31 @@ app.whenReady().then(async () => {
     return
   }
 
+  if (isHookMode) {
+    app.dock?.hide()
+
+    if (
+      hookProvider !== "codex" &&
+      hookProvider !== "claude"
+    ) {
+      app.exit(1)
+      return
+    }
+
+    if (!hookEventName) {
+      app.exit(1)
+      return
+    }
+
+    await runControlCenterHookBridge({
+      dataDir: app.getPath("userData"),
+      provider: hookProvider as SessionProvider,
+      eventName: hookEventName
+    })
+    app.exit(0)
+    return
+  }
+
   if (!service) {
     throw new Error("Handoff service was not initialized.")
   }
@@ -111,6 +158,13 @@ app.whenReady().then(async () => {
       }
     })
   })
+  const disposeControlCenterStateSubscription = service.onControlCenterStateChanged(payload => {
+    BrowserWindow.getAllWindows().forEach(window => {
+      if (!window.isDestroyed()) {
+        window.webContents.send(IPC_CHANNELS.controlCenterStateChanged, payload)
+      }
+    })
+  })
   const disposeSelectorStateSubscription = service.onSelectorStateChanged(payload => {
     BrowserWindow.getAllWindows().forEach(window => {
       if (!window.isDestroyed()) {
@@ -122,6 +176,7 @@ app.whenReady().then(async () => {
   disposeStateSubscription = () => {
     previousDisposeStateSubscription?.()
     disposeSearchStatusSubscription()
+    disposeControlCenterStateSubscription()
     disposeSelectorStateSubscription()
   }
 
