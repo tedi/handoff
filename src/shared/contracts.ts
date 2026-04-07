@@ -301,6 +301,61 @@ export type LiveThreadStatus =
 
 export type LiveAssistantPreviewKind = "thinking" | "message" | "none"
 
+export type ControlCenterPendingRequestType =
+  | "approval_request"
+  | "choice_request"
+  | "continue_request"
+
+export type ControlCenterPendingRequestActionKind =
+  | "approve"
+  | "reject"
+  | "choice"
+  | "continue"
+
+export type ControlCenterPendingRequestActionability = "inline" | "open-only"
+
+export interface ControlCenterPendingRequestAction {
+  id: string
+  label: string
+  kind: ControlCenterPendingRequestActionKind
+  acceleratorHint: string | null
+  primary: boolean
+}
+
+export interface ControlCenterPendingRequestPreviewLine {
+  kind: "context" | "add" | "remove"
+  text: string
+}
+
+export type ControlCenterPendingRequestPreview =
+  | {
+      type: "diff"
+      title: string | null
+      target: string | null
+      addedLineCount: number
+      removedLineCount: number
+      lines: ControlCenterPendingRequestPreviewLine[]
+    }
+  | {
+      type: "command"
+      command: string
+    }
+  | {
+      type: "summary"
+      summary: string
+    }
+
+export interface ControlCenterPendingRequest {
+  requestId: string
+  provider: SessionProvider
+  type: ControlCenterPendingRequestType
+  title: string
+  prompt: string
+  actions: ControlCenterPendingRequestAction[]
+  preview: ControlCenterPendingRequestPreview | null
+  actionability: ControlCenterPendingRequestActionability
+}
+
 export interface LiveThreadRecord {
   id: string
   provider: SessionProvider
@@ -316,6 +371,7 @@ export interface LiveThreadRecord {
   launchMode: ThreadLaunchMode
   hostAppLabel: string | null
   hostAppExact: boolean
+  pendingRequest: ControlCenterPendingRequest | null
   acknowledgedAt: string | null
   dismissedAt: string | null
 }
@@ -348,6 +404,12 @@ export interface LiveThreadEvent {
   launchMode: ThreadLaunchMode
   hostAppLabel: string | null
   hostAppExact: boolean
+  pendingRequest: ControlCenterPendingRequest | null
+}
+
+export interface ControlCenterActionResult {
+  snapshot: ControlCenterSnapshot
+  fallbackMessage?: string | null
 }
 
 export interface ClipboardWriteResult {
@@ -531,6 +593,11 @@ export interface HandoffApi {
   controlCenter: {
     getSnapshot(): Promise<ControlCenterSnapshot>
     open(threadId: string): Promise<OpenActionResult>
+    performAction(
+      threadId: string,
+      requestId: string,
+      actionId: string
+    ): Promise<ControlCenterActionResult>
     dismiss(threadId: string): Promise<ControlCenterSnapshot>
     dismissCompleted(): Promise<ControlCenterSnapshot>
     onStateChanged(listener: (event: ControlCenterStateChangeEvent) => void): () => void

@@ -161,6 +161,32 @@ pre {
     border-color: rgba(255, 255, 255, 0.12);
 }
 
+.control-center-popout-row.is-completed-unseen {
+    border-color: rgba(96, 165, 250, 0.48);
+}
+
+.control-center-popout-row.is-completed-unseen:hover {
+    border-color: rgba(96, 165, 250, 0.6);
+}
+
+.control-center-popout-inline-card {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.control-center-popout-inline-meta {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
 .control-center-popout-dot {
     width: 8px;
     height: 8px;
@@ -183,6 +209,10 @@ pre {
 
 .control-center-popout-dot.is-ready {
     background: #4ade80;
+}
+
+.control-center-popout-dot.is-completed-unseen {
+    background: #60a5fa;
 }
 
 .control-center-popout-dot.is-error {
@@ -2210,12 +2240,16 @@ pre {
     border-color: rgba(74, 222, 128, 0.26);
 }
 
-.control-center-card.is-error {
-    border-color: rgba(248, 113, 113, 0.28);
+.control-center-card.is-completed-unseen {
+    border-color: rgba(96, 165, 250, 0.48);
 }
 
-.control-center-card.is-acknowledged {
-    opacity: 0.82;
+.control-center-card.is-completed-unseen:hover {
+    border-color: rgba(96, 165, 250, 0.6);
+}
+
+.control-center-card.is-error {
+    border-color: rgba(248, 113, 113, 0.28);
 }
 
 .control-center-card-main {
@@ -2229,6 +2263,172 @@ pre {
     display: flex;
     flex-direction: column;
     gap: 8px;
+}
+
+.control-center-request-card {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    background: rgba(4, 7, 11, 0.82);
+    padding: 14px;
+}
+
+.control-center-request-card.is-compact {
+    padding: 12px;
+}
+
+.control-center-request-card.is-approval {
+    border-color: rgba(251, 146, 60, 0.38);
+}
+
+.control-center-request-card.is-question {
+    border-color: rgba(34, 211, 238, 0.32);
+}
+
+.control-center-request-card.is-continue {
+    border-color: rgba(96, 165, 250, 0.3);
+}
+
+.control-center-request-open {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: flex-start;
+    border: none;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    padding: 0;
+}
+
+.control-center-request-header {
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+}
+
+.control-center-request-card.is-approval .control-center-request-header {
+    color: #fb923c;
+}
+
+.control-center-request-card.is-question .control-center-request-header {
+    color: #22d3ee;
+}
+
+.control-center-request-card.is-continue .control-center-request-header {
+    color: #93c5fd;
+}
+
+.control-center-request-prompt {
+    font-size: 1.3rem;
+    line-height: 1.3;
+    font-weight: 600;
+    color: #f5f7fb;
+}
+
+.control-center-request-card.is-compact .control-center-request-prompt {
+    font-size: 1.08rem;
+}
+
+.control-center-request-preview {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    padding: 10px 12px;
+    color: rgba(245, 247, 251, 0.9);
+}
+
+.control-center-request-preview.is-command {
+    font-family: "SFMono-Regular", "Menlo", "Monaco", monospace;
+    font-size: 0.82rem;
+    overflow-x: auto;
+}
+
+.control-center-request-preview-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 0.78rem;
+    color: rgba(255, 255, 255, 0.66);
+}
+
+.control-center-request-preview-target {
+    font-family: "SFMono-Regular", "Menlo", "Monaco", monospace;
+    font-size: 0.74rem;
+}
+
+.control-center-request-diff-lines {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-family: "SFMono-Regular", "Menlo", "Monaco", monospace;
+    font-size: 0.8rem;
+}
+
+.control-center-request-diff-line.is-add {
+    color: #4ade80;
+}
+
+.control-center-request-diff-line.is-remove {
+    color: #fca5a5;
+}
+
+.control-center-request-preview-stats {
+    display: flex;
+    gap: 10px;
+    font-size: 0.78rem;
+    color: rgba(255, 255, 255, 0.62);
+}
+
+.control-center-request-preview-stats .is-add {
+    color: #4ade80;
+}
+
+.control-center-request-preview-stats .is-remove {
+    color: #fca5a5;
+}
+
+.control-center-request-actions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+}
+
+.control-center-request-action {
+    min-height: 48px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 0 14px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.06);
+    color: #f5f7fb;
+    font-size: 0.95rem;
+    font-weight: 600;
+}
+
+.control-center-request-action.is-primary {
+    background: rgba(245, 247, 251, 0.95);
+    color: #0f1720;
+    border-color: rgba(245, 247, 251, 0.92);
+}
+
+.control-center-request-action:disabled {
+    opacity: 0.65;
+}
+
+.control-center-request-action-hint {
+    font-size: 0.78rem;
+    opacity: 0.72;
 }
 
 .control-center-card-header {
@@ -2304,6 +2504,11 @@ pre {
 .control-center-pill.is-ready {
     color: #86efac;
     background: rgba(34, 197, 94, 0.18);
+}
+
+.control-center-pill.is-completed-unseen {
+    color: #bfdbfe;
+    background: rgba(59, 130, 246, 0.2);
 }
 
 .control-center-pill.is-error {

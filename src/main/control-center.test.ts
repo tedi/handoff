@@ -5,6 +5,7 @@ import path from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import {
+  buildNormalizedHookEvent,
   classifyLiveThreadStatusFromHook,
   createControlCenterService
 } from "./control-center"
@@ -28,6 +29,81 @@ describe("classifyLiveThreadStatusFromHook", () => {
         }
       })
     ).toBe("waiting_user")
+  })
+})
+
+describe("buildNormalizedHookEvent", () => {
+  it("builds a structured Claude permission request card from PermissionRequest hooks", () => {
+    const event = buildNormalizedHookEvent({
+      provider: "claude",
+      eventName: "PermissionRequest",
+      payload: {
+        session_id: "claude-live-1",
+        cwd: "/Users/tedikonda/topchallenger/apps/client",
+        tool_name: "Edit",
+        tool_input: {
+          file_path: "src/auth/middleware.ts",
+          old_string: "jwt.verify(token);",
+          new_string: "if (!token) throw new AuthError('missing');"
+        },
+        permission_suggestions: [
+          {
+            type: "addRules",
+            behavior: "allow",
+            destination: "session",
+            rules: [{ toolName: "Edit" }]
+          }
+        ]
+      }
+    })
+
+    expect(event.pendingRequest).toMatchObject({
+      type: "approval_request",
+      title: "Permission Request",
+      actionability: "inline",
+      actions: [
+        { label: "Deny" },
+        { label: "Allow" },
+        { label: "Allow for session" }
+      ]
+    })
+    expect(event.pendingRequest?.preview).toMatchObject({
+      type: "diff",
+      target: "src/auth/middleware.ts"
+    })
+  })
+
+  it("builds a structured Claude choice request card from AskUserQuestion", () => {
+    const event = buildNormalizedHookEvent({
+      provider: "claude",
+      eventName: "PreToolUse",
+      payload: {
+        session_id: "claude-live-2",
+        cwd: "/Users/tedikonda/topchallenger/apps/client",
+        tool_name: "AskUserQuestion",
+        tool_input: {
+          questions: [
+            {
+              header: "Deploy target",
+              question: "Which deployment target?",
+              options: [{ label: "Production" }, { label: "Staging" }],
+              multiSelect: false
+            }
+          ]
+        }
+      }
+    })
+
+    expect(event.pendingRequest).toMatchObject({
+      type: "choice_request",
+      title: "Deploy target",
+      prompt: "Which deployment target?",
+      actionability: "inline",
+      actions: [
+        { label: "Production", acceleratorHint: "1" },
+        { label: "Staging", acceleratorHint: "2" }
+      ]
+    })
   })
 })
 
@@ -150,7 +226,8 @@ describe("createControlCenterService", () => {
       assistantPreviewKind: "none",
       launchMode: "app",
       hostAppLabel: null,
-      hostAppExact: false
+      hostAppExact: false,
+      pendingRequest: null
     })
 
     let snapshot = await service.getSnapshot()
@@ -182,7 +259,8 @@ describe("createControlCenterService", () => {
       assistantPreviewKind: "message",
       launchMode: "app",
       hostAppLabel: null,
-      hostAppExact: false
+      hostAppExact: false,
+      pendingRequest: null
     })
 
     snapshot = await service.getSnapshot()

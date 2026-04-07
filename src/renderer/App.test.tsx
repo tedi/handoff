@@ -287,7 +287,37 @@ function createMockApi({
       getSnapshot: vi.fn().mockImplementation(async () => ({
         records: controlCenterState.map(record => ({ ...record }))
       })),
-      open: vi.fn().mockResolvedValue({ fallbackMessage: null }),
+      open: vi.fn().mockImplementation(async (threadId: string) => {
+        controlCenterState = controlCenterState.map(record =>
+          record.id === threadId
+            ? {
+                ...record,
+                acknowledgedAt: record.acknowledgedAt ?? "2026-03-14T02:00:10.000Z"
+              }
+            : record
+        )
+        return { fallbackMessage: null }
+      }),
+      performAction: vi.fn().mockImplementation(async (threadId: string, requestId: string) => {
+        controlCenterState = controlCenterState.map(record =>
+          record.id === threadId && record.pendingRequest?.requestId === requestId
+            ? {
+                ...record,
+                status:
+                  record.status === "waiting_permission" || record.status === "waiting_user"
+                    ? "running"
+                    : record.status,
+                pendingRequest: null
+              }
+            : record
+        )
+        return {
+          snapshot: {
+            records: controlCenterState.map(record => ({ ...record }))
+          },
+          fallbackMessage: null
+        }
+      }),
       dismiss: vi.fn().mockImplementation(async (threadId: string) => {
         controlCenterState = controlCenterState.filter(record => record.id !== threadId)
         return {
@@ -550,6 +580,7 @@ describe("Handoff App", () => {
           launchMode: "app",
           hostAppLabel: "Codex.app",
           hostAppExact: true,
+          pendingRequest: null,
           acknowledgedAt: null,
           dismissedAt: null
         }
@@ -687,6 +718,7 @@ describe("Handoff App", () => {
           launchMode: "cli",
           hostAppLabel: "Ghostty",
           hostAppExact: true,
+          pendingRequest: null,
           acknowledgedAt: null,
           dismissedAt: null
         }
@@ -734,6 +766,268 @@ describe("Handoff App", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /Close pop-out/i }))
     expect(api.app.closeControlCenterPopout).toHaveBeenCalledTimes(1)
+  })
+
+  it("renders inline permission cards in the main Control Center and submits actions without opening the row", async () => {
+    const { api } = createMockApi({
+      sessions: [],
+      controlCenterRecords: [
+        {
+          id: "claude:permission-1",
+          sourceSessionId: "permission-1",
+          provider: "claude",
+          threadName: "Review auth middleware",
+          projectPath: "/Users/tedikonda/topchallenger/apps/client",
+          transcriptPath: "/tmp/permission-1.jsonl",
+          status: "waiting_permission",
+          lastEventAt: "2026-03-14T02:00:00.000Z",
+          lastUserPreview: "Please update auth middleware",
+          lastAssistantPreview: "Claude needs permission.",
+          assistantPreviewKind: "message",
+          launchMode: "cli",
+          hostAppLabel: "Ghostty",
+          hostAppExact: true,
+          pendingRequest: {
+            requestId: "permission-1:PermissionRequest:Edit",
+            provider: "claude",
+            type: "approval_request",
+            title: "Permission Request",
+            prompt: "Edit src/auth/middleware.ts",
+            actionability: "inline",
+            preview: {
+              type: "diff",
+              title: "Edit",
+              target: "src/auth/middleware.ts",
+              addedLineCount: 1,
+              removedLineCount: 1,
+              lines: [
+                { kind: "remove", text: "jwt.verify(token);" },
+                { kind: "add", text: "if (!token) throw new AuthError('missing');" }
+              ]
+            },
+            actions: [
+              {
+                id: "deny",
+                label: "Deny",
+                kind: "reject",
+                acceleratorHint: null,
+                primary: false
+              },
+              {
+                id: "allow",
+                label: "Allow",
+                kind: "approve",
+                acceleratorHint: null,
+                primary: true
+              }
+            ]
+          },
+          acknowledgedAt: null,
+          dismissedAt: null
+        }
+      ],
+      transcriptById: {}
+    })
+
+    window.handoffApp = api
+    render(<App />)
+
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: /Control Center/i
+      })
+    )
+
+    expect(await screen.findByText("Permission Request")).toBeInTheDocument()
+    expect(screen.getByText("Edit src/auth/middleware.ts")).toBeInTheDocument()
+    expect(screen.getByText("src/auth/middleware.ts")).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole("button", { name: /^Allow$/i }))
+
+    await waitFor(() => {
+      expect(api.controlCenter.performAction).toHaveBeenCalledWith(
+        "claude:permission-1",
+        "permission-1:PermissionRequest:Edit",
+        "allow"
+      )
+      expect(api.controlCenter.open).not.toHaveBeenCalled()
+      expect(screen.queryByText("Permission Request")).not.toBeInTheDocument()
+    })
+  })
+
+  it("renders inline choice cards in the pop-out and submits the selected option", async () => {
+    const { api } = createMockApi({
+      sessions: [],
+      controlCenterRecords: [
+        {
+          id: "claude:choice-1",
+          sourceSessionId: "choice-1",
+          provider: "claude",
+          threadName: "Choose deploy target",
+          projectPath: "/Users/tedikonda/topchallenger/apps/client",
+          transcriptPath: "/tmp/choice-1.jsonl",
+          status: "waiting_user",
+          lastEventAt: "2026-03-14T02:00:00.000Z",
+          lastUserPreview: "Ship the deployment",
+          lastAssistantPreview: "Claude is waiting for a choice.",
+          assistantPreviewKind: "message",
+          launchMode: "cli",
+          hostAppLabel: "Ghostty",
+          hostAppExact: true,
+          pendingRequest: {
+            requestId: "choice-1:AskUserQuestion:deploy",
+            provider: "claude",
+            type: "choice_request",
+            title: "Deploy target",
+            prompt: "Which deployment target?",
+            actionability: "inline",
+            preview: null,
+            actions: [
+              {
+                id: "option-1",
+                label: "Production",
+                kind: "choice",
+                acceleratorHint: "1",
+                primary: true
+              },
+              {
+                id: "option-2",
+                label: "Staging",
+                kind: "choice",
+                acceleratorHint: "2",
+                primary: false
+              }
+            ]
+          },
+          acknowledgedAt: null,
+          dismissedAt: null
+        }
+      ],
+      transcriptById: {}
+    })
+
+    window.history.replaceState({}, "", "/?window=control-center-popout")
+    window.handoffApp = api
+
+    render(<App />)
+
+    expect(await screen.findByText("Claude asks")).toBeInTheDocument()
+    expect(screen.getByText("Which deployment target?")).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole("button", { name: /Production/i }))
+
+    await waitFor(() => {
+      expect(api.controlCenter.performAction).toHaveBeenCalledWith(
+        "claude:choice-1",
+        "choice-1:AskUserQuestion:deploy",
+        "option-1"
+      )
+      expect(screen.queryByText("Which deployment target?")).not.toBeInTheDocument()
+    })
+  })
+
+  it("highlights completed unseen rows in the main Control Center and clears the state after open", async () => {
+    const { api } = createMockApi({
+      sessions: [],
+      controlCenterRecords: [
+        {
+          id: "claude:done-1",
+          sourceSessionId: "done-1",
+          provider: "claude",
+          threadName: "Review live output",
+          projectPath: "/Users/tedikonda/topchallenger/apps/client",
+          transcriptPath: "/tmp/done-1.jsonl",
+          status: "completed",
+          lastEventAt: "2026-03-14T02:00:00.000Z",
+          lastUserPreview: "Can you verify the last fix?",
+          lastAssistantPreview: "I checked it. The fix is in place.",
+          assistantPreviewKind: "message",
+          launchMode: "cli",
+          hostAppLabel: "Ghostty",
+          hostAppExact: true,
+          pendingRequest: null,
+          acknowledgedAt: null,
+          dismissedAt: null
+        }
+      ],
+      transcriptById: {}
+    })
+
+    window.handoffApp = api
+    render(<App />)
+
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: /Control Center/i
+      })
+    )
+
+    const rowButton = await screen.findByRole("button", {
+      name: /client · Review live output/i
+    })
+    const rowCard = rowButton.closest(".control-center-card")
+
+    expect(rowCard).toHaveClass("is-completed-unseen")
+    expect(screen.getByText(/^Done$/)).toBeInTheDocument()
+
+    await userEvent.click(rowButton)
+
+    await waitFor(() => {
+      expect(api.controlCenter.open).toHaveBeenCalledWith("claude:done-1")
+      expect(rowCard).not.toHaveClass("is-completed-unseen")
+      expect(screen.queryByText(/^Done$/)).not.toBeInTheDocument()
+    })
+  })
+
+  it("highlights completed unseen rows in the pop-out and clears the border, pill, and dot after open", async () => {
+    const { api } = createMockApi({
+      sessions: [],
+      controlCenterRecords: [
+        {
+          id: "claude:done-2",
+          sourceSessionId: "done-2",
+          provider: "claude",
+          threadName: "Ship pop-out polish",
+          projectPath: "/Users/tedikonda/topchallenger/apps/client",
+          transcriptPath: "/tmp/done-2.jsonl",
+          status: "completed",
+          lastEventAt: "2026-03-14T02:00:00.000Z",
+          lastUserPreview: "Can you ship the pop-out changes?",
+          lastAssistantPreview: "The pop-out updates are ready.",
+          assistantPreviewKind: "message",
+          launchMode: "cli",
+          hostAppLabel: "Ghostty",
+          hostAppExact: true,
+          pendingRequest: null,
+          acknowledgedAt: null,
+          dismissedAt: null
+        }
+      ],
+      transcriptById: {}
+    })
+
+    window.history.replaceState({}, "", "/?window=control-center-popout")
+    window.handoffApp = api
+
+    render(<App />)
+
+    const rowButton = await screen.findByRole("button", {
+      name: /client · Ship pop-out polish/i
+    })
+    const dot = rowButton.querySelector(".control-center-popout-dot")
+
+    expect(rowButton).toHaveClass("is-completed-unseen")
+    expect(dot).toHaveClass("is-completed-unseen")
+    expect(screen.getByText(/^Done$/)).toBeInTheDocument()
+
+    await userEvent.click(rowButton)
+
+    await waitFor(() => {
+      expect(api.controlCenter.open).toHaveBeenCalledWith("claude:done-2")
+      expect(rowButton).not.toHaveClass("is-completed-unseen")
+      expect(dot).not.toHaveClass("is-completed-unseen")
+      expect(screen.queryByText(/^Done$/)).not.toBeInTheDocument()
+    })
   })
 
   it("renders a mixed-source sidebar and switches source-aware actions with the selected transcript", async () => {

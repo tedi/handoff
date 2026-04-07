@@ -27,6 +27,7 @@ export const IPC_CHANNELS = {
   controlCenter: {
     getSnapshot: "handoff:control-center:get-snapshot",
     open: "handoff:control-center:open",
+    performAction: "handoff:control-center:perform-action",
     dismiss: "handoff:control-center:dismiss",
     dismissCompleted: "handoff:control-center:dismiss-completed"
   },

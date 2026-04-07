@@ -36,6 +36,8 @@ import type {
   AssistantThoughtChainEntry,
   ConversationPatch,
   ConversationTranscript,
+  ControlCenterPendingRequest,
+  ControlCenterPendingRequestPreview,
   ControlCenterSnapshot,
   DateRangeFilterValue,
   HandoffApi,
@@ -1363,6 +1365,14 @@ function formatLiveThreadStatus(status: LiveThreadRecord["status"]) {
   return "Running"
 }
 
+function isCompletedUnseen(record: LiveThreadRecord) {
+  return record.status === "completed" && !record.acknowledgedAt
+}
+
+function isCompletedSeen(record: LiveThreadRecord) {
+  return record.status === "completed" && Boolean(record.acknowledgedAt)
+}
+
 function getLiveThreadStatusTone(status: LiveThreadRecord["status"]) {
   if (status === "waiting_permission") {
     return "warning"
@@ -1381,6 +1391,50 @@ function getLiveThreadStatusTone(status: LiveThreadRecord["status"]) {
   }
 
   return "running"
+}
+
+function getLiveThreadDisplayTone(record: LiveThreadRecord) {
+  if (isCompletedUnseen(record)) {
+    return "completed-unseen"
+  }
+
+  if (isCompletedSeen(record)) {
+    return null
+  }
+
+  return getLiveThreadStatusTone(record.status)
+}
+
+function getLiveThreadDisplayStatusLabel(record: LiveThreadRecord) {
+  if (isCompletedSeen(record)) {
+    return null
+  }
+
+  return formatLiveThreadStatus(record.status)
+}
+
+function getPendingRequestTone(request: ControlCenterPendingRequest) {
+  if (request.type === "approval_request") {
+    return "approval"
+  }
+
+  if (request.type === "continue_request") {
+    return "continue"
+  }
+
+  return "question"
+}
+
+function getPendingRequestHeader(request: ControlCenterPendingRequest) {
+  if (request.type === "approval_request") {
+    return "Permission Request"
+  }
+
+  return request.provider === "claude" ? "Claude asks" : "Codex asks"
+}
+
+function getPendingRequestOpenLabel(request: ControlCenterPendingRequest) {
+  return request.actionability === "open-only" ? "Open in app" : null
 }
 
 function getLiveThreadProjectLabel(projectPath: string | null) {
@@ -3225,26 +3279,159 @@ function ControlCenterSidebarPane({
   )
 }
 
+function ControlCenterPendingRequestPreview({
+  preview
+}: {
+  preview: ControlCenterPendingRequestPreview | null
+}) {
+  if (!preview) {
+    return null
+  }
+
+  if (preview.type === "command") {
+    return (
+      <div className="control-center-request-preview is-command">
+        <code>{preview.command}</code>
+      </div>
+    )
+  }
+
+  if (preview.type === "summary") {
+    return (
+      <div className="control-center-request-preview is-summary">
+        {preview.summary}
+      </div>
+    )
+  }
+
+  return (
+    <div className="control-center-request-preview is-diff">
+      <div className="control-center-request-preview-header">
+        <span>{preview.title ?? "Diff preview"}</span>
+        {preview.target ? (
+          <span className="control-center-request-preview-target">{preview.target}</span>
+        ) : null}
+      </div>
+      <div className="control-center-request-diff-lines">
+        {preview.lines.map((line, index) => (
+          <span
+            className={`control-center-request-diff-line is-${line.kind}`}
+            key={`${line.kind}:${index}:${line.text}`}
+          >
+            {line.kind === "add" ? "+" : line.kind === "remove" ? "-" : " "}
+            {line.text}
+          </span>
+        ))}
+      </div>
+      <div className="control-center-request-preview-stats">
+        {preview.addedLineCount > 0 ? (
+          <span className="is-add">+{preview.addedLineCount}</span>
+        ) : null}
+        {preview.removedLineCount > 0 ? (
+          <span className="is-remove">-{preview.removedLineCount}</span>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+function ControlCenterPendingRequestCard({
+  record,
+  compact = false,
+  onOpenThread,
+  onPerformAction,
+  pendingActionKey
+}: {
+  record: LiveThreadRecord
+  compact?: boolean
+  onOpenThread(threadId: string): void
+  onPerformAction(threadId: string, requestId: string, actionId: string): void
+  pendingActionKey: string | null
+}) {
+  const request = record.pendingRequest
+  if (!request) {
+    return null
+  }
+
+  const tone = getPendingRequestTone(request)
+  const openOnlyLabel = getPendingRequestOpenLabel(request)
+
+  return (
+    <div className={`control-center-request-card is-${tone}${compact ? " is-compact" : ""}`}>
+      <button
+        className="control-center-request-open"
+        onClick={() => onOpenThread(record.id)}
+        type="button"
+      >
+        <span className="control-center-request-header">{getPendingRequestHeader(request)}</span>
+        <span className="control-center-request-prompt">{request.prompt}</span>
+      </button>
+
+      <ControlCenterPendingRequestPreview preview={request.preview} />
+
+      <div className="control-center-request-actions">
+        {request.actionability === "open-only" || request.actions.length === 0 ? (
+          <button
+            className="control-center-request-action is-primary"
+            onClick={() => onOpenThread(record.id)}
+            type="button"
+          >
+            {openOnlyLabel ?? "Open in app"}
+          </button>
+        ) : (
+          request.actions.map(action => {
+            const actionKey = `${record.id}:${request.requestId}:${action.id}`
+            const isPending = pendingActionKey === actionKey
+
+            return (
+              <button
+                className={`control-center-request-action ${
+                  action.primary ? "is-primary" : ""
+                }`}
+                disabled={isPending}
+                key={action.id}
+                onClick={() => onPerformAction(record.id, request.requestId, action.id)}
+                type="button"
+              >
+                <span>{isPending ? "Working…" : action.label}</span>
+                {action.acceleratorHint ? (
+                  <span className="control-center-request-action-hint">
+                    {action.acceleratorHint}
+                  </span>
+                ) : null}
+              </button>
+            )
+          })
+        )}
+      </div>
+    </div>
+  )
+}
+
 function ControlCenterPane({
   snapshot,
   error,
   isBusy,
   isLoading,
   skillsStatus,
+  pendingActionKey,
   onDismiss,
   onDismissCompleted,
   onInstall,
-  onOpenThread
+  onOpenThread,
+  onPerformAction
 }: {
   snapshot: ControlCenterSnapshot | null
   error: string | null
   isBusy: boolean
   isLoading: boolean
   skillsStatus: HandoffSkillsStatus | null
+  pendingActionKey: string | null
   onDismiss(threadId: string): void
   onDismissCompleted(): void
   onInstall(target: SkillInstallTarget): void
   onOpenThread(threadId: string): void
+  onPerformAction(threadId: string, requestId: string, actionId: string): void
 }) {
   const records = snapshot?.records ?? []
   const completedCount = records.filter(record =>
@@ -3328,12 +3515,15 @@ function ControlCenterPane({
 
       <div className="control-center-list" role="list">
         {records.map(record => {
-          const statusTone = getLiveThreadStatusTone(record.status)
+          const displayTone = getLiveThreadDisplayTone(record)
+          const statusLabel = record.pendingRequest
+            ? null
+            : getLiveThreadDisplayStatusLabel(record)
 
           return (
             <article
-              className={`control-center-card is-${statusTone} ${
-                record.acknowledgedAt ? "is-acknowledged" : ""
+              className={`control-center-card${
+                displayTone ? ` is-${displayTone}` : ""
               }`}
               key={`${record.id}:${record.lastEventAt}`}
             >
@@ -3354,9 +3544,11 @@ function ControlCenterPane({
                     {record.hostAppExact && record.hostAppLabel ? (
                       <span className="control-center-pill">{record.hostAppLabel}</span>
                     ) : null}
-                    <span className={`control-center-pill is-${statusTone}`}>
-                      {formatLiveThreadStatus(record.status)}
-                    </span>
+                    {statusLabel ? (
+                      <span className={`control-center-pill is-${displayTone ?? "running"}`}>
+                        {statusLabel}
+                      </span>
+                    ) : null}
                     <span className="control-center-time">
                       {formatRelativeTimestamp(record.lastEventAt)}
                     </span>
@@ -3376,14 +3568,25 @@ function ControlCenterPane({
                 </div>
               </button>
 
-              <button
-                aria-label={`Dismiss ${record.threadName}`}
-                className="control-center-dismiss-button"
-                onClick={() => onDismiss(record.id)}
-                type="button"
-              >
-                Dismiss
-              </button>
+              {record.pendingRequest ? (
+                <ControlCenterPendingRequestCard
+                  onOpenThread={onOpenThread}
+                  onPerformAction={onPerformAction}
+                  pendingActionKey={pendingActionKey}
+                  record={record}
+                />
+              ) : null}
+
+              {!record.pendingRequest ? (
+                <button
+                  aria-label={`Dismiss ${record.threadName}`}
+                  className="control-center-dismiss-button"
+                  onClick={() => onDismiss(record.id)}
+                  type="button"
+                >
+                  Dismiss
+                </button>
+              ) : null}
             </article>
           )
         })}
@@ -3397,13 +3600,17 @@ function ControlCenterPopoutPane({
   error,
   isLoading,
   onClose,
-  onOpenThread
+  onOpenThread,
+  onPerformAction,
+  pendingActionKey
 }: {
   snapshot: ControlCenterSnapshot | null
   error: string | null
   isLoading: boolean
   onClose(): void
   onOpenThread(threadId: string): void
+  onPerformAction(threadId: string, requestId: string, actionId: string): void
+  pendingActionKey: string | null
 }) {
   const records = snapshot?.records ?? []
 
@@ -3433,19 +3640,55 @@ function ControlCenterPopoutPane({
       ) : (
         <div className="control-center-popout-list" role="list">
           {records.map(record => {
-            const statusTone = getLiveThreadStatusTone(record.status)
-            const shouldShowStatusPill = record.status !== "completed"
+            const displayTone = getLiveThreadDisplayTone(record)
+            const statusLabel = record.pendingRequest
+              ? null
+              : getLiveThreadDisplayStatusLabel(record)
+
+            if (record.pendingRequest) {
+              return (
+                <article
+                  className={`control-center-popout-inline-card${
+                    displayTone ? ` is-${displayTone}` : ""
+                  }`}
+                  key={`${record.id}:${record.lastEventAt}`}
+                >
+                  <div className="control-center-popout-inline-meta">
+                    <span className={`control-center-pill is-provider-${record.provider}`}>
+                      {formatProviderLabel(record.provider)}
+                    </span>
+                    {record.hostAppExact && record.hostAppLabel ? (
+                      <span className="control-center-pill">{record.hostAppLabel}</span>
+                    ) : null}
+                    <span className="control-center-time">
+                      {formatRelativeTimestamp(record.lastEventAt)}
+                    </span>
+                  </div>
+                  <ControlCenterPendingRequestCard
+                    compact
+                    onOpenThread={onOpenThread}
+                    onPerformAction={onPerformAction}
+                    pendingActionKey={pendingActionKey}
+                    record={record}
+                  />
+                </article>
+              )
+            }
 
             return (
               <button
-                className="control-center-popout-row"
+                className={`control-center-popout-row${
+                  displayTone ? ` is-${displayTone}` : ""
+                }`}
                 key={`${record.id}:${record.lastEventAt}`}
                 onClick={() => onOpenThread(record.id)}
                 type="button"
               >
                 <span
                   aria-hidden="true"
-                  className={`control-center-popout-dot is-${statusTone}`}
+                  className={`control-center-popout-dot${
+                    displayTone ? ` is-${displayTone}` : ""
+                  }`}
                 />
                 <span className="control-center-popout-row-title">
                   {getLiveThreadTitle(record)}
@@ -3457,9 +3700,9 @@ function ControlCenterPopoutPane({
                   {record.hostAppExact && record.hostAppLabel ? (
                     <span className="control-center-pill">{record.hostAppLabel}</span>
                   ) : null}
-                  {shouldShowStatusPill ? (
-                    <span className={`control-center-pill is-${statusTone}`}>
-                      {formatLiveThreadStatus(record.status)}
+                  {statusLabel ? (
+                    <span className={`control-center-pill is-${displayTone ?? "running"}`}>
+                      {statusLabel}
                     </span>
                   ) : null}
                   <span className="control-center-time">
@@ -5424,6 +5667,9 @@ export default function App() {
   )
   const [controlCenterError, setControlCenterError] = useState<string | null>(null)
   const [isLoadingControlCenter, setIsLoadingControlCenter] = useState(true)
+  const [pendingControlCenterActionKey, setPendingControlCenterActionKey] = useState<string | null>(
+    null
+  )
   const [isMutatingSkills, setIsMutatingSkills] = useState(false)
   const [agents, setAgents] = useState<AgentDefinition[]>([])
   const [isLoadingAgents, setIsLoadingAgents] = useState(true)
@@ -8173,6 +8419,41 @@ export default function App() {
     [loadControlCenterSnapshot, showToast]
   )
 
+  const handlePerformControlCenterAction = useCallback(
+    async (threadId: string, requestId: string, actionId: string) => {
+      const api = getHandoffApi()
+      const controlCenter = getControlCenterBridge(api)
+      if (!controlCenter) {
+        showToast("Preload bridge unavailable", "error")
+        return
+      }
+
+      const actionKey = `${threadId}:${requestId}:${actionId}`
+      setPendingControlCenterActionKey(actionKey)
+
+      try {
+        const result = await controlCenter.performAction(threadId, requestId, actionId)
+        setControlCenterSnapshot(result.snapshot)
+        setControlCenterError(null)
+        if (result.fallbackMessage) {
+          showToast(result.fallbackMessage)
+        } else {
+          showToast("Submitted request")
+        }
+      } catch (error) {
+        showToast(
+          error instanceof Error ? error.message : "Unable to submit the request action.",
+          "error"
+        )
+      } finally {
+        setPendingControlCenterActionKey(current =>
+          current === actionKey ? null : current
+        )
+      }
+    },
+    [showToast]
+  )
+
   const handleOpenControlCenterPopout = useCallback(async () => {
     const api = getHandoffApi()
     if (!api) {
@@ -8769,6 +9050,10 @@ export default function App() {
           onOpenThread={threadId => {
             void handleOpenControlCenterThread(threadId)
           }}
+          onPerformAction={(threadId, requestId, actionId) => {
+            void handlePerformControlCenterAction(threadId, requestId, actionId)
+          }}
+          pendingActionKey={pendingControlCenterActionKey}
           snapshot={controlCenterSnapshot}
         />
       </div>
@@ -9161,6 +9446,10 @@ export default function App() {
                   onOpenThread={threadId => {
                     void handleOpenControlCenterThread(threadId)
                   }}
+                  onPerformAction={(threadId, requestId, actionId) => {
+                    void handlePerformControlCenterAction(threadId, requestId, actionId)
+                  }}
+                  pendingActionKey={pendingControlCenterActionKey}
                   skillsStatus={skillsStatus}
                   snapshot={controlCenterSnapshot}
                 />

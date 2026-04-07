@@ -12,6 +12,12 @@ import chokidar from "chokidar"
 
 import { buildConversationTranscript } from "../shared/parser"
 import type {
+  ControlCenterActionResult,
+  ControlCenterPendingRequest,
+  ControlCenterPendingRequestAction,
+  ControlCenterPendingRequestActionability,
+  ControlCenterPendingRequestPreview,
+  ControlCenterPendingRequestPreviewLine,
   ControlCenterSnapshot,
   ControlCenterStateChangeEvent,
   LiveAssistantPreviewKind,
@@ -58,20 +64,75 @@ const LIVE_HOOK_COMMAND_MARKER = CONTROL_CENTER_HOOK_MODE_ARG
 type SupportedHookEvent = (typeof CONTROL_CENTER_CODEX_EVENTS)[number] | (typeof CONTROL_CENTER_CLAUDE_EVENTS)[number]
 type StoredHostAppId = TerminalAppId | "codex-app" | null
 
+type StoredRequestHookKind = "permission" | "pretool"
+
+type StoredRequestActionExecution =
+  | {
+      type: "hook-response"
+      hookKind: StoredRequestHookKind
+      permissionDecision?: "allow" | "deny" | "defer"
+      updatedInput?: Record<string, unknown> | null
+      updatedPermissions?: Array<Record<string, unknown>> | null
+    }
+  | {
+      type: "terminal-submit"
+      submissionText: string
+      submitWithEnter: boolean
+    }
+  | {
+      type: "open-only"
+    }
+
+interface StoredPendingRequestAction extends ControlCenterPendingRequestAction {
+  execution: StoredRequestActionExecution
+}
+
+interface StoredPendingRequest extends Omit<ControlCenterPendingRequest, "actions"> {
+  actions: StoredPendingRequestAction[]
+}
+
+type HookResolutionEnvelope =
+  | {
+      type: "hook-response"
+      hookSpecificOutput: Record<string, unknown>
+    }
+  | {
+      type: "delegate-to-provider"
+    }
+
+type HookSocketClientMessage = {
+  type: "event"
+  awaitResolution: boolean
+  event: NormalizedLiveHookEvent
+}
+
+type HookSocketServerMessage =
+  | {
+      type: "ack"
+    }
+  | {
+      type: "resolve"
+      resolution: HookResolutionEnvelope
+    }
+
 interface HookCommandConfig {
   command: string
   args: string[]
 }
 
-interface NormalizedLiveHookEvent extends LiveThreadEvent {
+type NormalizedLiveHookEvent = Omit<LiveThreadEvent, "pendingRequest"> & {
+  pendingRequest: StoredPendingRequest | null
   hostAppId: StoredHostAppId
 }
 
-interface StoredLiveThreadRecord extends LiveThreadRecord {
+type StoredLiveThreadRecord = Omit<LiveThreadRecord, "pendingRequest"> & {
+  pendingRequest: StoredPendingRequest | null
   hostAppId: StoredHostAppId
   lastSoundStatus: LiveThreadStatus | null
   lastSoundAt: string | null
 }
+
+export type ControlCenterStoredThreadRecord = StoredLiveThreadRecord
 
 interface PersistedControlCenterState {
   version: 1
@@ -87,6 +148,12 @@ export interface ControlCenterService {
   getSnapshot(): Promise<ControlCenterSnapshot>
   getRecord(id: string): Promise<StoredLiveThreadRecord | null>
   acknowledge(id: string): Promise<StoredLiveThreadRecord | null>
+  delegatePendingRequest(id: string): Promise<StoredLiveThreadRecord | null>
+  performAction(
+    threadId: string,
+    requestId: string,
+    actionId: string
+  ): Promise<ControlCenterActionResult>
   dismiss(id: string): Promise<ControlCenterSnapshot>
   dismissCompleted(): Promise<ControlCenterSnapshot>
   reconcileSessions(sessions: SessionListItem[]): Promise<void>
@@ -172,6 +239,77 @@ function sortLiveThreadRecords(records: LiveThreadRecord[]) {
   })
 }
 
+function serializePendingRequestPreviewLine(
+  line: ControlCenterPendingRequestPreviewLine
+): ControlCenterPendingRequestPreviewLine {
+  return {
+    kind: line.kind,
+    text: line.text
+  }
+}
+
+function serializePendingRequestPreview(
+  preview: ControlCenterPendingRequestPreview | null
+): ControlCenterPendingRequestPreview | null {
+  if (!preview) {
+    return null
+  }
+
+  if (preview.type === "diff") {
+    return {
+      type: "diff",
+      title: preview.title,
+      target: preview.target,
+      addedLineCount: preview.addedLineCount,
+      removedLineCount: preview.removedLineCount,
+      lines: preview.lines.map(serializePendingRequestPreviewLine)
+    }
+  }
+
+  if (preview.type === "command") {
+    return {
+      type: "command",
+      command: preview.command
+    }
+  }
+
+  return {
+    type: "summary",
+    summary: preview.summary
+  }
+}
+
+function serializePendingRequestAction(
+  action: StoredPendingRequestAction
+): ControlCenterPendingRequestAction {
+  return {
+    id: action.id,
+    label: action.label,
+    kind: action.kind,
+    acceleratorHint: action.acceleratorHint,
+    primary: action.primary
+  }
+}
+
+function serializePendingRequest(
+  pendingRequest: StoredPendingRequest | null
+): ControlCenterPendingRequest | null {
+  if (!pendingRequest) {
+    return null
+  }
+
+  return {
+    requestId: pendingRequest.requestId,
+    provider: pendingRequest.provider,
+    type: pendingRequest.type,
+    title: pendingRequest.title,
+    prompt: pendingRequest.prompt,
+    actions: pendingRequest.actions.map(serializePendingRequestAction),
+    preview: serializePendingRequestPreview(pendingRequest.preview),
+    actionability: pendingRequest.actionability
+  }
+}
+
 function serializeRecord(record: StoredLiveThreadRecord): LiveThreadRecord {
   return {
     id: record.id,
@@ -188,6 +326,7 @@ function serializeRecord(record: StoredLiveThreadRecord): LiveThreadRecord {
     launchMode: record.launchMode,
     hostAppLabel: record.hostAppLabel,
     hostAppExact: record.hostAppExact,
+    pendingRequest: serializePendingRequest(record.pendingRequest),
     acknowledgedAt: record.acknowledgedAt,
     dismissedAt: record.dismissedAt
   }
@@ -343,6 +482,15 @@ export function classifyLiveThreadStatusFromHook(params: {
 
   if (params.eventName === "PermissionRequest") {
     return "waiting_permission" as const
+  }
+
+  if (params.eventName === "PreToolUse") {
+    const toolName =
+      findFirstString(params.payload, [["tool_name"], ["payload", "tool_name"]]) ?? ""
+
+    if (toolName === "AskUserQuestion" || toolName === "ExitPlanMode") {
+      return "waiting_user" as const
+    }
   }
 
   if (params.eventName === "SessionEnd") {
@@ -511,7 +659,490 @@ function buildHookPreviews(params: {
   }
 }
 
-function buildNormalizedHookEvent(params: {
+function findFirstArray(
+  input: Record<string, unknown>,
+  candidatePaths: string[][]
+) {
+  for (const candidatePath of candidatePaths) {
+    const value = readPathValue(input, candidatePath)
+    if (Array.isArray(value)) {
+      return value
+    }
+  }
+
+  return null
+}
+
+function createPendingRequestId(
+  sourceSessionId: string,
+  eventName: string,
+  payload: Record<string, unknown>
+) {
+  const seed =
+    findFirstString(payload, [
+      ["tool_use_id"],
+      ["toolUseId"],
+      ["payload", "tool_use_id"],
+      ["payload", "toolUseId"],
+      ["request_id"],
+      ["requestId"],
+      ["tool_name"],
+      ["payload", "tool_name"]
+    ]) ??
+    findFirstString(payload, [["timestamp"], ["event_at"], ["payload", "timestamp"]]) ??
+    eventName
+
+  return `${sourceSessionId}:${eventName}:${seed}`
+}
+
+function buildDiffPreviewLines(params: {
+  removedText: string | null
+  addedText: string | null
+}) {
+  const lines: ControlCenterPendingRequestPreviewLine[] = []
+  const removedLines = (params.removedText ?? "")
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .slice(0, 3)
+  const addedLines = (params.addedText ?? "")
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .slice(0, 4)
+
+  for (const line of removedLines) {
+    lines.push({
+      kind: "remove",
+      text: line
+    })
+  }
+
+  for (const line of addedLines) {
+    lines.push({
+      kind: "add",
+      text: line
+    })
+  }
+
+  return lines
+}
+
+function buildToolPreviewFromPayload(
+  payload: Record<string, unknown>
+): ControlCenterPendingRequestPreview | null {
+  const toolName =
+    findFirstString(payload, [["tool_name"], ["payload", "tool_name"]]) ?? null
+  const toolInput = readPathValue(payload, ["tool_input"])
+  const normalizedToolInput = toolInput && typeof toolInput === "object"
+    ? (toolInput as Record<string, unknown>)
+    : null
+
+  if (!toolName || !normalizedToolInput) {
+    return null
+  }
+
+  if (toolName === "Bash") {
+    const command =
+      findFirstString(normalizedToolInput, [["command"], ["cmd"]]) ??
+      findFirstString(payload, [["command"], ["payload", "command"]])
+    if (command) {
+      return {
+        type: "command",
+        command
+      }
+    }
+  }
+
+  if (toolName === "Edit" || toolName === "Write") {
+    const target =
+      findFirstString(normalizedToolInput, [["file_path"], ["filePath"]]) ?? null
+    const removedText =
+      findFirstString(normalizedToolInput, [["old_string"], ["oldString"]]) ?? null
+    const addedText =
+      findFirstString(normalizedToolInput, [["new_string"], ["newString"], ["content"]]) ??
+      null
+    const lines = buildDiffPreviewLines({
+      removedText,
+      addedText
+    })
+
+    if (target || lines.length > 0) {
+      return {
+        type: "diff",
+        title: toolName,
+        target,
+        addedLineCount:
+          addedText?.split(/\r?\n/).filter(Boolean).length ?? 0,
+        removedLineCount:
+          removedText?.split(/\r?\n/).filter(Boolean).length ?? 0,
+        lines
+      }
+    }
+  }
+
+  const description =
+    findFirstString(normalizedToolInput, [["description"], ["summary"]]) ??
+    findFirstString(payload, [["message"], ["title"], ["reason"]])
+  if (description) {
+    return {
+      type: "summary",
+      summary: description
+    }
+  }
+
+  return null
+}
+
+function buildClaudePermissionSuggestionAction(
+  suggestion: Record<string, unknown>,
+  actionIndex: number
+): StoredPendingRequestAction | null {
+  const type = findFirstString(suggestion, [["type"]]) ?? ""
+  const behavior = findFirstString(suggestion, [["behavior"]]) ?? ""
+  const destination = findFirstString(suggestion, [["destination"]]) ?? ""
+
+  if (type !== "addRules" || behavior !== "allow" || !destination) {
+    return null
+  }
+
+  const label =
+    destination === "session"
+      ? "Allow for session"
+      : destination === "userSettings" || destination === "localSettings" || destination === "projectSettings"
+        ? "Allow always"
+        : "Allow"
+
+  return {
+    id: `suggestion-${actionIndex}`,
+    label,
+    kind: "approve",
+    acceleratorHint: null,
+    primary: false,
+    execution: {
+      type: "hook-response",
+      hookKind: "permission",
+      permissionDecision: "allow",
+      updatedPermissions: [suggestion]
+    }
+  }
+}
+
+function buildClaudePermissionRequest(params: {
+  provider: SessionProvider
+  sourceSessionId: string
+  payload: Record<string, unknown>
+}): StoredPendingRequest {
+  const toolName =
+    findFirstString(params.payload, [["tool_name"], ["payload", "tool_name"]]) ?? "Tool"
+  const toolInput = readPathValue(params.payload, ["tool_input"])
+  const normalizedToolInput = toolInput && typeof toolInput === "object"
+    ? (toolInput as Record<string, unknown>)
+    : null
+  const prompt =
+    findFirstString(params.payload, [["message"], ["title"], ["reason"]]) ??
+    (normalizedToolInput
+      ? findFirstString(normalizedToolInput, [["description"], ["command"], ["file_path"]])
+      : null) ??
+    `Claude needs permission to run ${toolName}.`
+  const suggestionEntries =
+    findFirstArray(params.payload, [["permission_suggestions"], ["payload", "permission_suggestions"]]) ??
+    []
+  const suggestionActions = suggestionEntries
+    .map((entry, index) =>
+      entry && typeof entry === "object"
+        ? buildClaudePermissionSuggestionAction(entry as Record<string, unknown>, index)
+        : null
+    )
+    .filter((action): action is StoredPendingRequestAction => action !== null)
+
+  const baseActions: StoredPendingRequestAction[] = [
+    {
+      id: "deny",
+      label: "Deny",
+      kind: "reject",
+      acceleratorHint: null,
+      primary: false,
+      execution: {
+        type: "hook-response",
+        hookKind: "permission",
+        permissionDecision: "deny"
+      }
+    },
+    {
+      id: "allow",
+      label: "Allow",
+      kind: "approve",
+      acceleratorHint: null,
+      primary: true,
+      execution: {
+        type: "hook-response",
+        hookKind: "permission",
+        permissionDecision: "allow"
+      }
+    }
+  ]
+
+  return {
+    requestId: createPendingRequestId(
+      params.sourceSessionId,
+      "PermissionRequest",
+      params.payload
+    ),
+    provider: params.provider,
+    type: "approval_request" as const,
+    title: "Permission Request",
+    prompt: normalizeTextPreview(prompt) ?? `Claude needs permission to continue.`,
+    actions: [...baseActions, ...suggestionActions],
+    preview: buildToolPreviewFromPayload(params.payload),
+    actionability: "inline" as ControlCenterPendingRequestActionability
+  }
+}
+
+function buildClaudeAskUserQuestionRequest(params: {
+  provider: SessionProvider
+  sourceSessionId: string
+  payload: Record<string, unknown>
+}): StoredPendingRequest | null {
+  const toolInput = readPathValue(params.payload, ["tool_input"])
+  const normalizedToolInput = toolInput && typeof toolInput === "object"
+    ? (toolInput as Record<string, unknown>)
+    : null
+  const questions = normalizedToolInput
+    ? findFirstArray(normalizedToolInput, [["questions"]])
+    : null
+
+  if (!normalizedToolInput || !questions || questions.length !== 1) {
+    return null
+  }
+
+  const questionEntry = questions[0]
+  if (!questionEntry || typeof questionEntry !== "object") {
+    return null
+  }
+
+  const normalizedQuestion = questionEntry as Record<string, unknown>
+  const questionText = findFirstString(normalizedQuestion, [["question"]]) ?? null
+  const header = findFirstString(normalizedQuestion, [["header"]]) ?? null
+  const multiSelect = Boolean(readPathValue(normalizedQuestion, ["multiSelect"]))
+  const options = findFirstArray(normalizedQuestion, [["options"]]) ?? []
+
+  if (!questionText || multiSelect || options.length === 0) {
+    return {
+      requestId: createPendingRequestId(params.sourceSessionId, "AskUserQuestion", params.payload),
+      provider: params.provider,
+      type: "choice_request" as const,
+      title: header ?? "Claude asks",
+      prompt: normalizeTextPreview(questionText ?? "Claude is waiting for input.") ?? "Claude is waiting for input.",
+      actions: [],
+      preview: null,
+      actionability: "open-only" as ControlCenterPendingRequestActionability
+    }
+  }
+
+  const normalizedActions: StoredPendingRequestAction[] = []
+  for (const [index, option] of options.entries()) {
+      if (!option || typeof option !== "object") {
+        continue
+      }
+
+      const normalizedOption = option as Record<string, unknown>
+      const label = findFirstString(normalizedOption, [["label"], ["value"], ["title"]])
+      if (!label) {
+        continue
+      }
+
+      normalizedActions.push({
+        id: `option-${index + 1}`,
+        label,
+        kind: "choice" as const,
+        acceleratorHint: `${index + 1}`,
+        primary: index === 0,
+        execution: {
+          type: "hook-response" as const,
+          hookKind: "pretool" as const,
+          permissionDecision: "allow" as const,
+          updatedInput: {
+            ...normalizedToolInput,
+            answers: {
+              [questionText]: label
+            }
+          }
+        }
+      })
+  }
+
+  return {
+    requestId: createPendingRequestId(params.sourceSessionId, "AskUserQuestion", params.payload),
+    provider: params.provider,
+    type: "choice_request" as const,
+    title: header ?? "Claude asks",
+    prompt: normalizeTextPreview(questionText) ?? questionText,
+    actions: normalizedActions,
+    preview: null,
+    actionability:
+      normalizedActions.length > 0 ? ("inline" as const) : ("open-only" as const)
+  }
+}
+
+function buildClaudeExitPlanModeRequest(params: {
+  provider: SessionProvider
+  sourceSessionId: string
+  payload: Record<string, unknown>
+}): StoredPendingRequest {
+  const toolInput = readPathValue(params.payload, ["tool_input"])
+  const normalizedToolInput = toolInput && typeof toolInput === "object"
+    ? (toolInput as Record<string, unknown>)
+    : null
+  const planText =
+    normalizedToolInput
+      ? findFirstString(normalizedToolInput, [["plan"]])
+      : null
+
+  const actions: StoredPendingRequestAction[] = [
+    {
+      id: "continue",
+      label: "Continue",
+      kind: "continue",
+      acceleratorHint: null,
+      primary: true,
+      execution: {
+        type: "hook-response",
+        hookKind: "pretool",
+        permissionDecision: "allow",
+        updatedInput: normalizedToolInput ?? {}
+      }
+    }
+  ]
+
+  return {
+    requestId: createPendingRequestId(params.sourceSessionId, "ExitPlanMode", params.payload),
+    provider: params.provider,
+    type: "continue_request" as const,
+    title: "Claude asks",
+    prompt: "Move forward with this plan?",
+    actions,
+    preview: planText
+      ? {
+          type: "summary",
+          summary: normalizeTextPreview(planText) ?? planText
+        }
+      : null,
+    actionability: "inline" as const
+  }
+}
+
+function buildGenericChoiceRequest(params: {
+  provider: SessionProvider
+  sourceSessionId: string
+  eventName: string
+  payload: Record<string, unknown>
+}): StoredPendingRequest | null {
+  const prompt =
+    findFirstString(params.payload, [
+      ["question"],
+      ["prompt"],
+      ["message"],
+      ["title"],
+      ["payload", "question"],
+      ["payload", "prompt"],
+      ["payload", "message"],
+      ["payload", "title"]
+    ]) ?? null
+  const options =
+    findFirstArray(params.payload, [["options"], ["choices"], ["actions"], ["payload", "options"]]) ??
+    []
+
+  if (!prompt || options.length === 0) {
+    return null
+  }
+
+  const actions: StoredPendingRequestAction[] = []
+  for (const [index, option] of options.entries()) {
+      if (typeof option === "string") {
+        actions.push({
+          id: `option-${index + 1}`,
+          label: option,
+          kind: "choice" as const,
+          acceleratorHint: `${index + 1}`,
+          primary: index === 0,
+          execution: {
+            type: "open-only" as const
+          }
+        })
+        continue
+      }
+
+      if (!option || typeof option !== "object") {
+        continue
+      }
+
+      const normalizedOption = option as Record<string, unknown>
+      const label =
+        findFirstString(normalizedOption, [["label"], ["title"], ["value"], ["name"]]) ??
+        null
+      if (!label) {
+        continue
+      }
+
+      actions.push({
+        id: `option-${index + 1}`,
+        label,
+        kind: "choice" as const,
+        acceleratorHint: `${index + 1}`,
+        primary: index === 0,
+        execution: {
+          type: "open-only" as const
+        }
+      })
+  }
+
+  return {
+    requestId: createPendingRequestId(params.sourceSessionId, params.eventName, params.payload),
+    provider: params.provider,
+    type: "choice_request" as const,
+    title: params.provider === "codex" ? "Codex asks" : "Claude asks",
+    prompt: normalizeTextPreview(prompt) ?? prompt,
+    actions,
+    preview: null,
+    actionability: "open-only" as const
+  }
+}
+
+function buildPendingRequestFromHook(params: {
+  provider: SessionProvider
+  sourceSessionId: string
+  eventName: string
+  payload: Record<string, unknown>
+}): StoredPendingRequest | null {
+  if (params.provider === "claude" && params.eventName === "PermissionRequest") {
+    return buildClaudePermissionRequest(params)
+  }
+
+  if (params.provider === "claude" && params.eventName === "PreToolUse") {
+    const toolName =
+      findFirstString(params.payload, [["tool_name"], ["payload", "tool_name"]]) ?? ""
+    if (toolName === "AskUserQuestion") {
+      return buildClaudeAskUserQuestionRequest(params)
+    }
+    if (toolName === "ExitPlanMode") {
+      return buildClaudeExitPlanModeRequest(params)
+    }
+  }
+
+  if (
+    params.eventName === "Notification" &&
+    findFirstString(params.payload, [["notification_type"], ["payload", "notification_type"]]) === "elicitation_dialog"
+  ) {
+    return buildGenericChoiceRequest(params)
+  }
+
+  if (params.eventName === "Notification" || params.eventName === "Stop") {
+    return buildGenericChoiceRequest(params)
+  }
+
+  return null
+}
+
+export function buildNormalizedHookEvent(params: {
   provider: SessionProvider
   eventName: string
   payload: Record<string, unknown>
@@ -545,6 +1176,12 @@ function buildNormalizedHookEvent(params: {
       ["payload", "timestamp"],
       ["payload", "event_at"]
     ]) ?? new Date().toISOString()
+  const pendingRequest = buildPendingRequestFromHook({
+    provider: params.provider,
+    sourceSessionId,
+    eventName: params.eventName,
+    payload: params.payload
+  })
 
   return {
     id: createLiveThreadId(params.provider, sourceSessionId),
@@ -597,6 +1234,7 @@ function buildNormalizedHookEvent(params: {
     launchMode: launchContext.launchMode,
     hostAppLabel: launchContext.hostAppLabel,
     hostAppExact: launchContext.hostAppExact,
+    pendingRequest,
     hostAppId: launchContext.hostAppId
   }
 }
@@ -738,6 +1376,74 @@ async function readTranscriptPreview(record: StoredLiveThreadRecord) {
   }
 }
 
+function shouldClearPendingRequest(event: NormalizedLiveHookEvent) {
+  return (
+    event.eventName === "UserPromptSubmit" ||
+    (event.status !== "waiting_permission" && event.status !== "waiting_user")
+  )
+}
+
+function mergePendingRequest(params: {
+  existing: StoredLiveThreadRecord | null
+  event: NormalizedLiveHookEvent
+}) {
+  if (params.event.pendingRequest) {
+    return params.event.pendingRequest
+  }
+
+  if (shouldClearPendingRequest(params.event)) {
+    return null
+  }
+
+  return params.existing?.pendingRequest ?? null
+}
+
+function createHookResolutionEnvelope(
+  action: StoredPendingRequestAction
+): HookResolutionEnvelope {
+  if (action.execution.type !== "hook-response") {
+    return {
+      type: "delegate-to-provider"
+    }
+  }
+
+  const baseOutput =
+    action.execution.hookKind === "permission"
+      ? {
+          hookEventName: "PermissionRequest",
+          permissionDecision: action.execution.permissionDecision
+        }
+      : {
+          hookEventName: "PreToolUse",
+          permissionDecision: action.execution.permissionDecision
+        }
+
+  const hookSpecificOutput: Record<string, unknown> = {
+    ...baseOutput
+  }
+
+  if (action.execution.updatedInput) {
+    hookSpecificOutput.updatedInput = action.execution.updatedInput
+  }
+
+  if (action.execution.updatedPermissions) {
+    hookSpecificOutput.updatedPermissions = action.execution.updatedPermissions
+  }
+
+  return {
+    type: "hook-response",
+    hookSpecificOutput
+  }
+}
+
+function shouldAwaitHookResolution(event: NormalizedLiveHookEvent) {
+  return (
+    event.provider === "claude" &&
+    event.pendingRequest?.actionability === "inline" &&
+    (event.eventName === "PermissionRequest" || event.eventName === "PreToolUse")
+  )
+}
+
 function shouldPlaySound(previous: StoredLiveThreadRecord | null, next: StoredLiveThreadRecord) {
   const soundableStatuses = new Set<LiveThreadStatus>([
     "waiting_user",
@@ -846,17 +1552,32 @@ export async function runControlCenterHookBridge(params: {
     payload
   })
   const paths = getControlCenterStatePaths(params.dataDir)
+  const awaitResolution = shouldAwaitHookResolution(normalizedEvent)
 
   await fsPromises.mkdir(paths.rootDir, { recursive: true })
 
   await new Promise<void>(resolve => {
     const socket = net.createConnection(paths.socketPath, () => {
-      socket.write(`${JSON.stringify(normalizedEvent)}\n`)
-      socket.end()
-      resolve()
+      const message: HookSocketClientMessage = {
+        type: "event",
+        awaitResolution,
+        event: normalizedEvent
+      }
+      socket.write(`${JSON.stringify(message)}\n`)
+
+      if (!awaitResolution) {
+        socket.end()
+        resolve()
+      }
     })
 
+    let buffer = ""
     socket.on("error", async () => {
+      if (awaitResolution) {
+        resolve()
+        return
+      }
+
       await fsPromises.appendFile(
         paths.spoolPath,
         `${JSON.stringify(normalizedEvent)}\n`,
@@ -864,6 +1585,43 @@ export async function runControlCenterHookBridge(params: {
       )
       resolve()
     })
+
+    if (awaitResolution) {
+      socket.setEncoding("utf8")
+      socket.on("data", chunk => {
+        buffer += chunk
+        const lines = buffer.split("\n")
+        buffer = lines.pop() ?? ""
+
+        for (const line of lines) {
+          const trimmed = line.trim()
+          if (!trimmed) {
+            continue
+          }
+
+          try {
+            const parsed = JSON.parse(trimmed) as HookSocketServerMessage
+            if (parsed.type !== "resolve") {
+              continue
+            }
+
+            if (parsed.resolution.type === "hook-response") {
+              process.stdout.write(
+                `${JSON.stringify({
+                  hookSpecificOutput: parsed.resolution.hookSpecificOutput
+                })}\n`
+              )
+            }
+
+            socket.end()
+            resolve()
+            return
+          } catch {
+            continue
+          }
+        }
+      })
+    }
   })
 }
 
@@ -884,6 +1642,13 @@ export function createControlCenterService(
   let spoolWatcher: ReturnType<typeof chokidar.watch> | null = null
   let transcriptWatcher: ReturnType<typeof chokidar.watch> | null = null
   let lastGlobalSoundAt = 0
+  const pendingHookResolutions = new Map<
+    string,
+    {
+      resolve(message: HookSocketServerMessage): void
+      threadId: string
+    }
+  >()
 
   async function persistRecords() {
     await fsPromises.mkdir(paths.rootDir, { recursive: true })
@@ -904,6 +1669,24 @@ export function createControlCenterService(
       reason: "records-changed",
       threadId
     } satisfies ControlCenterStateChangeEvent)
+  }
+
+  function clearPendingHookResolution(requestId: string) {
+    pendingHookResolutions.delete(requestId)
+  }
+
+  function resolvePendingHookRequest(
+    requestId: string,
+    message: HookSocketServerMessage
+  ) {
+    const pending = pendingHookResolutions.get(requestId)
+    if (!pending) {
+      return false
+    }
+
+    clearPendingHookResolution(requestId)
+    pending.resolve(message)
+    return true
   }
 
   async function maybePlaySound(previous: StoredLiveThreadRecord | null, next: StoredLiveThreadRecord) {
@@ -928,6 +1711,16 @@ export function createControlCenterService(
     } catch {
       return next
     }
+  }
+
+  async function buildSnapshot() {
+    return {
+      records: sortLiveThreadRecords(
+        [...records.values()]
+          .filter(record => !record.dismissedAt)
+          .map(serializeRecord)
+      )
+    } satisfies ControlCenterSnapshot
   }
 
   async function refreshTranscriptWatcher() {
@@ -1057,6 +1850,18 @@ export function createControlCenterService(
   async function ingestNormalizedHookEvent(event: NormalizedLiveHookEvent) {
     const existing = records.get(event.id) ?? null
     const session = sessionInfoById.get(event.id) ?? null
+    const nextPendingRequest = mergePendingRequest({
+      existing,
+      event
+    })
+
+    if (
+      existing?.pendingRequest?.requestId &&
+      existing.pendingRequest.requestId !== nextPendingRequest?.requestId
+    ) {
+      clearPendingHookResolution(existing.pendingRequest.requestId)
+    }
+
     const nextRecordBase: StoredLiveThreadRecord = {
       id: event.id,
       provider: event.provider,
@@ -1086,6 +1891,7 @@ export function createControlCenterService(
       hostAppId: event.hostAppId,
       hostAppLabel: event.hostAppLabel,
       hostAppExact: event.hostAppExact,
+      pendingRequest: nextPendingRequest,
       acknowledgedAt: null,
       dismissedAt: null,
       lastSoundStatus: existing?.lastSoundStatus ?? null,
@@ -1105,13 +1911,7 @@ export function createControlCenterService(
 
   return {
     async getSnapshot() {
-      return {
-        records: sortLiveThreadRecords(
-          [...records.values()]
-            .filter(record => !record.dismissedAt)
-            .map(serializeRecord)
-        )
-      }
+      return buildSnapshot()
     },
 
     async getRecord(id) {
@@ -1135,10 +1935,101 @@ export function createControlCenterService(
       return nextRecord
     },
 
+    async delegatePendingRequest(id) {
+      const currentRecord = records.get(id)
+      if (!currentRecord?.pendingRequest) {
+        return currentRecord ?? null
+      }
+
+      resolvePendingHookRequest(currentRecord.pendingRequest.requestId, {
+        type: "resolve",
+        resolution: {
+          type: "delegate-to-provider"
+        }
+      })
+
+      const nextRecord: StoredLiveThreadRecord = {
+        ...currentRecord,
+        pendingRequest: {
+          ...currentRecord.pendingRequest,
+          actionability: "open-only"
+        }
+      }
+
+      records.set(id, nextRecord)
+      await persistRecords()
+      emitStateChanged(id)
+      return nextRecord
+    },
+
+    async performAction(threadId, requestId, actionId) {
+      const currentRecord = records.get(threadId)
+      if (!currentRecord || !currentRecord.pendingRequest) {
+        throw new Error("No pending request is available for this thread.")
+      }
+
+      if (currentRecord.pendingRequest.requestId !== requestId) {
+        throw new Error("This request is no longer current.")
+      }
+
+      const action = currentRecord.pendingRequest.actions.find(
+        candidate => candidate.id === actionId
+      )
+      if (!action) {
+        throw new Error("This action is no longer available.")
+      }
+
+      if (currentRecord.pendingRequest.actionability === "open-only") {
+        return {
+          snapshot: await buildSnapshot(),
+          fallbackMessage: "Open this request in the source app to respond."
+        }
+      }
+
+      if (action.execution.type !== "hook-response") {
+        return {
+          snapshot: await buildSnapshot(),
+          fallbackMessage: "Open this request in the source app to respond."
+        }
+      }
+
+      const resolved = resolvePendingHookRequest(requestId, {
+        type: "resolve",
+        resolution: createHookResolutionEnvelope(action)
+      })
+
+      if (!resolved) {
+        return {
+          snapshot: await buildSnapshot(),
+          fallbackMessage: "This request has already moved back to the source app."
+        }
+      }
+
+      const nextRecord: StoredLiveThreadRecord = {
+        ...currentRecord,
+        status:
+          currentRecord.status === "waiting_permission" ||
+          currentRecord.status === "waiting_user"
+            ? "running"
+            : currentRecord.status,
+        pendingRequest: null,
+        lastEventAt: new Date().toISOString()
+      }
+
+      records.set(threadId, nextRecord)
+      await persistRecords()
+      emitStateChanged(threadId)
+
+      return {
+        snapshot: await buildSnapshot(),
+        fallbackMessage: null
+      }
+    },
+
     async dismiss(id) {
       const currentRecord = records.get(id)
       if (!currentRecord) {
-        return this.getSnapshot()
+        return buildSnapshot()
       }
 
       records.set(id, {
@@ -1147,7 +2038,7 @@ export function createControlCenterService(
       })
       await persistRecords()
       emitStateChanged(id)
-      return this.getSnapshot()
+      return buildSnapshot()
     },
 
     async dismissCompleted() {
@@ -1166,7 +2057,7 @@ export function createControlCenterService(
 
       await persistRecords()
       emitStateChanged(null)
-      return this.getSnapshot()
+      return buildSnapshot()
     },
 
     async reconcileSessions(sessions) {
@@ -1184,6 +2075,7 @@ export function createControlCenterService(
     async ingestHookEvent(event) {
       await ingestNormalizedHookEvent({
         ...event,
+        pendingRequest: null,
         hostAppId: null
       })
     },
@@ -1213,7 +2105,13 @@ export function createControlCenterService(
         await fsPromises.rm(paths.socketPath, { force: true })
         socketServer = net.createServer(socket => {
           let buffer = ""
+          const connectionRequestIds = new Set<string>()
           socket.setEncoding("utf8")
+          socket.on("close", () => {
+            for (const requestId of connectionRequestIds) {
+              pendingHookResolutions.delete(requestId)
+            }
+          })
           socket.on("data", chunk => {
             buffer += chunk
             const lines = buffer.split("\n")
@@ -1226,8 +2124,36 @@ export function createControlCenterService(
               }
 
               try {
-                const parsed = JSON.parse(trimmed) as NormalizedLiveHookEvent
-                void ingestNormalizedHookEvent(parsed)
+                const parsed = JSON.parse(trimmed) as HookSocketClientMessage | NormalizedLiveHookEvent
+                if (
+                  parsed &&
+                  typeof parsed === "object" &&
+                  "type" in parsed &&
+                  parsed.type === "event"
+                ) {
+                  const message = parsed as HookSocketClientMessage
+                  if (message.awaitResolution && message.event.pendingRequest) {
+                    connectionRequestIds.add(message.event.pendingRequest.requestId)
+                    pendingHookResolutions.set(message.event.pendingRequest.requestId, {
+                      threadId: message.event.id,
+                      resolve(serverMessage) {
+                        socket.write(`${JSON.stringify(serverMessage)}\n`)
+                        socket.end()
+                      }
+                    })
+                  }
+
+                  void ingestNormalizedHookEvent(message.event)
+                  if (!message.awaitResolution) {
+                    const ack: HookSocketServerMessage = {
+                      type: "ack"
+                    }
+                    socket.write(`${JSON.stringify(ack)}\n`)
+                  }
+                  continue
+                }
+
+                void ingestNormalizedHookEvent(parsed as NormalizedLiveHookEvent)
               } catch {
                 continue
               }

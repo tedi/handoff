@@ -194,6 +194,15 @@ export function createHandoffBridge(
         ) as Promise<Awaited<ReturnType<HandoffApi["controlCenter"]["open"]>>>
       },
 
+      performAction(threadId: string, requestId: string, actionId: string) {
+        return ipcRenderer.invoke(
+          IPC_CHANNELS.controlCenter.performAction,
+          threadId,
+          requestId,
+          actionId
+        ) as Promise<Awaited<ReturnType<HandoffApi["controlCenter"]["performAction"]>>>
+      },
+
       dismiss(threadId: string) {
         return ipcRenderer.invoke(
           IPC_CHANNELS.controlCenter.dismiss,

@@ -319,6 +319,13 @@ async function openControlCenterThread(params: {
 
   let result: OpenActionResult
 
+  if (
+    record.provider === "claude" &&
+    record.pendingRequest?.actionability === "inline"
+  ) {
+    await params.service.controlCenter.delegatePendingRequest(params.threadId)
+  }
+
   if (record.launchMode === "cli" && exactTerminalId === "ghostty") {
     const focusedExistingThread = await focusExistingGhosttyThread({
       sessionId: record.sourceSessionId,
@@ -354,6 +361,28 @@ async function openControlCenterThread(params: {
   }
 
   await params.service.controlCenter.acknowledge(params.threadId)
+  return result
+}
+
+async function performControlCenterAction(params: {
+  service: HandoffService
+  threadId: string
+  requestId: string
+  actionId: string
+}) {
+  const result = await params.service.controlCenter.performAction(
+    params.threadId,
+    params.requestId,
+    params.actionId
+  )
+
+  if (result.fallbackMessage) {
+    await openControlCenterThread({
+      service: params.service,
+      threadId: params.threadId
+    })
+  }
+
   return result
 }
 
@@ -541,6 +570,16 @@ export function registerIpcHandlers(
       service,
       threadId
     })
+  )
+  ipcMain.handle(
+    IPC_CHANNELS.controlCenter.performAction,
+    (_event, threadId: string, requestId: string, actionId: string) =>
+      performControlCenterAction({
+        service,
+        threadId,
+        requestId,
+        actionId
+      })
   )
   ipcMain.handle(IPC_CHANNELS.bridge.getStatus, () => service.bridge.getStatus())
   ipcMain.handle(IPC_CHANNELS.bridge.getConfigSnippets, () =>
@@ -751,6 +790,7 @@ export function registerIpcHandlers(
     ipcMain.removeHandler(IPC_CHANNELS.controlCenter.dismiss)
     ipcMain.removeHandler(IPC_CHANNELS.controlCenter.dismissCompleted)
     ipcMain.removeHandler(IPC_CHANNELS.controlCenter.open)
+    ipcMain.removeHandler(IPC_CHANNELS.controlCenter.performAction)
     ipcMain.removeHandler(IPC_CHANNELS.selector.app.getStateInfo)
     ipcMain.removeHandler(IPC_CHANNELS.selector.app.openPath)
     ipcMain.removeHandler(IPC_CHANNELS.selector.app.refresh)

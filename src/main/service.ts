@@ -15,6 +15,7 @@ import type {
   AgentUpdatePatch,
   AppStateInfo,
   AskAgentResult,
+  ControlCenterActionResult,
   ControlCenterSnapshot,
   ControlCenterStateChangeEvent,
   ConversationTranscript,
@@ -35,6 +36,7 @@ import type {
 } from "../shared/contracts"
 import { createAgentBridgeService, type AgentBridgeService } from "./bridge"
 import {
+  type ControlCenterStoredThreadRecord,
   createControlCenterService,
   type ControlCenterService
 } from "./control-center"
@@ -102,8 +104,14 @@ export interface HandoffService {
   }
   controlCenter: {
     getSnapshot(): Promise<ControlCenterSnapshot>
-    getRecord(id: string): Promise<LiveThreadRecord | null>
+    getRecord(id: string): Promise<ControlCenterStoredThreadRecord | null>
     acknowledge(id: string): Promise<LiveThreadRecord | null>
+    delegatePendingRequest(id: string): Promise<LiveThreadRecord | null>
+    performAction(
+      threadId: string,
+      requestId: string,
+      actionId: string
+    ): Promise<ControlCenterActionResult>
     dismiss(id: string): Promise<ControlCenterSnapshot>
     dismissCompleted(): Promise<ControlCenterSnapshot>
   }
@@ -198,6 +206,7 @@ function serializeLiveThreadRecord(record: LiveThreadRecord): LiveThreadRecord {
     launchMode: record.launchMode,
     hostAppLabel: record.hostAppLabel,
     hostAppExact: record.hostAppExact,
+    pendingRequest: record.pendingRequest,
     acknowledgedAt: record.acknowledgedAt,
     dismissedAt: record.dismissedAt
   }
@@ -1082,13 +1091,21 @@ export function createHandoffService(
       },
 
       async getRecord(id) {
-        const record = await controlCenterService.getRecord(id)
-        return record ? serializeLiveThreadRecord(record) : null
+        return controlCenterService.getRecord(id)
       },
 
       async acknowledge(id) {
         const record = await controlCenterService.acknowledge(id)
         return record ? serializeLiveThreadRecord(record) : null
+      },
+
+       async delegatePendingRequest(id) {
+        const record = await controlCenterService.delegatePendingRequest(id)
+        return record ? serializeLiveThreadRecord(record) : null
+      },
+
+      async performAction(threadId, requestId, actionId) {
+        return controlCenterService.performAction(threadId, requestId, actionId)
       },
 
       async dismiss(id) {

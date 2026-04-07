@@ -268,12 +268,24 @@ function buildCodexLiveHookEntry(command: string) {
   }
 }
 
-function buildClaudeLiveHookEntry(command: string, matcher?: string) {
+function getClaudeLiveHookTimeout(eventName: (typeof CONTROL_CENTER_CLAUDE_EVENTS)[number]) {
+  if (eventName === "PermissionRequest" || eventName === "PreToolUse") {
+    return 3600
+  }
+
+  return 10
+}
+
+function buildClaudeLiveHookEntry(
+  command: string,
+  eventName: (typeof CONTROL_CENTER_CLAUDE_EVENTS)[number],
+  matcher?: string
+) {
   return {
     hooks: [
       {
         command,
-        timeout: 10,
+        timeout: getClaudeLiveHookTimeout(eventName),
         type: "command"
       }
     ],
@@ -388,7 +400,7 @@ function mergeClaudeHooksConfig(
 
     nextHooks[eventName] = [
       ...filterManagedHookCommands(existingEntries),
-      buildClaudeLiveHookEntry(command, getClaudeHookMatcher(eventName))
+      buildClaudeLiveHookEntry(command, eventName, getClaudeHookMatcher(eventName))
     ]
   }
 

@@ -29,6 +29,7 @@ const IPC_CHANNELS = {
   controlCenter: {
     getSnapshot: "handoff:control-center:get-snapshot",
     open: "handoff:control-center:open",
+    performAction: "handoff:control-center:perform-action",
     dismiss: "handoff:control-center:dismiss",
     dismissCompleted: "handoff:control-center:dismiss-completed"
   },
@@ -184,6 +185,14 @@ contextBridge.exposeInMainWorld("handoffApp", {
     },
     open(threadId) {
       return ipcRenderer.invoke(IPC_CHANNELS.controlCenter.open, threadId)
+    },
+    performAction(threadId, requestId, actionId) {
+      return ipcRenderer.invoke(
+        IPC_CHANNELS.controlCenter.performAction,
+        threadId,
+        requestId,
+        actionId
+      )
     },
     dismiss(threadId) {
       return ipcRenderer.invoke(IPC_CHANNELS.controlCenter.dismiss, threadId)
