@@ -10,7 +10,7 @@ import { promisify } from "node:util"
 
 import chokidar from "chokidar"
 
-import { buildConversationTranscript } from "../shared/parser"
+import { buildConversationPreview } from "../shared/parser"
 import type {
   ControlCenterActionResult,
   ControlCenterPendingRequest,
@@ -1302,37 +1302,13 @@ async function readTranscriptPreview(record: StoredLiveThreadRecord) {
   }
 
   const sessionContent = await fsPromises.readFile(record.transcriptPath, "utf8")
-  const transcript = buildConversationTranscript({
-    session: buildPreviewSession(record),
-    sessionContent,
-    sessionPath: record.transcriptPath,
-    options: {
-      includeCommentary: true,
-      includeDiffs: false
-    }
+  const preview = buildConversationPreview({
+    provider: record.provider,
+    sessionContent
   })
-
-  let lastUserPreview: string | null = null
-  let lastAssistantMessage: string | null = null
-  let lastThoughtPreview: string | null = null
-
-  for (const entry of transcript.entries) {
-    if (entry.kind === "message" && entry.role === "user") {
-      lastUserPreview = normalizeTextPreview(entry.bodyMarkdown)
-      continue
-    }
-
-    if (entry.kind === "thought_chain") {
-      lastThoughtPreview = normalizeTextPreview(
-        entry.messages.at(-1)?.bodyMarkdown ?? null
-      )
-      continue
-    }
-
-    if (entry.kind === "message" && entry.role === "assistant") {
-      lastAssistantMessage = normalizeTextPreview(entry.bodyMarkdown)
-    }
-  }
+  const lastUserPreview = normalizeTextPreview(preview.lastUserPreview)
+  const lastAssistantMessage = normalizeTextPreview(preview.lastAssistantMessage)
+  const lastThoughtPreview = normalizeTextPreview(preview.lastThoughtPreview)
 
   const assistantPreview = chooseAssistantPreview({
     status: record.status,
@@ -1340,8 +1316,9 @@ async function readTranscriptPreview(record: StoredLiveThreadRecord) {
     lastThoughtPreview
   })
 
-  const lastEntryTimestamp = transcript.entries.at(-1)?.timestamp ?? null
-  const sessionClient = transcript.sessionClient ?? "unknown"
+  const lastEntryTimestamp = preview.lastEntryTimestamp
+  const sessionClient =
+    record.provider === "claude" ? "cli" : preview.sessionMeta.client
   const nextLaunchMode =
     record.provider === "claude"
       ? ("cli" as const)
@@ -1376,7 +1353,7 @@ async function readTranscriptPreview(record: StoredLiveThreadRecord) {
         ? lastUserPreview
         : record.threadName,
     projectPath:
-      transcript.projectPath ?? transcript.sessionCwd ?? record.projectPath,
+      preview.sessionMeta.cwd ?? record.projectPath,
     lastUserPreview: lastUserPreview ?? record.lastUserPreview,
     lastAssistantPreview: assistantPreview.lastAssistantPreview,
     assistantPreviewKind: assistantPreview.assistantPreviewKind,

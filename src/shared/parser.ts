@@ -58,6 +58,14 @@ interface ParsedTranscriptData {
   sessionMeta: ParsedSessionMeta
 }
 
+export interface ConversationPreviewData {
+  lastUserPreview: string | null
+  lastAssistantMessage: string | null
+  lastThoughtPreview: string | null
+  lastEntryTimestamp: string | null
+  sessionMeta: ParsedSessionMeta
+}
+
 interface ClaudeToolUseRecord {
   id: string
   name: string
@@ -466,6 +474,78 @@ function buildCodexTranscriptData(lines: string[]): ParsedTranscriptData {
   }
 }
 
+function buildCodexPreviewData(lines: string[]): ConversationPreviewData {
+  const sessionMeta = extractCodexSessionMeta(lines)
+  let lastUserPreview: string | null = null
+  let lastAssistantMessage: string | null = null
+  let lastThoughtPreview: string | null = null
+  let lastEntryTimestamp: string | null = null
+
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex]?.trim()
+    if (!line) {
+      continue
+    }
+
+    let record: JsonRecord
+    try {
+      record = JSON.parse(line) as JsonRecord
+    } catch {
+      continue
+    }
+
+    if (record.type !== "response_item") {
+      continue
+    }
+
+    const payload = isRecord(record.payload) ? record.payload : {}
+    if (payload.type !== "message") {
+      continue
+    }
+
+    const role =
+      payload.role === "user" || payload.role === "assistant"
+        ? payload.role
+        : null
+    if (!role) {
+      continue
+    }
+
+    const text = extractMessageText(payload)
+    if (!text) {
+      continue
+    }
+
+    if (role === "user" && isScaffoldUserMessage(text)) {
+      continue
+    }
+
+    const timestamp = typeof record.timestamp === "string" ? record.timestamp : null
+    if (role === "user") {
+      lastUserPreview = text
+    } else {
+      const phase = typeof payload.phase === "string" ? payload.phase : null
+      if (phase === "commentary") {
+        lastThoughtPreview = text
+      } else {
+        lastAssistantMessage = text
+      }
+    }
+
+    if (timestamp) {
+      lastEntryTimestamp = timestamp
+    }
+  }
+
+  return {
+    lastUserPreview,
+    lastAssistantMessage,
+    lastThoughtPreview,
+    lastEntryTimestamp,
+    sessionMeta
+  }
+}
+
 function coerceNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : null
 }
@@ -865,6 +945,128 @@ function buildClaudeTranscriptData(lines: string[]): ParsedTranscriptData {
   }
 }
 
+function buildClaudePreviewData(lines: string[]): ConversationPreviewData {
+  const toolUses = new Map<string, ClaudeToolUseRecord>()
+  let sessionCwd: string | null = null
+  let lastUserPreview: string | null = null
+  let lastAssistantMessage: string | null = null
+  let lastThoughtPreview: string | null = null
+  let lastEntryTimestamp: string | null = null
+
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex]?.trim()
+    if (!line) {
+      continue
+    }
+
+    let record: JsonRecord
+    try {
+      record = JSON.parse(line) as JsonRecord
+    } catch {
+      continue
+    }
+
+    const timestamp = typeof record.timestamp === "string" ? record.timestamp : null
+    if (!sessionCwd && typeof record.cwd === "string" && record.cwd.trim()) {
+      sessionCwd = record.cwd
+    }
+
+    if (record.type === "assistant") {
+      const message = isRecord(record.message) ? record.message : {}
+      const stopReason = typeof message.stop_reason === "string" ? message.stop_reason : null
+      const content = Array.isArray(message.content)
+        ? message.content.filter(isRecord)
+        : []
+
+      for (const item of content) {
+        if (item.type !== "tool_use") {
+          continue
+        }
+
+        const toolId = typeof item.id === "string" ? item.id : null
+        const toolName = typeof item.name === "string" ? item.name : null
+        const input = isRecord(item.input) ? item.input : {}
+        if (!toolId || !toolName) {
+          continue
+        }
+
+        toolUses.set(toolId, {
+          id: toolId,
+          name: toolName,
+          input,
+          timestamp: timestamp ?? ""
+        })
+      }
+
+      const textParts = content
+        .filter(item => item.type === "text")
+        .map(item => (typeof item.text === "string" ? item.text.trim() : ""))
+        .filter(Boolean)
+      const text = textParts.join("\n\n").trim()
+      if (!text) {
+        continue
+      }
+
+      if (stopReason === "end_turn") {
+        lastAssistantMessage = text
+      } else {
+        lastThoughtPreview = text
+      }
+
+      if (timestamp) {
+        lastEntryTimestamp = timestamp
+      }
+      continue
+    }
+
+    if (record.type !== "user" || record.isMeta === true) {
+      continue
+    }
+
+    const message = isRecord(record.message) ? record.message : {}
+    const toolUseResult = isRecord(record.toolUseResult) ? record.toolUseResult : null
+    if (toolUseResult) {
+      const content = Array.isArray(message.content)
+        ? message.content.filter(isRecord)
+        : []
+      const toolUseId = content.find(item => item.type === "tool_result")?.tool_use_id
+      const matchedToolUse =
+        typeof toolUseId === "string" ? toolUses.get(toolUseId) ?? null : null
+      if (matchedToolUse) {
+        const summary = summarizeClaudeToolResult(matchedToolUse, toolUseResult)
+        if (summary) {
+          lastThoughtPreview = summary
+          if (timestamp) {
+            lastEntryTimestamp = timestamp
+          }
+        }
+      }
+      continue
+    }
+
+    const text = extractClaudeTextContent(message)
+    if (!text) {
+      continue
+    }
+
+    lastUserPreview = text
+    if (timestamp) {
+      lastEntryTimestamp = timestamp
+    }
+  }
+
+  return {
+    lastUserPreview,
+    lastAssistantMessage,
+    lastThoughtPreview,
+    lastEntryTimestamp,
+    sessionMeta: {
+      client: "cli",
+      cwd: sessionCwd
+    }
+  }
+}
+
 function findLastAssistantMarkdown(entries: ConversationEntry[]) {
   const assistantIndex = findLastIndex(
     entries,
@@ -909,4 +1111,15 @@ export function buildConversationTranscript(params: {
     lastAssistantMarkdown: parsed.lastAssistantMarkdown,
     hasDiffs: parsed.hasDiffs
   }
+}
+
+export function buildConversationPreview(params: {
+  provider: SessionIndexEntry["provider"]
+  sessionContent: string
+}): ConversationPreviewData {
+  const lines = params.sessionContent.split(/\r?\n/)
+
+  return params.provider === "claude"
+    ? buildClaudePreviewData(lines)
+    : buildCodexPreviewData(lines)
 }
