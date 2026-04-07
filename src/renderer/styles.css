@@ -142,6 +142,31 @@ pre {
     padding-right: 2px;
 }
 
+.control-center-popout-list::-webkit-scrollbar {
+    width: 10px;
+}
+
+.control-center-popout-list::-webkit-scrollbar-track {
+    background:
+        radial-gradient(circle at top right, rgba(93, 177, 255, 0.12), transparent 30%),
+        #050505;
+    border-left: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.control-center-popout-list::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.14);
+    border-radius: 999px;
+    border: 2px solid #050505;
+}
+
+.control-center-popout-list:hover::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+}
+
+.control-center-popout-list::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.22);
+}
+
 .control-center-popout-row {
     width: 100%;
     display: flex;
