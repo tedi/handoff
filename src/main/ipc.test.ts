@@ -5,6 +5,7 @@ import { IPC_CHANNELS } from "../shared/channels"
 import type { HandoffSettingsSnapshot } from "../shared/contracts"
 
 const terminalMocks = vi.hoisted(() => ({
+  focusExistingGhosttyThread: vi.fn().mockResolvedValue(false),
   openShellCommandInTerminal: vi.fn().mockResolvedValue({ fallbackMessage: null }),
   openProjectInTerminal: vi.fn().mockResolvedValue({ fallbackMessage: null }),
   buildCodexResumeCommand: vi.fn().mockReturnValue("codex-launch-command"),
@@ -34,6 +35,7 @@ vi.mock("electron", () => ({
 }))
 
 vi.mock("./terminal", () => ({
+  focusExistingGhosttyThread: terminalMocks.focusExistingGhosttyThread,
   openShellCommandInTerminal: terminalMocks.openShellCommandInTerminal,
   openProjectInTerminal: terminalMocks.openProjectInTerminal,
   buildCodexResumeCommand: terminalMocks.buildCodexResumeCommand,
@@ -273,6 +275,11 @@ describe("registerIpcHandlers", () => {
 
     await ipcMain.invoke(IPC_CHANNELS.controlCenter.open, "codex:live-1")
 
+    expect(terminalMocks.focusExistingGhosttyThread).toHaveBeenCalledWith({
+      sessionId: "live-1",
+      threadName: "Live thread",
+      projectPath: "/tmp/project"
+    })
     expect(terminalMocks.buildCodexResumeCommand).toHaveBeenCalledWith({
       sessionId: "live-1",
       sessionCwd: "/tmp/project",
@@ -284,6 +291,79 @@ describe("registerIpcHandlers", () => {
       command: "codex-launch-command"
     })
     expect(service.controlCenter.acknowledge).toHaveBeenCalledWith("codex:live-1")
+  })
+
+  it("focuses an existing Ghostty live Claude thread before launching a new shell", async () => {
+    terminalMocks.focusExistingGhosttyThread.mockResolvedValueOnce(true)
+
+    const ipcMain = createIpcMainStub()
+    const service = {
+      app: {
+        getStateInfo: vi.fn(),
+        refresh: vi.fn()
+      },
+      settings: {
+        get: vi.fn().mockResolvedValue(settingsSnapshot),
+        update: vi.fn(),
+        resetProvider: vi.fn()
+      },
+      agents: {
+        list: vi.fn().mockResolvedValue([]),
+        create: vi.fn(),
+        update: vi.fn(),
+        delete: vi.fn(),
+        duplicate: vi.fn()
+      },
+      controlCenter: {
+        getSnapshot: vi.fn().mockResolvedValue({ records: [] }),
+        getRecord: vi.fn().mockResolvedValue({
+          id: "claude:live-1",
+          provider: "claude",
+          sourceSessionId: "live-1",
+          threadName: "Investigate live focus",
+          projectPath: "/tmp/claude-project",
+          transcriptPath: "/tmp/live-1.jsonl",
+          status: "waiting_user",
+          lastEventAt: "2026-03-14T02:00:00.000Z",
+          lastUserPreview: "Need your response",
+          lastAssistantPreview: "Waiting on the current Ghostty tab.",
+          assistantPreviewKind: "message",
+          launchMode: "cli",
+          hostAppLabel: "Ghostty",
+          hostAppExact: true,
+          acknowledgedAt: null,
+          dismissedAt: null
+        }),
+        acknowledge: vi.fn().mockResolvedValue(null),
+        dismiss: vi.fn().mockResolvedValue({ records: [] }),
+        dismissCompleted: vi.fn().mockResolvedValue({ records: [] })
+      },
+      sessions: {
+        list: vi.fn(),
+        getTranscript: vi.fn()
+      },
+      search: {
+        getStatus: vi.fn(),
+        query: vi.fn()
+      },
+      startWatching: vi.fn(),
+      onStateChanged: vi.fn(),
+      onSearchStatusChanged: vi.fn(),
+      dispose: vi.fn()
+    } as any
+
+    registerIpcHandlers(ipcMain as any, service)
+
+    await ipcMain.invoke(IPC_CHANNELS.controlCenter.open, "claude:live-1")
+
+    expect(terminalMocks.focusExistingGhosttyThread).toHaveBeenCalledWith({
+      sessionId: "live-1",
+      threadName: "Investigate live focus",
+      projectPath: "/tmp/claude-project"
+    })
+    expect(terminalMocks.buildClaudeResumeCommand).not.toHaveBeenCalled()
+    expect(terminalMocks.openShellCommandInTerminal).not.toHaveBeenCalled()
+    expect(service.controlCenter.acknowledge).toHaveBeenCalledWith("claude:live-1")
   })
 
   it("uses the selected default terminal for project terminal opens", async () => {

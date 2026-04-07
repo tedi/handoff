@@ -29,6 +29,7 @@ import {
   buildClaudeResumeCommand,
   buildCodexStartCommand,
   buildCodexResumeCommand,
+  focusExistingGhosttyThread,
   openProjectInTerminal,
   openShellCommandInTerminal
 } from "./terminal"
@@ -312,6 +313,19 @@ async function openControlCenterThread(params: {
     record.hostAppExact ? getTerminalIdForHostLabel(record.hostAppLabel) : null
 
   let result: OpenActionResult
+
+  if (record.launchMode === "cli" && exactTerminalId === "ghostty") {
+    const focusedExistingThread = await focusExistingGhosttyThread({
+      sessionId: record.sourceSessionId,
+      threadName: record.threadName,
+      projectPath: record.projectPath
+    })
+
+    if (focusedExistingThread) {
+      await params.service.controlCenter.acknowledge(params.threadId)
+      return { fallbackMessage: null }
+    }
+  }
 
   if (record.provider === "codex") {
     if (record.launchMode === "app") {
