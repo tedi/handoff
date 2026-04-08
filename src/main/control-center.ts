@@ -60,6 +60,8 @@ const GLOBAL_SOUND_DEBOUNCE_MS = 900
 const THREAD_SOUND_DEBOUNCE_MS = 12_000
 const PREVIEW_MAX_LENGTH = 220
 const LIVE_HOOK_COMMAND_MARKER = CONTROL_CENTER_HOOK_MODE_ARG
+const CODEX_INTERNAL_TITLE_PROMPT_PREFIX =
+  "You are a helpful assistant. You will be presented with a user prompt, and your job is to provide a short title"
 
 type SupportedHookEvent = (typeof CONTROL_CENTER_CODEX_EVENTS)[number] | (typeof CONTROL_CENTER_CLAUDE_EVENTS)[number]
 type StoredHostAppId = TerminalAppId | "codex-app" | null
@@ -194,6 +196,47 @@ function normalizeTextPreview(value: string | null | undefined) {
 
 function buildDefaultThreadName(provider: SessionProvider) {
   return provider === "claude" ? "Claude conversation" : "Codex conversation"
+}
+
+function isCodexInternalTitlePrompt(value: string | null | undefined) {
+  const normalizedValue = (value ?? "").trim().toLowerCase()
+  return normalizedValue.startsWith(CODEX_INTERNAL_TITLE_PROMPT_PREFIX.toLowerCase())
+}
+
+function isCodexInternalTitleResult(value: string | null | undefined) {
+  const trimmedValue = (value ?? "").trim()
+  if (!trimmedValue.startsWith("{") || !trimmedValue.includes('"title"')) {
+    return false
+  }
+
+  try {
+    const parsed = JSON.parse(trimmedValue) as { title?: unknown }
+    return typeof parsed.title === "string" && parsed.title.trim().length > 0
+  } catch {
+    return false
+  }
+}
+
+function isSuppressedCodexHelperLike(params: {
+  assistantPreview?: string | null
+  provider: SessionProvider
+  threadName?: string | null
+  transcriptPath?: string | null
+  userPreview?: string | null
+}) {
+  if (params.provider !== "codex") {
+    return false
+  }
+
+  if (params.transcriptPath) {
+    return false
+  }
+
+  const hasHelperPrompt = isCodexInternalTitlePrompt(params.userPreview)
+  const hasHelperResult = isCodexInternalTitleResult(params.assistantPreview)
+  const isFallbackTitle = isFallbackThreadName(params.provider, params.threadName)
+
+  return (hasHelperPrompt || hasHelperResult) && isFallbackTitle
 }
 
 function isFallbackThreadName(provider: SessionProvider, value: string | null | undefined) {
@@ -1627,6 +1670,7 @@ export function createControlCenterService(
     })
 
   let records = new Map<string, StoredLiveThreadRecord>()
+  const suppressedSessionIds = new Set<string>()
   let socketServer: net.Server | null = null
   let spoolWatcher: ReturnType<typeof chokidar.watch> | null = null
   let transcriptWatcher: ReturnType<typeof chokidar.watch> | null = null
@@ -1854,8 +1898,49 @@ export function createControlCenterService(
   }
 
   async function ingestNormalizedHookEvent(event: NormalizedLiveHookEvent) {
+    if (suppressedSessionIds.has(event.id)) {
+      return
+    }
+
+    if (
+      isSuppressedCodexHelperLike({
+        provider: event.provider,
+        threadName: event.threadName,
+        transcriptPath: event.transcriptPath,
+        userPreview: event.lastUserPreview,
+        assistantPreview: event.lastAssistantPreview
+      })
+    ) {
+      suppressedSessionIds.add(event.id)
+
+      const existingRecord = records.get(event.id) ?? null
+      if (existingRecord?.pendingRequest?.requestId) {
+        clearPendingHookResolution(existingRecord.pendingRequest.requestId)
+      }
+
+      if (records.delete(event.id)) {
+        await persistRecords()
+        await refreshTranscriptWatcher()
+        emitStateChanged(event.id)
+      }
+      return
+    }
+
     const existing = records.get(event.id) ?? null
     const session = sessionInfoById.get(event.id) ?? null
+
+    if (
+      event.provider === "codex" &&
+      event.eventName === "SessionStart" &&
+      !existing &&
+      !session &&
+      !event.lastUserPreview &&
+      !event.threadName &&
+      !event.transcriptPath
+    ) {
+      return
+    }
+
     const nextPendingRequest = mergePendingRequest({
       existing,
       event
@@ -2089,7 +2174,26 @@ export function createControlCenterService(
     async startWatching() {
       await fsPromises.mkdir(paths.rootDir, { recursive: true })
       const persistedRecords = await readPersistedRecords(paths.recordsPath)
-      records = new Map(persistedRecords.map(record => [record.id, record]))
+      const filteredPersistedRecords = persistedRecords.filter(record => {
+        const shouldSuppress = isSuppressedCodexHelperLike({
+          provider: record.provider,
+          threadName: record.threadName,
+          transcriptPath: record.transcriptPath,
+          userPreview: record.lastUserPreview,
+          assistantPreview: record.lastAssistantPreview
+        })
+
+        if (shouldSuppress) {
+          suppressedSessionIds.add(record.id)
+        }
+
+        return !shouldSuppress
+      })
+      records = new Map(filteredPersistedRecords.map(record => [record.id, record]))
+
+      if (filteredPersistedRecords.length !== persistedRecords.length) {
+        await persistRecords()
+      }
 
       await consumeSpool()
       await refreshTranscriptWatcher()

@@ -276,4 +276,128 @@ describe("createControlCenterService", () => {
 
     await service.dispose()
   })
+
+  it("suppresses internal Codex title-generator helper sessions and only shows the real forked conversation", async () => {
+    const baseDir = await fs.mkdtemp(path.join(os.tmpdir(), "handoff-control-center-"))
+    tempDirs.push(baseDir)
+
+    const service = createControlCenterService({
+      dataDir: path.join(baseDir, "user-data")
+    })
+
+    await service.startWatching()
+
+    await service.ingestHookEvent({
+      id: "codex:helper-1",
+      provider: "codex",
+      sourceSessionId: "helper-1",
+      eventName: "SessionStart",
+      eventAt: "2026-04-08T01:31:04.000Z",
+      threadName: null,
+      projectPath: "/Users/tedikonda/ai/handoff",
+      transcriptPath: null,
+      status: "running",
+      lastUserPreview: null,
+      lastAssistantPreview: null,
+      assistantPreviewKind: "none",
+      launchMode: "app",
+      hostAppLabel: "Codex.app",
+      hostAppExact: true,
+      pendingRequest: null
+    })
+
+    expect((await service.getSnapshot()).records).toHaveLength(0)
+
+    await service.ingestHookEvent({
+      id: "codex:helper-1",
+      provider: "codex",
+      sourceSessionId: "helper-1",
+      eventName: "UserPromptSubmit",
+      eventAt: "2026-04-08T01:31:05.000Z",
+      threadName: null,
+      projectPath: "/Users/tedikonda/ai/handoff",
+      transcriptPath: null,
+      status: "running",
+      lastUserPreview:
+        "You are a helpful assistant. You will be presented with a user prompt, and your job is to provide a short title for a task that will be created from the prompt.",
+      lastAssistantPreview: null,
+      assistantPreviewKind: "none",
+      launchMode: "app",
+      hostAppLabel: "Codex.app",
+      hostAppExact: true,
+      pendingRequest: null
+    })
+
+    await service.ingestHookEvent({
+      id: "codex:helper-1",
+      provider: "codex",
+      sourceSessionId: "helper-1",
+      eventName: "Stop",
+      eventAt: "2026-04-08T01:31:06.000Z",
+      threadName: "Codex conversation",
+      projectPath: "/Users/tedikonda/ai/handoff",
+      transcriptPath: null,
+      status: "completed",
+      lastUserPreview: null,
+      lastAssistantPreview: "{\"title\":\"Find real-time thread updates\"}",
+      assistantPreviewKind: "message",
+      launchMode: "app",
+      hostAppLabel: "Codex.app",
+      hostAppExact: true,
+      pendingRequest: null
+    })
+
+    expect((await service.getSnapshot()).records).toHaveLength(0)
+
+    await service.ingestHookEvent({
+      id: "codex:helper-2",
+      provider: "codex",
+      sourceSessionId: "helper-2",
+      eventName: "Stop",
+      eventAt: "2026-04-08T01:31:07.000Z",
+      threadName: "Codex conversation",
+      projectPath: "/Users/tedikonda/ai/handoff",
+      transcriptPath: null,
+      status: "completed",
+      lastUserPreview: null,
+      lastAssistantPreview: "{\"title\":\"Investigate real-time threads\"}",
+      assistantPreviewKind: "message",
+      launchMode: "app",
+      hostAppLabel: "Codex.app",
+      hostAppExact: true,
+      pendingRequest: null
+    })
+
+    expect((await service.getSnapshot()).records).toHaveLength(0)
+
+    await service.ingestHookEvent({
+      id: "codex:real-1",
+      provider: "codex",
+      sourceSessionId: "real-1",
+      eventName: "UserPromptSubmit",
+      eventAt: "2026-04-08T01:33:35.000Z",
+      threadName: "Find real-time thread updates",
+      projectPath: "/Users/tedikonda/ai/handoff",
+      transcriptPath: null,
+      status: "running",
+      lastUserPreview: "i just confirmed, when i sent the message it opened a third item on our list.",
+      lastAssistantPreview: null,
+      assistantPreviewKind: "none",
+      launchMode: "app",
+      hostAppLabel: "Codex.app",
+      hostAppExact: true,
+      pendingRequest: null
+    })
+
+    const snapshot = await service.getSnapshot()
+    expect(snapshot.records).toHaveLength(1)
+    expect(snapshot.records[0]).toMatchObject({
+      id: "codex:real-1",
+      threadName: "Find real-time thread updates",
+      lastUserPreview:
+        "i just confirmed, when i sent the message it opened a third item on our list."
+    })
+
+    await service.dispose()
+  })
 })
