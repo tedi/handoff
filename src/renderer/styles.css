@@ -414,6 +414,16 @@ pre {
     color: var(--ink);
 }
 
+.control-center-popout-preview-line.is-none,
+.control-center-preview-line.is-none {
+    color: var(--muted);
+}
+
+.control-center-popout-preview-line.is-ready,
+.control-center-preview-line.is-ready {
+    color: #86efac;
+}
+
 .control-center-popout-preview-line.is-compacting,
 .control-center-popout-preview-line.is-compacted,
 .control-center-preview-line.is-compacting,

@@ -278,11 +278,15 @@ function getRecordSortWeight(status: LiveThreadStatus) {
     return 2
   }
 
-  if (status === "completed") {
+  if (status === "ready") {
     return 3
   }
 
-  return 4
+  if (status === "completed") {
+    return 4
+  }
+
+  return 5
 }
 
 function sortLiveThreadRecords(records: LiveThreadRecord[]) {
@@ -1363,12 +1367,12 @@ async function readTranscriptPreview(record: StoredLiveThreadRecord) {
     provider: record.provider,
     sessionContent
   })
-  const shouldSuppressClaudeTranscriptShell =
+  const hasNoMeaningfulTranscriptActivity =
     record.provider === "claude" &&
     !record.pendingRequest &&
     preview.lastMeaningfulActivity === "none"
 
-  if (shouldSuppressClaudeTranscriptShell) {
+  if (hasNoMeaningfulTranscriptActivity && preview.specialPreviewKind) {
     return {
       suppress: true as const
     }
@@ -1413,25 +1417,29 @@ async function readTranscriptPreview(record: StoredLiveThreadRecord) {
         }
       : assistantPreview
   const nextStatus =
-    record.provider !== "claude"
-      ? record.status
-      : shouldPreserveCompactingState
-        ? record.status
-      : record.pendingRequest?.type === "approval_request"
+    record.pendingRequest?.type === "approval_request"
         ? "waiting_permission"
-        : record.pendingRequest?.type === "choice_request"
-          ? "waiting_user"
-          : shouldApplySpecialPreview && preview.specialPreviewKind === "compacted"
-            ? "completed"
-            : shouldApplySpecialPreview && preview.specialPreviewKind === "compacting"
-              ? "running"
-              : preview.lastMeaningfulActivity === "assistant_terminal"
+      : record.pendingRequest?.type === "choice_request"
+        ? "waiting_user"
+        : shouldPreserveCompactingState
+          ? record.status
+          : hasNoMeaningfulTranscriptActivity
+            ? record.launchMode === "cli"
+              ? "ready"
+              : record.status
+            : record.provider === "claude"
+              ? shouldApplySpecialPreview && preview.specialPreviewKind === "compacted"
                 ? "completed"
-                : preview.lastMeaningfulActivity === "assistant_activity"
+                : shouldApplySpecialPreview && preview.specialPreviewKind === "compacting"
                   ? "running"
-                  : preview.lastMeaningfulActivity === "user"
-                    ? "running"
-                    : record.status
+                  : preview.lastMeaningfulActivity === "assistant_terminal"
+                    ? "completed"
+                    : preview.lastMeaningfulActivity === "assistant_activity"
+                      ? "running"
+                      : preview.lastMeaningfulActivity === "user"
+                        ? "running"
+                        : record.status
+              : record.status
 
   const lastEntryTimestamp = preview.lastEntryTimestamp
   const sessionClient =
@@ -1602,6 +1610,16 @@ function shouldPlaySound(previous: StoredLiveThreadRecord | null, next: StoredLi
   }
 
   return true
+}
+
+function isIdleCliSessionStartEvent(event: NormalizedLiveHookEvent) {
+  return (
+    event.eventName === "SessionStart" &&
+    event.launchMode === "cli" &&
+    !event.pendingRequest &&
+    !event.lastUserPreview &&
+    !event.lastAssistantPreview
+  )
 }
 
 async function readJsonLines<T>(filePath: string) {
@@ -2072,6 +2090,25 @@ export function createControlCenterService(
 
     const existing = records.get(event.id) ?? null
     const session = sessionInfoById.get(event.id) ?? null
+    const effectiveEventStatus =
+      isIdleCliSessionStartEvent(event) ? ("ready" as const) : event.status
+
+    if (
+      event.eventName === "SessionEnd" &&
+      event.launchMode === "cli" &&
+      existing &&
+      !event.pendingRequest
+    ) {
+      if (existing.pendingRequest?.requestId) {
+        clearPendingHookResolution(existing.pendingRequest.requestId)
+      }
+
+      records.delete(event.id)
+      await persistRecords()
+      await refreshTranscriptWatcher()
+      emitStateChanged(event.id)
+      return
+    }
 
     if (
       isPassiveSessionStartEvent({
@@ -2149,7 +2186,7 @@ export function createControlCenterService(
       projectPath: event.projectPath ?? session?.projectPath ?? existing?.projectPath ?? null,
       transcriptPath:
         event.transcriptPath ?? session?.sessionPath ?? existing?.transcriptPath ?? null,
-      status: event.status,
+      status: effectiveEventStatus,
       lastEventAt:
         existing && existing.lastEventAt.localeCompare(event.eventAt) > 0
           ? existing.lastEventAt

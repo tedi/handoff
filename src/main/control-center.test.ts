@@ -640,6 +640,99 @@ describe("createControlCenterService", () => {
     await service.dispose()
   })
 
+  it("marks a blank CLI SessionStart as ready", async () => {
+    const baseDir = await fs.mkdtemp(path.join(os.tmpdir(), "handoff-control-center-"))
+    tempDirs.push(baseDir)
+
+    const service = createControlCenterService({
+      dataDir: path.join(baseDir, "user-data")
+    })
+
+    await service.startWatching()
+    await service.ingestHookEvent({
+      id: "claude:ready-1",
+      provider: "claude",
+      sourceSessionId: "ready-1",
+      eventName: "SessionStart",
+      eventAt: "2026-04-10T03:00:00.000Z",
+      threadName: "Claude conversation",
+      projectPath: "/tmp/project",
+      transcriptPath: null,
+      status: "running",
+      lastUserPreview: null,
+      lastAssistantPreview: null,
+      assistantPreviewKind: "none",
+      launchMode: "cli",
+      hostAppLabel: "Ghostty",
+      hostAppExact: true,
+      pendingRequest: null
+    })
+
+    const snapshot = await service.getSnapshot()
+    expect(snapshot.records[0]).toMatchObject({
+      status: "ready",
+      lastUserPreview: null,
+      lastAssistantPreview: null,
+      assistantPreviewKind: "none"
+    })
+
+    await service.dispose()
+  })
+
+  it("removes an active Claude CLI row on SessionEnd", async () => {
+    const baseDir = await fs.mkdtemp(path.join(os.tmpdir(), "handoff-control-center-"))
+    tempDirs.push(baseDir)
+
+    const service = createControlCenterService({
+      dataDir: path.join(baseDir, "user-data")
+    })
+
+    await service.startWatching()
+    await service.ingestHookEvent({
+      id: "claude:end-1",
+      provider: "claude",
+      sourceSessionId: "end-1",
+      eventName: "SessionStart",
+      eventAt: "2026-04-10T03:00:00.000Z",
+      threadName: "Claude conversation",
+      projectPath: "/tmp/project",
+      transcriptPath: null,
+      status: "running",
+      lastUserPreview: null,
+      lastAssistantPreview: null,
+      assistantPreviewKind: "none",
+      launchMode: "cli",
+      hostAppLabel: "Ghostty",
+      hostAppExact: true,
+      pendingRequest: null
+    })
+
+    expect((await service.getSnapshot()).records).toHaveLength(1)
+
+    await service.ingestHookEvent({
+      id: "claude:end-1",
+      provider: "claude",
+      sourceSessionId: "end-1",
+      eventName: "SessionEnd",
+      eventAt: "2026-04-10T03:00:10.000Z",
+      threadName: null,
+      projectPath: "/tmp/project",
+      transcriptPath: null,
+      status: "completed",
+      lastUserPreview: null,
+      lastAssistantPreview: null,
+      assistantPreviewKind: "none",
+      launchMode: "cli",
+      hostAppLabel: "Ghostty",
+      hostAppExact: true,
+      pendingRequest: null
+    })
+
+    expect((await service.getSnapshot()).records).toHaveLength(0)
+
+    await service.dispose()
+  })
+
   it("suppresses Claude compact continuation shell sessions with no real activity", async () => {
     const baseDir = await fs.mkdtemp(path.join(os.tmpdir(), "handoff-control-center-"))
     tempDirs.push(baseDir)

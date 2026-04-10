@@ -1346,6 +1346,10 @@ function getAutomationStatusTone(params: {
 }
 
 function formatLiveThreadStatus(status: LiveThreadRecord["status"]) {
+  if (status === "ready") {
+    return "Ready"
+  }
+
   if (status === "waiting_permission") {
     return "Needs permission"
   }
@@ -1374,6 +1378,10 @@ function isCompletedSeen(record: LiveThreadRecord) {
 }
 
 function getLiveThreadStatusTone(status: LiveThreadRecord["status"]) {
+  if (status === "ready") {
+    return "ready"
+  }
+
   if (status === "waiting_permission") {
     return "warning"
   }
@@ -1422,7 +1430,11 @@ function getLiveThreadIndicatorTone(record: LiveThreadRecord) {
 }
 
 function getLiveThreadDisplayStatusLabel(record: LiveThreadRecord) {
-  if (record.status === "running" || record.status === "completed") {
+  if (
+    record.status === "running" ||
+    record.status === "completed" ||
+    record.status === "ready"
+  ) {
     return null
   }
 
@@ -1464,12 +1476,24 @@ function LiveThreadAssistantPreviewLine({
   const lineClassName = popout
     ? "control-center-popout-preview-line"
     : "control-center-preview-line"
+  const previewTone =
+    !record.lastAssistantPreview && record.status === "ready"
+      ? "ready"
+      : record.assistantPreviewKind
 
   return (
-    <span className={`${lineClassName} is-${record.assistantPreviewKind}`}>
+    <span className={`${lineClassName} is-${previewTone}`}>
       {previewText}
     </span>
   )
+}
+
+function shouldShowLiveThreadUserPreview(record: LiveThreadRecord) {
+  if (record.status === "ready" && !record.lastUserPreview) {
+    return false
+  }
+
+  return true
 }
 
 function getPendingRequestTone(request: ControlCenterPendingRequest) {
@@ -1506,6 +1530,10 @@ function getLiveThreadTitle(record: LiveThreadRecord) {
 }
 
 function getLiveThreadAssistantFallback(record: LiveThreadRecord) {
+  if (record.status === "ready") {
+    return "Ready"
+  }
+
   if (record.status === "waiting_permission") {
     return "Awaiting permission approval."
   }
@@ -1528,7 +1556,8 @@ function getLiveThreadAssistantFallback(record: LiveThreadRecord) {
 function shouldShowControlCenterPopoutPreviews(record: LiveThreadRecord) {
   return (
     !record.pendingRequest &&
-    (record.status === "running" ||
+    (record.status === "ready" ||
+      record.status === "running" ||
       record.status === "waiting_user" ||
       record.status === "waiting_permission" ||
       isCompletedUnseen(record))
@@ -3672,10 +3701,12 @@ function ControlCenterPane({
                 </div>
 
                 <div className="control-center-previews">
-                  <span className="control-center-preview-line">
-                    <span className="control-center-preview-label">You:</span>{" "}
-                    {record.lastUserPreview ?? "No prompt captured yet."}
-                  </span>
+                  {shouldShowLiveThreadUserPreview(record) ? (
+                    <span className="control-center-preview-line">
+                      <span className="control-center-preview-label">You:</span>{" "}
+                      {record.lastUserPreview ?? "No prompt captured yet."}
+                    </span>
+                  ) : null}
                   <LiveThreadAssistantPreviewLine record={record} />
                 </div>
               </button>
@@ -3836,10 +3867,12 @@ function ControlCenterPopoutPane({
                         </span>
                       </div>
                       <div className="control-center-popout-row-previews">
-                        <span className="control-center-popout-preview-line">
-                          <span className="control-center-preview-label">You:</span>{" "}
-                          {record.lastUserPreview ?? "No prompt captured yet."}
-                        </span>
+                        {shouldShowLiveThreadUserPreview(record) ? (
+                          <span className="control-center-popout-preview-line">
+                            <span className="control-center-preview-label">You:</span>{" "}
+                            {record.lastUserPreview ?? "No prompt captured yet."}
+                          </span>
+                        ) : null}
                         <LiveThreadAssistantPreviewLine popout record={record} />
                       </div>
                     </>

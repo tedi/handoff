@@ -815,6 +815,46 @@ describe("Handoff App", () => {
     })
   })
 
+  it("shows ready rows without a fake user preview", async () => {
+    const { api } = createMockApi({
+      sessions: [],
+      controlCenterRecords: [
+        {
+          id: "claude:ready-1",
+          sourceSessionId: "ready-1",
+          provider: "claude",
+          threadName: "Claude conversation",
+          projectPath: "/Users/tedikonda/topchallenger/apps/client",
+          transcriptPath: "/tmp/ready-1.jsonl",
+          status: "ready",
+          lastEventAt: "2026-03-14T02:00:00.000Z",
+          lastUserPreview: null,
+          lastAssistantPreview: null,
+          assistantPreviewKind: "none",
+          launchMode: "cli",
+          hostAppLabel: "Ghostty",
+          hostAppExact: true,
+          pendingRequest: null,
+          acknowledgedAt: null,
+          dismissedAt: null
+        }
+      ],
+      transcriptById: {}
+    })
+
+    window.handoffApp = api
+    render(<App />)
+
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: /Control Center/i
+      })
+    )
+
+    expect(await screen.findByText("Ready")).toBeInTheDocument()
+    expect(screen.queryByText(/No prompt captured yet\./i)).not.toBeInTheDocument()
+  })
+
   it("shows previews for running rows in the compact Control Center pop-out", async () => {
     const { api } = createMockApi({
       sessions: [],
