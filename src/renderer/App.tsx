@@ -1406,6 +1406,10 @@ function getLiveThreadDisplayTone(record: LiveThreadRecord) {
 }
 
 function getLiveThreadIndicatorTone(record: LiveThreadRecord) {
+  if (record.assistantPreviewKind === "compacting") {
+    return "compacting" as const
+  }
+
   if (isCompletedUnseen(record)) {
     return "completed-unseen"
   }
@@ -1430,8 +1434,15 @@ function ControlCenterStatusIndicator({
 }: {
   tone: ReturnType<typeof getLiveThreadIndicatorTone>
 }) {
-  if (tone === "running") {
-    return <span aria-hidden="true" className="control-center-status-loader is-glowing-arc" />
+  if (tone === "running" || tone === "compacting") {
+    return (
+      <span
+        aria-hidden="true"
+        className={`control-center-status-loader is-glowing-arc${
+          tone === "compacting" ? " is-compacting" : ""
+        }`}
+      />
+    )
   }
 
   return (
@@ -1439,6 +1450,25 @@ function ControlCenterStatusIndicator({
       aria-hidden="true"
       className={`control-center-popout-dot${tone ? ` is-${tone}` : ""}`}
     />
+  )
+}
+
+function LiveThreadAssistantPreviewLine({
+  popout = false,
+  record
+}: {
+  popout?: boolean
+  record: LiveThreadRecord
+}) {
+  const previewText = record.lastAssistantPreview ?? getLiveThreadAssistantFallback(record)
+  const lineClassName = popout
+    ? "control-center-popout-preview-line"
+    : "control-center-preview-line"
+
+  return (
+    <span className={`${lineClassName} is-${record.assistantPreviewKind}`}>
+      {previewText}
+    </span>
   )
 }
 
@@ -3646,11 +3676,7 @@ function ControlCenterPane({
                     <span className="control-center-preview-label">You:</span>{" "}
                     {record.lastUserPreview ?? "No prompt captured yet."}
                   </span>
-                  <span
-                    className={`control-center-preview-line is-${record.assistantPreviewKind}`}
-                  >
-                    {record.lastAssistantPreview ?? getLiveThreadAssistantFallback(record)}
-                  </span>
+                  <LiveThreadAssistantPreviewLine record={record} />
                 </div>
               </button>
 
@@ -3814,11 +3840,7 @@ function ControlCenterPopoutPane({
                           <span className="control-center-preview-label">You:</span>{" "}
                           {record.lastUserPreview ?? "No prompt captured yet."}
                         </span>
-                        <span
-                          className={`control-center-popout-preview-line is-${record.assistantPreviewKind}`}
-                        >
-                          {record.lastAssistantPreview ?? getLiveThreadAssistantFallback(record)}
-                        </span>
+                        <LiveThreadAssistantPreviewLine popout record={record} />
                       </div>
                     </>
                   ) : (

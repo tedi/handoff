@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
 
 import type { AssistantMessageEntry, AssistantThoughtChainEntry, SessionIndexEntry } from "./contracts"
-import { buildConversationTranscript } from "./parser"
+import { buildConversationPreview, buildConversationTranscript } from "./parser"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -490,5 +490,112 @@ describe("buildConversationTranscript", () => {
 
     expect(assistantEntry?.patches[0]?.patch).toContain("*** Add File: /tmp/project/src/new.ts")
     expect(assistantEntry?.patches[0]?.patch).toContain("+export const value = 1")
+  })
+
+  it("hides Claude compact command meta messages from transcript and preview extraction", () => {
+    const compactingPreview = buildConversationPreview({
+      provider: "claude",
+      sessionContent: [
+        JSON.stringify({
+          type: "assistant",
+          timestamp: "2026-04-08T03:30:00.000Z",
+          cwd: "/tmp/project",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "Finished the change." }],
+            stop_reason: "end_turn"
+          }
+        }),
+        JSON.stringify({
+          type: "user",
+          timestamp: "2026-04-08T03:34:39.120Z",
+          message: {
+            role: "user",
+            content:
+              "<command-name>/compact</command-name>\n<command-message>compact</command-message>"
+          }
+        })
+      ].join("\n")
+    })
+
+    expect(compactingPreview.lastUserPreview).toBeNull()
+    expect(compactingPreview.specialPreviewKind).toBe("compacting")
+    expect(compactingPreview.specialPreviewText).toBe("Compacting context...")
+    expect(compactingPreview.specialPreviewTimestamp).toBe("2026-04-08T03:34:39.120Z")
+
+    const sessionContent = [
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-04-08T03:30:00.000Z",
+        cwd: "/tmp/project",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "Finished the change." }],
+          stop_reason: "end_turn"
+        }
+      }),
+      JSON.stringify({
+        type: "system",
+        subtype: "compact_boundary",
+        timestamp: "2026-04-08T03:34:39.087Z"
+      }),
+      JSON.stringify({
+        type: "user",
+        timestamp: "2026-04-08T03:34:39.100Z",
+        message: {
+          role: "user",
+          content:
+            "This session is being continued from a previous conversation that ran out of context.\n\nSummary:\n..."
+        }
+      }),
+      JSON.stringify({
+        type: "user",
+        timestamp: "2026-04-08T03:34:39.120Z",
+        message: {
+          role: "user",
+          content:
+            "<command-name>/compact</command-name>\n<command-message>compact</command-message>"
+        }
+      }),
+      JSON.stringify({
+        type: "user",
+        timestamp: "2026-04-08T03:34:39.193Z",
+        message: {
+          role: "user",
+          content:
+            "<local-command-stdout>Compacted (ctrl+o to see full summary)</local-command-stdout>"
+        }
+      })
+    ].join("\n")
+
+    const transcript = buildConversationTranscript({
+      sessionContent,
+      session: createSession({
+        provider: "claude",
+        sourceSessionId: "claude-compact-1"
+      }),
+      sessionPath: "/tmp/claude-compact.jsonl",
+      options: {
+        includeCommentary: false,
+        includeDiffs: true
+      }
+    })
+    const preview = buildConversationPreview({
+      provider: "claude",
+      sessionContent
+    })
+
+    expect(transcript.entries).toHaveLength(1)
+    expect(transcript.entries[0]).toMatchObject({
+      kind: "message",
+      role: "assistant",
+      bodyMarkdown: "Finished the change."
+    })
+    expect(preview.lastUserPreview).toBeNull()
+    expect(preview.lastAssistantMessage).toBe("Finished the change.")
+    expect(preview.specialPreviewKind).toBe("compacted")
+    expect(preview.specialPreviewText).toBe("Conversation compacted")
+    expect(preview.specialPreviewTimestamp).toBe("2026-04-08T03:34:39.087Z")
+    expect(preview.lastMeaningfulActivity).toBe("assistant_terminal")
   })
 })

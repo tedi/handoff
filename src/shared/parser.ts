@@ -18,7 +18,8 @@ const CLAUDE_HIDDEN_USER_PREFIXES = [
   "<command-name>",
   "<local-command-stdout>",
   "<local-command-caveat>",
-  "<system-reminder>"
+  "<system-reminder>",
+  "This session is being continued from a previous conversation that ran out of context."
 ]
 
 interface MessageRecord {
@@ -62,7 +63,15 @@ export interface ConversationPreviewData {
   lastUserPreview: string | null
   lastAssistantMessage: string | null
   lastThoughtPreview: string | null
+  specialPreviewKind: "compacting" | "compacted" | null
+  specialPreviewText: string | null
+  specialPreviewTimestamp: string | null
   lastEntryTimestamp: string | null
+  lastMeaningfulActivity:
+    | "assistant_terminal"
+    | "assistant_activity"
+    | "user"
+    | "none"
   sessionMeta: ParsedSessionMeta
 }
 
@@ -93,6 +102,10 @@ function isScaffoldUserMessage(text: string) {
 function isClaudeHiddenUserText(text: string) {
   const stripped = text.trimStart()
   return CLAUDE_HIDDEN_USER_PREFIXES.some(prefix => stripped.startsWith(prefix))
+}
+
+function isClaudeCompactCommandText(text: string) {
+  return text.trimStart().startsWith("<command-name>/compact</command-name>")
 }
 
 function extractMessageText(payload: Record<string, unknown>) {
@@ -132,7 +145,8 @@ function extractClaudeTextContent(message: Record<string, unknown>) {
   const content = message.content
 
   if (typeof content === "string") {
-    return content.trim()
+    const trimmed = content.trim()
+    return trimmed && !isClaudeHiddenUserText(trimmed) ? trimmed : ""
   }
 
   if (!Array.isArray(content)) {
@@ -480,6 +494,7 @@ function buildCodexPreviewData(lines: string[]): ConversationPreviewData {
   let lastAssistantMessage: string | null = null
   let lastThoughtPreview: string | null = null
   let lastEntryTimestamp: string | null = null
+  let lastMeaningfulActivity: ConversationPreviewData["lastMeaningfulActivity"] = "none"
 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
     const line = lines[lineIndex]?.trim()
@@ -523,12 +538,15 @@ function buildCodexPreviewData(lines: string[]): ConversationPreviewData {
     const timestamp = typeof record.timestamp === "string" ? record.timestamp : null
     if (role === "user") {
       lastUserPreview = text
+      lastMeaningfulActivity = "user"
     } else {
       const phase = typeof payload.phase === "string" ? payload.phase : null
       if (phase === "commentary") {
         lastThoughtPreview = text
+        lastMeaningfulActivity = "assistant_activity"
       } else {
         lastAssistantMessage = text
+        lastMeaningfulActivity = "assistant_terminal"
       }
     }
 
@@ -541,7 +559,11 @@ function buildCodexPreviewData(lines: string[]): ConversationPreviewData {
     lastUserPreview,
     lastAssistantMessage,
     lastThoughtPreview,
+    specialPreviewKind: null,
+    specialPreviewText: null,
+    specialPreviewTimestamp: null,
     lastEntryTimestamp,
+    lastMeaningfulActivity,
     sessionMeta
   }
 }
@@ -952,6 +974,10 @@ function buildClaudePreviewData(lines: string[]): ConversationPreviewData {
   let lastAssistantMessage: string | null = null
   let lastThoughtPreview: string | null = null
   let lastEntryTimestamp: string | null = null
+  let lastMeaningfulActivity: ConversationPreviewData["lastMeaningfulActivity"] = "none"
+  let lastMeaningfulActivityAt: string | null = null
+  let lastCompactCommandAt: string | null = null
+  let lastCompactBoundaryAt: string | null = null
 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
     const line = lines[lineIndex]?.trim()
@@ -1009,13 +1035,29 @@ function buildClaudePreviewData(lines: string[]): ConversationPreviewData {
 
       if (stopReason === "end_turn") {
         lastAssistantMessage = text
+        lastMeaningfulActivity = "assistant_terminal"
       } else {
         lastThoughtPreview = text
+        lastMeaningfulActivity = "assistant_activity"
       }
 
       if (timestamp) {
         lastEntryTimestamp = timestamp
+        lastMeaningfulActivityAt = timestamp
       }
+      continue
+    }
+
+    if (record.type === "system") {
+      const subtype =
+        typeof (record as { subtype?: unknown }).subtype === "string"
+          ? (record as { subtype: string }).subtype
+          : null
+
+      if (subtype === "compact_boundary" && timestamp) {
+        lastCompactBoundaryAt = timestamp
+      }
+
       continue
     }
 
@@ -1036,12 +1078,19 @@ function buildClaudePreviewData(lines: string[]): ConversationPreviewData {
         const summary = summarizeClaudeToolResult(matchedToolUse, toolUseResult)
         if (summary) {
           lastThoughtPreview = summary
+          lastMeaningfulActivity = "assistant_activity"
           if (timestamp) {
             lastEntryTimestamp = timestamp
+            lastMeaningfulActivityAt = timestamp
           }
         }
       }
       continue
+    }
+
+    const rawContent = message.content
+    if (typeof rawContent === "string" && isClaudeCompactCommandText(rawContent) && timestamp) {
+      lastCompactCommandAt = timestamp
     }
 
     const text = extractClaudeTextContent(message)
@@ -1050,16 +1099,43 @@ function buildClaudePreviewData(lines: string[]): ConversationPreviewData {
     }
 
     lastUserPreview = text
+    lastMeaningfulActivity = "user"
     if (timestamp) {
       lastEntryTimestamp = timestamp
+      lastMeaningfulActivityAt = timestamp
     }
   }
+
+  const specialPreview =
+    lastCompactBoundaryAt &&
+    (!lastMeaningfulActivityAt || lastCompactBoundaryAt >= lastMeaningfulActivityAt)
+      ? {
+          specialPreviewKind: "compacted" as const,
+          specialPreviewText: "Conversation compacted",
+          specialPreviewTimestamp: lastCompactBoundaryAt
+        }
+      : lastCompactCommandAt &&
+          (!lastMeaningfulActivityAt || lastCompactCommandAt >= lastMeaningfulActivityAt)
+        ? {
+            specialPreviewKind: "compacting" as const,
+            specialPreviewText: "Compacting context...",
+            specialPreviewTimestamp: lastCompactCommandAt
+          }
+        : {
+            specialPreviewKind: null,
+            specialPreviewText: null,
+            specialPreviewTimestamp: null
+          }
 
   return {
     lastUserPreview,
     lastAssistantMessage,
     lastThoughtPreview,
+    specialPreviewKind: specialPreview.specialPreviewKind,
+    specialPreviewText: specialPreview.specialPreviewText,
+    specialPreviewTimestamp: specialPreview.specialPreviewTimestamp,
     lastEntryTimestamp,
+    lastMeaningfulActivity,
     sessionMeta: {
       client: "cli",
       cwd: sessionCwd

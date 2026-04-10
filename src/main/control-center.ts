@@ -45,6 +45,7 @@ export const CONTROL_CENTER_CODEX_EVENTS = [
 export const CONTROL_CENTER_CLAUDE_EVENTS = [
   "SessionStart",
   "UserPromptSubmit",
+  "PreCompact",
   "PreToolUse",
   "PostToolUse",
   "Stop",
@@ -58,6 +59,7 @@ export const CONTROL_CENTER_CLAUDE_EVENTS = [
 const DEFAULT_SOUND_PATH = "/System/Library/Sounds/Glass.aiff"
 const GLOBAL_SOUND_DEBOUNCE_MS = 900
 const THREAD_SOUND_DEBOUNCE_MS = 12_000
+const CLAUDE_TRANSCRIPT_REFRESH_POLL_MS = 1200
 const PREVIEW_MAX_LENGTH = 220
 const LIVE_HOOK_COMMAND_MARKER = CONTROL_CENTER_HOOK_MODE_ARG
 const CODEX_INTERNAL_TITLE_PROMPT_PREFIX =
@@ -539,6 +541,10 @@ export function classifyLiveThreadStatusFromHook(params: {
     return "waiting_permission" as const
   }
 
+  if (params.eventName === "PreCompact") {
+    return "running" as const
+  }
+
   if (params.eventName === "PreToolUse") {
     const toolName =
       findFirstString(params.payload, [["tool_name"], ["payload", "tool_name"]]) ?? ""
@@ -682,6 +688,14 @@ function buildHookPreviews(params: {
   eventName: string
   payload: Record<string, unknown>
 }) {
+  if (params.eventName === "PreCompact") {
+    return {
+      lastUserPreview: null,
+      lastAssistantPreview: "Compacting context...",
+      assistantPreviewKind: "compacting" as const
+    }
+  }
+
   const lastUserPreview =
     params.eventName === "UserPromptSubmit"
       ? normalizeTextPreview(
@@ -1349,6 +1363,17 @@ async function readTranscriptPreview(record: StoredLiveThreadRecord) {
     provider: record.provider,
     sessionContent
   })
+  const shouldSuppressClaudeTranscriptShell =
+    record.provider === "claude" &&
+    !record.pendingRequest &&
+    preview.lastMeaningfulActivity === "none"
+
+  if (shouldSuppressClaudeTranscriptShell) {
+    return {
+      suppress: true as const
+    }
+  }
+
   const lastUserPreview = normalizeTextPreview(preview.lastUserPreview)
   const lastAssistantMessage = normalizeTextPreview(preview.lastAssistantMessage)
   const lastThoughtPreview = normalizeTextPreview(preview.lastThoughtPreview)
@@ -1358,6 +1383,55 @@ async function readTranscriptPreview(record: StoredLiveThreadRecord) {
     lastAssistantMessage,
     lastThoughtPreview
   })
+  const shouldApplySpecialPreview =
+    Boolean(
+      preview.specialPreviewKind &&
+        preview.specialPreviewText &&
+        preview.specialPreviewTimestamp &&
+        preview.specialPreviewTimestamp >= record.lastEventAt
+    )
+  const shouldPreserveCompactingState =
+    record.provider === "claude" &&
+    record.assistantPreviewKind === "compacting" &&
+    !(
+      shouldApplySpecialPreview &&
+      preview.specialPreviewKind === "compacted"
+    )
+  const resolvedAssistantPreview =
+    shouldPreserveCompactingState
+      ? {
+          lastAssistantPreview: record.lastAssistantPreview,
+          assistantPreviewKind: record.assistantPreviewKind
+        }
+      : shouldApplySpecialPreview
+      ? {
+          lastAssistantPreview: preview.specialPreviewText,
+          assistantPreviewKind: preview.specialPreviewKind as Exclude<
+            typeof preview.specialPreviewKind,
+            null
+          >
+        }
+      : assistantPreview
+  const nextStatus =
+    record.provider !== "claude"
+      ? record.status
+      : shouldPreserveCompactingState
+        ? record.status
+      : record.pendingRequest?.type === "approval_request"
+        ? "waiting_permission"
+        : record.pendingRequest?.type === "choice_request"
+          ? "waiting_user"
+          : shouldApplySpecialPreview && preview.specialPreviewKind === "compacted"
+            ? "completed"
+            : shouldApplySpecialPreview && preview.specialPreviewKind === "compacting"
+              ? "running"
+              : preview.lastMeaningfulActivity === "assistant_terminal"
+                ? "completed"
+                : preview.lastMeaningfulActivity === "assistant_activity"
+                  ? "running"
+                  : preview.lastMeaningfulActivity === "user"
+                    ? "running"
+                    : record.status
 
   const lastEntryTimestamp = preview.lastEntryTimestamp
   const sessionClient =
@@ -1398,8 +1472,9 @@ async function readTranscriptPreview(record: StoredLiveThreadRecord) {
     projectPath:
       preview.sessionMeta.cwd ?? record.projectPath,
     lastUserPreview: lastUserPreview ?? record.lastUserPreview,
-    lastAssistantPreview: assistantPreview.lastAssistantPreview,
-    assistantPreviewKind: assistantPreview.assistantPreviewKind,
+    lastAssistantPreview: resolvedAssistantPreview.lastAssistantPreview,
+    assistantPreviewKind: resolvedAssistantPreview.assistantPreviewKind,
+    status: nextStatus,
     lastEventAt: lastEntryTimestamp ?? record.lastEventAt,
     launchMode: nextLaunchMode,
     hostAppId: nextHostContext.hostAppId,
@@ -1413,6 +1488,35 @@ function shouldClearPendingRequest(event: NormalizedLiveHookEvent) {
     event.eventName === "UserPromptSubmit" ||
     (event.status !== "waiting_permission" && event.status !== "waiting_user")
   )
+}
+
+function isPassiveSessionStartEvent(params: {
+  event: NormalizedLiveHookEvent
+  existing: StoredLiveThreadRecord | null
+  session: SessionListItem | null
+}) {
+  if (params.event.eventName !== "SessionStart") {
+    return false
+  }
+
+  if (params.event.pendingRequest) {
+    return false
+  }
+
+  const hasMeaningfulThreadName =
+    Boolean(params.event.threadName) &&
+    !isFallbackThreadName(params.event.provider, params.event.threadName)
+
+  if (
+    hasMeaningfulThreadName ||
+    params.event.lastUserPreview ||
+    params.event.lastAssistantPreview ||
+    params.event.transcriptPath
+  ) {
+    return false
+  }
+
+  return params.existing !== null || params.session !== null
 }
 
 function mergePendingRequest(params: {
@@ -1674,6 +1778,7 @@ export function createControlCenterService(
   let socketServer: net.Server | null = null
   let spoolWatcher: ReturnType<typeof chokidar.watch> | null = null
   let transcriptWatcher: ReturnType<typeof chokidar.watch> | null = null
+  let claudeTranscriptPollTimer: ReturnType<typeof setInterval> | null = null
   let lastGlobalSoundAt = 0
   const pendingHookResolutions = new Map<
     string,
@@ -1808,6 +1913,19 @@ export function createControlCenterService(
     })
   }
 
+  async function refreshClaudeTranscriptPreviews() {
+    const targetRecords = [...records.values()].filter(
+      record =>
+        !record.dismissedAt &&
+        record.provider === "claude" &&
+        Boolean(record.transcriptPath)
+    )
+
+    for (const record of targetRecords) {
+      await refreshRecordFromTranscript(record.id).catch(() => undefined)
+    }
+  }
+
   async function writeUpdatedRecord(record: StoredLiveThreadRecord, previous: StoredLiveThreadRecord | null) {
     const soundAwareRecord = await maybePlaySound(previous, record)
     records.set(soundAwareRecord.id, soundAwareRecord)
@@ -1827,6 +1945,15 @@ export function createControlCenterService(
       return
     }
 
+    if ("suppress" in previewUpdate && previewUpdate.suppress) {
+      if (records.delete(id)) {
+        await persistRecords()
+        await refreshTranscriptWatcher()
+        emitStateChanged(id)
+      }
+      return
+    }
+
     const nextRecord: StoredLiveThreadRecord = {
       ...currentRecord,
       threadName: previewUpdate.threadName,
@@ -1834,6 +1961,7 @@ export function createControlCenterService(
       lastUserPreview: previewUpdate.lastUserPreview,
       lastAssistantPreview: previewUpdate.lastAssistantPreview,
       assistantPreviewKind: previewUpdate.assistantPreviewKind,
+      status: previewUpdate.status,
       lastEventAt:
         previewUpdate.lastEventAt.localeCompare(currentRecord.lastEventAt) > 0
           ? previewUpdate.lastEventAt
@@ -1842,6 +1970,22 @@ export function createControlCenterService(
       hostAppId: previewUpdate.hostAppId,
       hostAppLabel: previewUpdate.hostAppLabel,
       hostAppExact: previewUpdate.hostAppExact
+    }
+
+    if (
+      nextRecord.threadName === currentRecord.threadName &&
+      nextRecord.projectPath === currentRecord.projectPath &&
+      nextRecord.lastUserPreview === currentRecord.lastUserPreview &&
+      nextRecord.lastAssistantPreview === currentRecord.lastAssistantPreview &&
+      nextRecord.assistantPreviewKind === currentRecord.assistantPreviewKind &&
+      nextRecord.status === currentRecord.status &&
+      nextRecord.lastEventAt === currentRecord.lastEventAt &&
+      nextRecord.launchMode === currentRecord.launchMode &&
+      nextRecord.hostAppId === currentRecord.hostAppId &&
+      nextRecord.hostAppLabel === currentRecord.hostAppLabel &&
+      nextRecord.hostAppExact === currentRecord.hostAppExact
+    ) {
+      return
     }
 
     records.set(id, nextRecord)
@@ -1928,6 +2072,46 @@ export function createControlCenterService(
 
     const existing = records.get(event.id) ?? null
     const session = sessionInfoById.get(event.id) ?? null
+
+    if (
+      isPassiveSessionStartEvent({
+        event,
+        existing,
+        session
+      })
+    ) {
+      if (!existing) {
+        return
+      }
+
+      const nextRecord: StoredLiveThreadRecord = {
+        ...existing,
+        projectPath: event.projectPath ?? session?.projectPath ?? existing.projectPath ?? null,
+        transcriptPath:
+          event.transcriptPath ?? session?.sessionPath ?? existing.transcriptPath ?? null,
+        launchMode: event.launchMode,
+        hostAppId: event.hostAppId,
+        hostAppLabel: event.hostAppLabel,
+        hostAppExact: event.hostAppExact
+      }
+
+      if (
+        nextRecord.projectPath === existing.projectPath &&
+        nextRecord.transcriptPath === existing.transcriptPath &&
+        nextRecord.launchMode === existing.launchMode &&
+        nextRecord.hostAppId === existing.hostAppId &&
+        nextRecord.hostAppLabel === existing.hostAppLabel &&
+        nextRecord.hostAppExact === existing.hostAppExact
+      ) {
+        return
+      }
+
+      records.set(event.id, nextRecord)
+      await persistRecords()
+      await refreshTranscriptWatcher()
+      emitStateChanged(event.id)
+      return
+    }
 
     if (
       event.provider === "codex" &&
@@ -2282,6 +2466,12 @@ export function createControlCenterService(
           })
         })
       }
+
+      if (!claudeTranscriptPollTimer) {
+        claudeTranscriptPollTimer = setInterval(() => {
+          void refreshClaudeTranscriptPreviews()
+        }, CLAUDE_TRANSCRIPT_REFRESH_POLL_MS)
+      }
     },
 
     onStateChanged(listener) {
@@ -2302,6 +2492,11 @@ export function createControlCenterService(
       if (transcriptWatcher) {
         await transcriptWatcher.close()
         transcriptWatcher = null
+      }
+
+      if (claudeTranscriptPollTimer) {
+        clearInterval(claudeTranscriptPollTimer)
+        claudeTranscriptPollTimer = null
       }
 
       if (socketServer) {

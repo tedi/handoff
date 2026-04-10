@@ -299,7 +299,12 @@ export type LiveThreadStatus =
   | "completed"
   | "failed"
 
-export type LiveAssistantPreviewKind = "thinking" | "message" | "none"
+export type LiveAssistantPreviewKind =
+  | "thinking"
+  | "message"
+  | "compacting"
+  | "compacted"
+  | "none"
 
 export type ControlCenterPendingRequestType =
   | "approval_request"

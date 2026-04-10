@@ -11,6 +11,15 @@ import {
 } from "./control-center"
 
 describe("classifyLiveThreadStatusFromHook", () => {
+  it("treats PreCompact as running", () => {
+    expect(
+      classifyLiveThreadStatusFromHook({
+        eventName: "PreCompact",
+        payload: {}
+      })
+    ).toBe("running")
+  })
+
   it("treats ambiguous Stop events as completed", () => {
     expect(
       classifyLiveThreadStatusFromHook({
@@ -33,6 +42,24 @@ describe("classifyLiveThreadStatusFromHook", () => {
 })
 
 describe("buildNormalizedHookEvent", () => {
+  it("builds a compacting preview for Claude PreCompact hooks", () => {
+    const event = buildNormalizedHookEvent({
+      provider: "claude",
+      eventName: "PreCompact",
+      payload: {
+        session_id: "claude-live-compact",
+        cwd: "/Users/tedikonda/topchallenger/apps/client"
+      }
+    })
+
+    expect(event).toMatchObject({
+      status: "running",
+      lastUserPreview: null,
+      lastAssistantPreview: "Compacting context...",
+      assistantPreviewKind: "compacting"
+    })
+  })
+
   it("builds a structured Claude permission request card from PermissionRequest hooks", () => {
     const event = buildNormalizedHookEvent({
       provider: "claude",
@@ -397,6 +424,284 @@ describe("createControlCenterService", () => {
       lastUserPreview:
         "i just confirmed, when i sent the message it opened a third item on our list."
     })
+
+    await service.dispose()
+  })
+
+  it("reconciles stale Claude running state back to completed after compact meta entries", async () => {
+    const baseDir = await fs.mkdtemp(path.join(os.tmpdir(), "handoff-control-center-"))
+    tempDirs.push(baseDir)
+
+    const transcriptPath = path.join(baseDir, "claude-compact.jsonl")
+    await fs.writeFile(
+      transcriptPath,
+      [
+        JSON.stringify({
+          type: "assistant",
+          timestamp: "2026-04-08T03:30:00.000Z",
+          cwd: "/tmp/project",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "Finished the change." }],
+            stop_reason: "end_turn"
+          }
+        }),
+        JSON.stringify({
+          type: "user",
+          timestamp: "2026-04-08T03:34:39.120Z",
+          message: {
+            role: "user",
+            content:
+              "<command-name>/compact</command-name>\n<command-message>compact</command-message>"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    )
+
+    const service = createControlCenterService({
+      dataDir: path.join(baseDir, "user-data")
+    })
+
+    await service.startWatching()
+    await service.reconcileSessions([
+      {
+        id: "claude:claude-compact-1",
+        sourceSessionId: "claude-compact-1",
+        provider: "claude",
+        archived: false,
+        threadName: "Claude compact test",
+        createdAt: "2026-04-08T03:30:00.000Z",
+        updatedAt: "2026-04-08T03:34:39.193Z",
+        projectPath: "/tmp/project",
+        sessionPath: transcriptPath
+      }
+    ])
+
+    await service.ingestHookEvent({
+      id: "claude:claude-compact-1",
+      provider: "claude",
+      sourceSessionId: "claude-compact-1",
+      eventName: "PreCompact",
+      eventAt: "2026-04-08T03:34:39.050Z",
+      threadName: "Claude compact test",
+      projectPath: "/tmp/project",
+      transcriptPath,
+      status: "running",
+      lastUserPreview: null,
+      lastAssistantPreview: "Update file.ts",
+      assistantPreviewKind: "thinking",
+      launchMode: "cli",
+      hostAppLabel: "Ghostty",
+      hostAppExact: true,
+      pendingRequest: null
+    })
+
+    let snapshot = await service.getSnapshot()
+    expect(snapshot.records[0]).toMatchObject({
+      status: "running",
+      lastUserPreview: null,
+      lastAssistantPreview: "Compacting context...",
+      assistantPreviewKind: "compacting"
+    })
+
+    await fs.writeFile(
+      transcriptPath,
+      [
+        JSON.stringify({
+          type: "assistant",
+          timestamp: "2026-04-08T03:30:00.000Z",
+          cwd: "/tmp/project",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "Finished the change." }],
+            stop_reason: "end_turn"
+          }
+        }),
+        JSON.stringify({
+          type: "system",
+          subtype: "compact_boundary",
+          timestamp: "2026-04-08T03:34:39.087Z"
+        }),
+        JSON.stringify({
+          type: "user",
+          timestamp: "2026-04-08T03:34:39.120Z",
+          message: {
+            role: "user",
+            content:
+              "<command-name>/compact</command-name>\n<command-message>compact</command-message>"
+          }
+        }),
+        JSON.stringify({
+          type: "user",
+          timestamp: "2026-04-08T03:34:39.193Z",
+          message: {
+            role: "user",
+            content:
+              "<local-command-stdout>Compacted (ctrl+o to see full summary)</local-command-stdout>"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    )
+
+    await new Promise(resolve => setTimeout(resolve, 150))
+
+    snapshot = await service.getSnapshot()
+    expect(snapshot.records[0]).toMatchObject({
+      status: "completed",
+      lastUserPreview: null,
+      lastAssistantPreview: "Conversation compacted",
+      assistantPreviewKind: "compacted"
+    })
+
+    await service.dispose()
+  })
+
+  it("does not demote an existing Claude row on a blank SessionStart", async () => {
+    const baseDir = await fs.mkdtemp(path.join(os.tmpdir(), "handoff-control-center-"))
+    tempDirs.push(baseDir)
+
+    const transcriptPath = path.join(baseDir, "claude-session-start.jsonl")
+    await fs.writeFile(
+      transcriptPath,
+      [
+        JSON.stringify({
+          type: "assistant",
+          timestamp: "2026-04-08T04:00:00.000Z",
+          cwd: "/tmp/project",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "Completed work." }],
+            stop_reason: "end_turn"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    )
+
+    const service = createControlCenterService({
+      dataDir: path.join(baseDir, "user-data")
+    })
+
+    await service.startWatching()
+    await service.ingestHookEvent({
+      id: "claude:resume-1",
+      provider: "claude",
+      sourceSessionId: "resume-1",
+      eventName: "Stop",
+      eventAt: "2026-04-08T04:00:01.000Z",
+      threadName: "Resume test",
+      projectPath: "/tmp/project",
+      transcriptPath,
+      status: "completed",
+      lastUserPreview: null,
+      lastAssistantPreview: "Completed work.",
+      assistantPreviewKind: "message",
+      launchMode: "cli",
+      hostAppLabel: "Ghostty",
+      hostAppExact: true,
+      pendingRequest: null
+    })
+
+    let snapshot = await service.getSnapshot()
+    expect(snapshot.records[0]).toMatchObject({
+      status: "completed",
+      lastAssistantPreview: "Completed work.",
+      assistantPreviewKind: "message"
+    })
+
+    await service.ingestHookEvent({
+      id: "claude:resume-1",
+      provider: "claude",
+      sourceSessionId: "resume-1",
+      eventName: "SessionStart",
+      eventAt: "2026-04-08T04:02:00.000Z",
+      threadName: null,
+      projectPath: "/tmp/project",
+      transcriptPath: null,
+      status: "running",
+      lastUserPreview: null,
+      lastAssistantPreview: null,
+      assistantPreviewKind: "none",
+      launchMode: "cli",
+      hostAppLabel: "Ghostty",
+      hostAppExact: true,
+      pendingRequest: null
+    })
+
+    snapshot = await service.getSnapshot()
+    expect(snapshot.records[0]).toMatchObject({
+      status: "completed",
+      lastAssistantPreview: "Completed work.",
+      assistantPreviewKind: "message"
+    })
+
+    await service.dispose()
+  })
+
+  it("suppresses Claude compact continuation shell sessions with no real activity", async () => {
+    const baseDir = await fs.mkdtemp(path.join(os.tmpdir(), "handoff-control-center-"))
+    tempDirs.push(baseDir)
+
+    const transcriptPath = path.join(baseDir, "claude-continuation-shell.jsonl")
+    await fs.writeFile(
+      transcriptPath,
+      [
+        JSON.stringify({
+          type: "system",
+          subtype: "compact_boundary",
+          timestamp: "2026-04-08T04:16:06.147Z"
+        }),
+        JSON.stringify({
+          type: "user",
+          timestamp: "2026-04-08T04:16:06.148Z",
+          message: {
+            role: "user",
+            content:
+              "This session is being continued from a previous conversation that ran out of context.\n\nSummary:\nNo explicit user request has been made yet."
+          }
+        }),
+        JSON.stringify({
+          type: "user",
+          timestamp: "2026-04-08T04:16:06.248Z",
+          message: {
+            role: "user",
+            content:
+              "<local-command-stdout>Compacted (ctrl+o to see full summary)</local-command-stdout>"
+          }
+        })
+      ].join("\n"),
+      "utf8"
+    )
+
+    const service = createControlCenterService({
+      dataDir: path.join(baseDir, "user-data")
+    })
+
+    await service.startWatching()
+    await service.ingestHookEvent({
+      id: "claude:continuation-shell-1",
+      provider: "claude",
+      sourceSessionId: "continuation-shell-1",
+      eventName: "PreCompact",
+      eventAt: "2026-04-08T04:16:06.120Z",
+      threadName: "Claude conversation",
+      projectPath: "/tmp/project",
+      transcriptPath,
+      status: "running",
+      lastUserPreview: null,
+      lastAssistantPreview: "Compacting context...",
+      assistantPreviewKind: "compacting",
+      launchMode: "cli",
+      hostAppLabel: "Ghostty",
+      hostAppExact: true,
+      pendingRequest: null
+    })
+
+    await new Promise(resolve => setTimeout(resolve, 1500))
+
+    expect((await service.getSnapshot()).records).toHaveLength(0)
 
     await service.dispose()
   })
