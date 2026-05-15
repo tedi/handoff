@@ -6,3 +6,4 @@ release/
 *.tsbuildinfo
 output/
 build/icon.iconset/
+.omx/
