@@ -39,6 +39,8 @@ interface PatchRecord {
 
 interface JsonRecord {
   type?: string
+  customTitle?: string
+  entrypoint?: string
   timestamp?: string
   payload?: Record<string, unknown>
   message?: Record<string, unknown>
@@ -50,6 +52,7 @@ interface JsonRecord {
 interface ParsedSessionMeta {
   client: SessionClient
   cwd: string | null
+  isSubagent?: boolean
 }
 
 interface ParsedTranscriptData {
@@ -60,6 +63,7 @@ interface ParsedTranscriptData {
 }
 
 export interface ConversationPreviewData {
+  title?: string | null
   lastUserPreview: string | null
   lastAssistantMessage: string | null
   lastThoughtPreview: string | null
@@ -305,6 +309,7 @@ function extractCodexSessionMeta(lines: string[]) {
 
     return {
       client: parseSessionClient(record.payload),
+      isSubagent: isRecord(record.payload.source) && "subagent" in record.payload.source,
       cwd:
         typeof record.payload.cwd === "string" ? record.payload.cwd : null
     } satisfies ParsedSessionMeta
@@ -314,6 +319,27 @@ function extractCodexSessionMeta(lines: string[]) {
     client: "unknown",
     cwd: null
   } satisfies ParsedSessionMeta
+}
+
+function parseClaudeSessionClient(lines: string[]): SessionClient {
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index] ?? ""
+    if (!line.includes('"entrypoint"')) {
+      continue
+    }
+    try {
+      const record = JSON.parse(line) as JsonRecord
+      if (record.entrypoint === "claude-desktop") {
+        return "desktop"
+      }
+      if (record.entrypoint) {
+        return "cli"
+      }
+    } catch {
+      continue
+    }
+  }
+  return "unknown"
 }
 
 function buildEntriesFromCodexMessages(messages: MessageRecord[], patches: PatchRecord[]) {
@@ -509,11 +535,34 @@ function buildCodexPreviewData(lines: string[]): ConversationPreviewData {
       continue
     }
 
+    const payload = isRecord(record.payload) ? record.payload : {}
+    const timestamp = typeof record.timestamp === "string" ? record.timestamp : null
+    if (record.type === "event_msg") {
+      if (payload.type === "task_started" || payload.type === "turn_started") {
+        lastMeaningfulActivity = "assistant_activity"
+        lastAssistantMessage = null
+        lastThoughtPreview = null
+      } else if (
+        payload.type === "task_complete" || payload.type === "turn_completed" ||
+        payload.type === "turn_aborted"
+      ) {
+        lastMeaningfulActivity = "assistant_terminal"
+        if (typeof payload.last_agent_message === "string") {
+          lastAssistantMessage = payload.last_agent_message
+        }
+      } else {
+        continue
+      }
+      if (timestamp) {
+        lastEntryTimestamp = timestamp
+      }
+      continue
+    }
+
     if (record.type !== "response_item") {
       continue
     }
 
-    const payload = isRecord(record.payload) ? record.payload : {}
     if (payload.type !== "message") {
       continue
     }
@@ -535,7 +584,6 @@ function buildCodexPreviewData(lines: string[]): ConversationPreviewData {
       continue
     }
 
-    const timestamp = typeof record.timestamp === "string" ? record.timestamp : null
     if (role === "user") {
       lastUserPreview = text
       lastMeaningfulActivity = "user"
@@ -772,6 +820,7 @@ function buildClaudePatch(
 }
 
 function buildClaudeTranscriptData(lines: string[]): ParsedTranscriptData {
+  const sessionClient = parseClaudeSessionClient(lines)
   const entries: ConversationEntry[] = []
   const toolUses = new Map<string, ClaudeToolUseRecord>()
   let thoughtSteps: AssistantThoughtChainEntry["messages"] = []
@@ -961,13 +1010,14 @@ function buildClaudeTranscriptData(lines: string[]): ParsedTranscriptData {
     lastAssistantMarkdown,
     hasDiffs,
     sessionMeta: {
-      client: "cli",
+      client: sessionClient === "unknown" ? "cli" : sessionClient,
       cwd: sessionCwd
     }
   }
 }
 
 function buildClaudePreviewData(lines: string[]): ConversationPreviewData {
+  let title: string | null = null
   const toolUses = new Map<string, ClaudeToolUseRecord>()
   let sessionCwd: string | null = null
   let lastUserPreview: string | null = null
@@ -993,6 +1043,9 @@ function buildClaudePreviewData(lines: string[]): ConversationPreviewData {
     }
 
     const timestamp = typeof record.timestamp === "string" ? record.timestamp : null
+    if (record.type === "custom-title" && typeof record.customTitle === "string" && record.customTitle.trim()) {
+      title = record.customTitle.trim()
+    }
     if (!sessionCwd && typeof record.cwd === "string" && record.cwd.trim()) {
       sessionCwd = record.cwd
     }
@@ -1030,6 +1083,13 @@ function buildClaudePreviewData(lines: string[]): ConversationPreviewData {
         .filter(Boolean)
       const text = textParts.join("\n\n").trim()
       if (!text) {
+        if (content.some(item => item.type === "thinking" || item.type === "tool_use")) {
+          lastMeaningfulActivity = "assistant_activity"
+          if (timestamp) {
+            lastEntryTimestamp = timestamp
+            lastMeaningfulActivityAt = timestamp
+          }
+        }
         continue
       }
 
@@ -1134,10 +1194,11 @@ function buildClaudePreviewData(lines: string[]): ConversationPreviewData {
     specialPreviewKind: specialPreview.specialPreviewKind,
     specialPreviewText: specialPreview.specialPreviewText,
     specialPreviewTimestamp: specialPreview.specialPreviewTimestamp,
+    title,
     lastEntryTimestamp,
     lastMeaningfulActivity,
     sessionMeta: {
-      client: "cli",
+      client: parseClaudeSessionClient(lines),
       cwd: sessionCwd
     }
   }
@@ -1179,8 +1240,7 @@ export function buildConversationTranscript(params: {
     updatedAt: session.updatedAt,
     sessionPath,
     projectPath: session.projectPath ?? parsed.sessionMeta.cwd,
-    sessionClient:
-      session.provider === "claude" ? "cli" : parsed.sessionMeta.client,
+    sessionClient: parsed.sessionMeta.client,
     sessionCwd: parsed.sessionMeta.cwd,
     entries: parsed.entries,
     markdown: renderMarkdown(parsed.entries, options.includeDiffs, options.includeCommentary),

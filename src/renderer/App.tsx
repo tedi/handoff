@@ -24,11 +24,6 @@ import "prismjs/components/prism-tsx"
 import "prismjs/components/prism-typescript"
 
 import type {
-  AgentDefinition,
-  AgentBridgeConfigSnippets,
-  AgentBridgeHealth,
-  AgentRunRecord,
-  AgentUpdatePatch,
   ArchivedFilterValue,
   AppStateInfo,
   AppSection,
@@ -546,7 +541,6 @@ function applySettingsPatchToSnapshot(
   return {
     ...snapshot,
     settings: {
-      agents: snapshot.settings.agents,
       threadOrganization: snapshot.settings.threadOrganization,
       providers: {
         codex: {
@@ -556,16 +550,6 @@ function applySettingsPatchToSnapshot(
         claude: {
           ...snapshot.settings.providers.claude,
           ...(patch.providers?.claude ?? {})
-        }
-      },
-      skills: {
-        codex: {
-          toolTimeoutSec: snapshot.settings.skills?.codex?.toolTimeoutSec ?? null,
-          ...(patch.skills?.codex ?? {})
-        },
-        claude: {
-          toolTimeoutSec: snapshot.settings.skills?.claude?.toolTimeoutSec ?? null,
-          ...(patch.skills?.claude ?? {})
         }
       },
       terminals: {
@@ -1182,167 +1166,6 @@ function buildNewThreadStartLabel(draft: Pick<NewThreadDraft, "launchMode" | "ve
   }
 
   return `Start in ${providerLabel} ${formatLaunchModeLabel(draft.launchMode)}`
-}
-
-function sortAgentsByName(agents: AgentDefinition[]) {
-  return [...agents].sort(
-    (left, right) =>
-      left.name.localeCompare(right.name, undefined, { sensitivity: "base" }) ||
-      left.id.localeCompare(right.id)
-  )
-}
-
-function cloneAgentDefinition(agent: AgentDefinition | null) {
-  return agent ? { ...agent } : null
-}
-
-function areAgentsEqual(left: AgentDefinition | null, right: AgentDefinition | null) {
-  return JSON.stringify(left) === JSON.stringify(right)
-}
-
-function sortAgentRunsByStartedAt(runs: AgentRunRecord[]) {
-  return [...runs].sort((left, right) =>
-    right.startedAt.localeCompare(left.startedAt)
-  )
-}
-
-function formatAgentRunStatus(status: AgentRunRecord["status"]) {
-  if (status === "completed") {
-    return "Completed"
-  }
-
-  if (status === "failed") {
-    return "Failed"
-  }
-
-  if (status === "canceled") {
-    return "Canceled"
-  }
-
-  return "Running"
-}
-
-function formatSkillInstallState(params: {
-  skillInstalled: boolean
-  mcpInstalled: boolean
-  liveHooksInstalled: boolean
-}) {
-  if (params.skillInstalled && params.mcpInstalled && params.liveHooksInstalled) {
-    return "Installed"
-  }
-
-  if (params.skillInstalled || params.mcpInstalled || params.liveHooksInstalled) {
-    return "Partial"
-  }
-
-  return "Not installed"
-}
-
-type AgentsPaneView = "dashboard" | "agent" | "automation"
-
-function getAgentRunProjectLabel(projectPath: string) {
-  return formatProjectFilterLabel(projectPath)
-}
-
-function getAgentRunThreadLabel(run: AgentRunRecord) {
-  if (run.caller && typeof run.caller === "object") {
-    const sessionName =
-      typeof run.caller.sessionName === "string" ? run.caller.sessionName.trim() : ""
-    const threadName =
-      typeof run.caller.threadName === "string" ? run.caller.threadName.trim() : ""
-    const threadId =
-      typeof run.caller.threadId === "string" ? run.caller.threadId.trim() : ""
-
-    const primaryName = sessionName || threadName
-
-    if (primaryName && threadId) {
-      return `${primaryName} · ${threadId}`
-    }
-
-    if (primaryName || threadId) {
-      return primaryName || threadId
-    }
-  }
-
-  return run.runId
-}
-
-function getAgentRunHistoryLabel(run: AgentRunRecord) {
-  const threadLabel = getAgentRunThreadLabel(run)
-  return threadLabel === run.runId
-    ? getComposerModelLabel(run.provider, run.modelId)
-    : threadLabel
-}
-
-function formatAgentRunAge(startedAt: string, now: number) {
-  const startedAtMs = Date.parse(startedAt)
-  if (Number.isNaN(startedAtMs)) {
-    return null
-  }
-
-  const diffMs = Math.max(0, now - startedAtMs)
-  const minuteMs = 60 * 1000
-  const hourMs = 60 * minuteMs
-  const dayMs = 24 * hourMs
-  const weekMs = 7 * dayMs
-  const monthMs = 30 * dayMs
-
-  if (diffMs < hourMs) {
-    return `${Math.max(1, Math.floor(diffMs / minuteMs))}m`
-  }
-
-  if (diffMs < dayMs) {
-    return `${Math.max(1, Math.floor(diffMs / hourMs))}h`
-  }
-
-  if (diffMs < weekMs) {
-    return `${Math.max(1, Math.floor(diffMs / dayMs))}d`
-  }
-
-  if (diffMs < monthMs) {
-    return `${Math.max(1, Math.floor(diffMs / weekMs))}w`
-  }
-
-  return `${Math.max(1, Math.floor(diffMs / monthMs))}m`
-}
-
-function getAgentRunResultLabel(run: AgentRunRecord) {
-  if (run.status === "completed") {
-    return "Final response"
-  }
-
-  return "Error"
-}
-
-function getAutomationStatusTone(params: {
-  bridgeStatus?: AgentBridgeHealth | null
-  providerStatus?: HandoffSkillsStatus["providers"][SessionProvider]
-}) {
-  if (params.bridgeStatus) {
-    return params.bridgeStatus.status === "ready" ? "ready" : "error"
-  }
-
-  if (!params.providerStatus) {
-    return "partial"
-  }
-
-  if (
-    params.providerStatus.skillInstalled &&
-    params.providerStatus.mcpInstalled &&
-    params.providerStatus.liveHooksInstalled
-  ) {
-    return "ready"
-  }
-
-  if (
-    params.providerStatus.skillInstalled ||
-    params.providerStatus.mcpInstalled ||
-    params.providerStatus.liveHooksInstalled
-  ) {
-    return "partial"
-  }
-
-  return "error"
 }
 
 function formatLiveThreadStatus(status: LiveThreadRecord["status"]) {
@@ -2188,55 +2011,6 @@ function ControlCenterIcon() {
       <circle cx="8" cy="8" fill="currentColor" r="0.9" />
       <circle cx="10.8" cy="8" fill="currentColor" r="0.9" />
     </svg>
-  )
-}
-
-function AgentsIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      className="sidebar-filter-icon"
-      fill="none"
-      viewBox="0 0 16 16"
-    >
-      <circle cx="8" cy="5.2" r="2.1" stroke="currentColor" strokeWidth="1.15" />
-      <path
-        d="M3.75 12.75c.42-2.1 2.02-3.25 4.25-3.25s3.83 1.15 4.25 3.25"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeWidth="1.15"
-      />
-    </svg>
-  )
-}
-
-function DashboardIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      className="sidebar-filter-icon"
-      fill="none"
-      viewBox="0 0 16 16"
-    >
-      <path
-        d="M2.75 2.75h4.5v4.5h-4.5ZM8.75 2.75h4.5v2.5h-4.5ZM8.75 6.75h4.5v6.5h-4.5ZM2.75 8.75h4.5v4.5h-4.5Z"
-        stroke="currentColor"
-        strokeLinejoin="round"
-        strokeWidth="1.1"
-      />
-    </svg>
-  )
-}
-
-function StatusMarkerIcon({
-  state
-}: {
-  state: "ready" | "partial" | "error"
-}) {
-  return (
-    <span className={`automation-status-icon is-${state}`} aria-hidden="true">
-      {state === "ready" ? "✓" : state === "partial" ? "–" : "✕"}
-    </span>
   )
 }
 
@@ -4130,124 +3904,9 @@ function TerminalSettingsCard({
   )
 }
 
-function BridgeSettingsCard({
-  bridgeStatus,
-  bridgeSnippets,
-  bridgeError,
-  onCopySnippet
-}: {
-  bridgeStatus: AgentBridgeHealth | null
-  bridgeSnippets: AgentBridgeConfigSnippets | null
-  bridgeError: string | null
-  onCopySnippet(label: string, value: string): void
-}) {
-  if (bridgeError) {
-    return (
-      <section className="settings-card">
-        <div className="settings-card-copy">
-          <h2>Agent bridge</h2>
-          <p>{bridgeError}</p>
-        </div>
-      </section>
-    )
-  }
-
-  if (!bridgeStatus || !bridgeSnippets) {
-    return (
-      <section className="settings-card">
-        <div className="settings-card-copy">
-          <h2>Agent bridge</h2>
-          <p>Loading MCP bridge status and configuration snippets.</p>
-        </div>
-      </section>
-    )
-  }
-
-  return (
-    <section className="settings-card">
-      <div className="settings-card-copy">
-        <h2>Agent bridge</h2>
-        <p>
-          Exposes saved Handoff agents through a local MCP stdio entrypoint. Async jobs are
-          started quickly, then clients poll for completion while Handoff runs the provider
-          headlessly in the background.
-        </p>
-      </div>
-
-      <div className="settings-meta-grid">
-        <div className="settings-meta-item">
-          <span className="settings-meta-label">Status</span>
-          <SettingsValue value={bridgeStatus.status === "ready" ? "Ready" : "Error"} />
-        </div>
-        <div className="settings-meta-item settings-meta-item-wide">
-          <span className="settings-meta-label">Command</span>
-          <SettingsValue
-            monospace
-            value={[bridgeStatus.command, ...bridgeStatus.args].join(" ")}
-          />
-        </div>
-        <div className="settings-meta-item settings-meta-item-wide">
-          <span className="settings-meta-label">Runs log</span>
-          <SettingsValue monospace value={bridgeStatus.runsLogPath} />
-        </div>
-        <div className="settings-meta-item settings-meta-item-wide">
-          <span className="settings-meta-label">State directory</span>
-          <SettingsValue monospace value={bridgeStatus.stateDir} />
-        </div>
-      </div>
-
-      <div className="settings-field-list">
-        <div className="settings-field">
-          <span className="settings-field-label">Codex MCP command</span>
-          <textarea
-            className="settings-input settings-code-block"
-            readOnly
-            spellCheck={false}
-            value={bridgeSnippets.codexCommand}
-          />
-          <div className="settings-card-inline-actions">
-            <button
-              className="ghost-button"
-              onClick={() => onCopySnippet("Codex MCP command", bridgeSnippets.codexCommand)}
-              type="button"
-            >
-              Copy
-            </button>
-          </div>
-        </div>
-
-        <div className="settings-field">
-          <span className="settings-field-label">Claude MCP config</span>
-          <textarea
-            className="settings-input settings-code-block"
-            readOnly
-            spellCheck={false}
-            value={bridgeSnippets.claudeConfigJson}
-          />
-          <div className="settings-card-inline-actions">
-            <button
-              className="ghost-button"
-              onClick={() =>
-                onCopySnippet("Claude MCP config", bridgeSnippets.claudeConfigJson)
-              }
-              type="button"
-            >
-              Copy
-            </button>
-          </div>
-        </div>
-      </div>
-    </section>
-  )
-}
-
 function SettingsPane({
   settingsSnapshot,
   settingsError,
-  bridgeStatus,
-  bridgeSnippets,
-  bridgeError,
-  onCopyBridgeSnippet,
   onProviderOverrideChange,
   onProviderReset,
   onTerminalToggle,
@@ -4255,10 +3914,6 @@ function SettingsPane({
 }: {
   settingsSnapshot: HandoffSettingsSnapshot | null
   settingsError: string | null
-  bridgeStatus: AgentBridgeHealth | null
-  bridgeSnippets: AgentBridgeConfigSnippets | null
-  bridgeError: string | null
-  onCopyBridgeSnippet(label: string, value: string): void
   onProviderOverrideChange(
     provider: SessionProvider,
     patch: Partial<ProviderLaunchOverrides>
@@ -4313,858 +3968,6 @@ function SettingsPane({
         terminalOptions={settingsSnapshot.terminalOptions}
       />
 
-      <BridgeSettingsCard
-        bridgeError={bridgeError}
-        bridgeSnippets={bridgeSnippets}
-        bridgeStatus={bridgeStatus}
-        onCopySnippet={onCopyBridgeSnippet}
-      />
-    </div>
-  )
-}
-
-function AgentsListPane({
-  agents,
-  agentsError,
-  isDashboardSelected,
-  isLoading,
-  onCreate,
-  onSelectDashboard,
-  onSelect,
-  selectedAgentId,
-  stateInfo
-}: {
-  agents: AgentDefinition[]
-  agentsError: string | null
-  isDashboardSelected: boolean
-  isLoading: boolean
-  onCreate(): void
-  onSelectDashboard(): void
-  onSelect(agentId: string): void
-  selectedAgentId: string | null
-  stateInfo: AppStateInfo | null
-}) {
-  if (agentsError) {
-    return (
-      <div className="agent-list">
-        <EmptyState
-          title="Unable to load agents"
-          detail={agentsError}
-        />
-      </div>
-    )
-  }
-
-  return (
-    <div className="agent-list" role="list">
-      <div className="agent-list-create-row">
-        <button
-          className="sidebar-filter-button sidebar-filter-list-button"
-          onClick={onCreate}
-          type="button"
-        >
-          <WriteIcon />
-          <span className="sidebar-filter-button-label">New agent</span>
-        </button>
-      </div>
-
-      <button
-        className={`session-row ${isDashboardSelected ? "is-active" : ""}`}
-        onClick={onSelectDashboard}
-        type="button"
-      >
-        <div className="session-row-main">
-          <div className="session-title-group agent-list-dashboard-title">
-            <DashboardIcon />
-            <span className="session-title">Dashboard</span>
-          </div>
-        </div>
-      </button>
-
-      {isLoading ? (
-        <EmptyState
-          title="Loading agents"
-          detail="Reading saved agent presets."
-        />
-      ) : agents.length === 0 ? (
-        <EmptyState
-          title="No agents yet"
-          detail="Create an agent to save provider, model, and instruction presets."
-        />
-      ) : (
-        sortAgentsByName(agents).map(agent => (
-          <button
-            className={`session-row ${
-              !isDashboardSelected && agent.id === selectedAgentId ? "is-active" : ""
-            }`}
-            key={agent.id}
-            onClick={() => onSelect(agent.id)}
-            title={getComposerModelLabel(agent.provider, agent.modelId)}
-            type="button"
-          >
-            <div className="session-row-main">
-              <div className="session-title-group">
-                <span className="session-title">{agent.name}</span>
-              </div>
-              <div className="session-row-meta">
-                <ProviderIcon provider={agent.provider} stateInfo={stateInfo} />
-              </div>
-            </div>
-          </button>
-        ))
-      )}
-    </div>
-  )
-}
-
-function AgentSummaryPane({
-  agent,
-  onDelete,
-  onDuplicate,
-  onEdit
-}: {
-  agent: AgentDefinition | null
-  onDelete(): void
-  onDuplicate(): void
-  onEdit(): void
-}) {
-  if (!agent) {
-    return (
-      <EmptyState
-        title="No agent selected"
-        detail="Pick an agent from the left list."
-      />
-    )
-  }
-
-  const thinkingLabel =
-    THINKING_LEVEL_OPTIONS.find(option => option.value === agent.thinkingLevel)?.label ??
-    agent.thinkingLevel
-
-  return (
-    <section className="settings-card">
-      <div className="settings-card-header">
-        <div className="settings-card-copy">
-          <h2>{agent.name}</h2>
-        </div>
-        <div className="agent-editor-header-actions">
-          <button className="ghost-button" onClick={onEdit} type="button">
-            Edit
-          </button>
-          <button className="ghost-button" onClick={onDuplicate} type="button">
-            Duplicate
-          </button>
-          <button className="ghost-button" onClick={onDelete} type="button">
-            Delete
-          </button>
-        </div>
-      </div>
-
-      <div className="agent-summary-row">
-        <span className="agent-summary-pill">{formatProviderLabel(agent.provider)}</span>
-        <span className="agent-summary-pill">
-          {getComposerModelLabel(agent.provider, agent.modelId)}
-        </span>
-        <span className="agent-summary-pill">{thinkingLabel}</span>
-        <span className="agent-summary-pill">{agent.fast ? "Fast" : "Standard"}</span>
-        <span className="agent-summary-pill">
-          {agent.timeoutSec === null ? "No timeout" : `${agent.timeoutSec}s timeout`}
-        </span>
-        {agent.specialty?.trim() ? (
-          <span className="agent-summary-pill">{agent.specialty.trim()}</span>
-        ) : null}
-      </div>
-    </section>
-  )
-}
-
-function AgentEditorPane({
-  agent,
-  draft,
-  editorError,
-  onCancel,
-  onDraftChange,
-  onReset,
-  onSave
-}: {
-  agent: AgentDefinition | null
-  draft: AgentDefinition | null
-  editorError: string | null
-  onCancel(): void
-  onDraftChange(patch: AgentUpdatePatch): void
-  onReset(): void
-  onSave(): void
-}) {
-  if (!agent) {
-    return (
-      <EmptyState
-        title="No agent selected"
-        detail="Pick an agent from the left list or create a new one."
-      />
-    )
-  }
-
-  if (!draft) {
-    return (
-      <EmptyState
-        title="Loading agent"
-        detail="Preparing the selected agent."
-      />
-    )
-  }
-
-  const isDirty = !areAgentsEqual(agent, draft)
-  const modelOptions = getComposerModelOptions(draft.provider)
-  const supportsFastMode = getComposerProviderConfig(draft.provider).supportsFastMode
-
-  return (
-    <section className="settings-card">
-      <div className="settings-card-header">
-        <div className="settings-card-copy">
-          <h2>Edit agent</h2>
-        </div>
-      </div>
-
-      <div className="settings-field-list">
-        <label className="settings-field">
-          <span className="settings-field-label">Name</span>
-          <input
-            className="settings-input"
-            onChange={event => onDraftChange({ name: event.target.value })}
-            type="text"
-            value={draft.name}
-          />
-        </label>
-
-        <label className="settings-field">
-          <span className="settings-field-label">Specialty</span>
-          <input
-            className="settings-input"
-            onChange={event => onDraftChange({ specialty: event.target.value })}
-            placeholder="When should Handoff use this agent?"
-            type="text"
-            value={draft.specialty ?? ""}
-          />
-        </label>
-
-        <div className="agent-editor-grid">
-          <label className="settings-field">
-            <span className="settings-field-label">Provider</span>
-            <select
-              className="settings-input"
-              onChange={event =>
-                onDraftChange({ provider: event.target.value as SessionProvider })
-              }
-              value={draft.provider}
-            >
-              {NEW_THREAD_VENDOR_OPTIONS.map(option => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="settings-field">
-            <span className="settings-field-label">Model</span>
-            <select
-              className="settings-input"
-              onChange={event => onDraftChange({ modelId: event.target.value })}
-              value={draft.modelId}
-            >
-              {modelOptions.map(option => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="settings-field">
-            <span className="settings-field-label">Thinking strength</span>
-            <select
-              className="settings-input"
-              onChange={event =>
-                onDraftChange({ thinkingLevel: event.target.value as ThinkingLevel })
-              }
-              value={draft.thinkingLevel}
-            >
-              {THINKING_LEVEL_OPTIONS.map(option => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-
-        <label className="new-thread-inline-toggle">
-          <input
-            checked={draft.fast}
-            disabled={!supportsFastMode}
-            onChange={event => onDraftChange({ fast: event.target.checked })}
-            type="checkbox"
-          />
-          <span>{supportsFastMode ? "Fast mode" : "Fast mode unavailable for this provider"}</span>
-        </label>
-
-        <label className="settings-field">
-          <span className="settings-field-label">Timeout (seconds)</span>
-          <input
-            className="settings-input"
-            inputMode="numeric"
-            min={1}
-            max={1800}
-            onChange={event => {
-              const value = event.target.value.trim()
-              const nextTimeoutSec = value ? Number(value) : null
-              onDraftChange({
-                timeoutSec: Number.isFinite(nextTimeoutSec) ? nextTimeoutSec : null
-              })
-            }}
-            placeholder="None"
-            type="number"
-            value={draft.timeoutSec ?? ""}
-          />
-        </label>
-
-        <label className="settings-field">
-          <span className="settings-field-label">Custom instructions</span>
-          <textarea
-            className="new-thread-prompt-input agent-editor-textarea"
-            onChange={event =>
-              onDraftChange({ customInstructions: event.target.value })
-            }
-            placeholder="Add custom instructions"
-            spellCheck={false}
-            value={draft.customInstructions}
-          />
-        </label>
-      </div>
-
-      {editorError ? <div className="new-thread-inline-error">{editorError}</div> : null}
-
-      <div className="new-thread-actions">
-        <button className="ghost-button" onClick={onCancel} type="button">
-          Cancel
-        </button>
-        <button className="ghost-button" disabled={!isDirty} onClick={onReset} type="button">
-          Reset
-        </button>
-        <button className="accent-button" onClick={onSave} type="button">
-          Save
-        </button>
-      </div>
-    </section>
-  )
-}
-
-function AgentRunsPane({
-  emptyText,
-  isLoading,
-  onCancelRun,
-  onToggleRun,
-  runs,
-  runsError,
-  showAgentName,
-  title
-}: {
-  emptyText: string
-  isLoading: boolean
-  onCancelRun(runId: string): void
-  onToggleRun(runId: string): void
-  runs: AgentRunRecord[]
-  runsError: string | null
-  showAgentName: boolean
-  title: string
-}) {
-  const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set())
-  const [relativeNow, setRelativeNow] = useState(() => Date.now())
-
-  useEffect(() => {
-    setExpandedRunIds(current => {
-      const next = new Set<string>()
-
-      for (const run of runs) {
-        if (current.has(run.runId)) {
-          next.add(run.runId)
-        }
-      }
-
-      return next
-    })
-  }, [runs])
-
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      setRelativeNow(Date.now())
-    }, 60_000)
-
-    return () => {
-      window.clearInterval(intervalId)
-    }
-  }, [])
-
-  const toggleRun = useCallback(
-    (runId: string) => {
-      setExpandedRunIds(current => {
-        const next = new Set(current)
-        if (next.has(runId)) {
-          next.delete(runId)
-        } else {
-          next.add(runId)
-        }
-
-        return next
-      })
-      onToggleRun(runId)
-    },
-    [onToggleRun]
-  )
-
-  return (
-    <section className="settings-card">
-      <div className="settings-card-copy">
-        <h2>{title}</h2>
-      </div>
-
-      {runsError ? <div className="new-thread-inline-error">{runsError}</div> : null}
-
-      {isLoading && runs.length === 0 ? (
-        <p className="agent-run-empty">Loading run history.</p>
-      ) : runs.length === 0 ? (
-        <p className="agent-run-empty">{emptyText}</p>
-      ) : (
-        <div className="agent-run-stack" role="list">
-          {runs.map(run => {
-            const isExpanded = expandedRunIds.has(run.runId)
-            const hasResult =
-              run.status === "completed" ? Boolean(run.answer) : Boolean(run.error)
-            const relativeAge = formatAgentRunAge(run.startedAt, relativeNow)
-
-            return (
-              <article className="agent-run-card" key={run.runId}>
-                <button
-                  aria-expanded={isExpanded}
-                  className="agent-run-summary"
-                  onClick={() => toggleRun(run.runId)}
-                  type="button"
-                >
-                  <div className="agent-run-summary-main">
-                    <div className="agent-run-summary-title-row">
-                      <span className="agent-run-title">
-                        {showAgentName ? run.agentName : getAgentRunHistoryLabel(run)}
-                      </span>
-                      <span className="agent-run-project-pill">
-                        {getAgentRunProjectLabel(run.projectPath)}
-                      </span>
-                      {relativeAge ? (
-                        <span className="agent-run-age-pill">{relativeAge}</span>
-                      ) : null}
-                    </div>
-                    <div className="agent-run-summary-subtitle">
-                      {showAgentName ? getAgentRunThreadLabel(run) : run.runId}
-                    </div>
-                  </div>
-                  <span
-                    aria-label={formatAgentRunStatus(run.status)}
-                    className={`agent-run-status-dot is-${run.status}`}
-                  />
-                </button>
-
-                {isExpanded ? (
-                  <div className="agent-run-expanded">
-                    <div className="agent-run-expanded-meta">
-                      <span>Started {formatTimestamp(run.startedAt)}</span>
-                      {run.finishedAt ? (
-                        <span>Finished {formatTimestamp(run.finishedAt)}</span>
-                      ) : null}
-                    </div>
-
-                    <div className="agent-run-expanded-body">
-                      <div className="agent-run-expanded-section">
-                        <span className="settings-field-label">Request</span>
-                        <div className="conversation-entry user-entry agent-run-message">
-                          <div className="user-bubble">
-                            <MarkdownBlock
-                              className="message-markdown agent-run-text-block"
-                              markdown={run.message}
-                            />
-                          </div>
-                        </div>
-                      </div>
-
-                      {hasResult ? (
-                        <div className="agent-run-expanded-section">
-                          <span className="settings-field-label">
-                            {getAgentRunResultLabel(run)}
-                          </span>
-                          <div className="conversation-entry assistant-entry agent-run-message">
-                            <MarkdownBlock
-                              className="message-markdown assistant-markdown agent-run-text-block"
-                              markdown={run.status === "completed" ? run.answer ?? "" : run.error ?? ""}
-                            />
-                          </div>
-                        </div>
-                      ) : null}
-
-                      {run.status === "running" ? (
-                        <div className="settings-card-inline-actions">
-                          <button
-                            className="ghost-button"
-                            onClick={() => onCancelRun(run.runId)}
-                            type="button"
-                          >
-                            Cancel run
-                          </button>
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                ) : null}
-              </article>
-            )
-          })}
-        </div>
-      )}
-    </section>
-  )
-}
-
-function AgentAutomationPane({
-  skillsStatus,
-  skillsError,
-  skillTimeouts,
-  isBusy,
-  onInstall,
-  onExportPackage,
-  onCopySetupInstructions,
-  onToolTimeoutChange
-}: {
-  skillsStatus: HandoffSkillsStatus | null
-  skillsError: string | null
-  skillTimeouts: Record<SessionProvider, number | null>
-  isBusy: boolean
-  onInstall(target: SkillInstallTarget): void
-  onExportPackage(): void
-  onCopySetupInstructions(target: SkillInstallTarget): void
-  onToolTimeoutChange(provider: SessionProvider, timeoutSec: number | null): void
-}) {
-  return (
-    <section className="settings-card">
-      <div className="settings-card-copy">
-        <h2>Automation / Skills</h2>
-        <p>
-          Install the generic Handoff bridge skill for Codex and Claude Code. The
-          installed skill routes by exact agent name first, then specialty.
-        </p>
-      </div>
-
-      <div className="settings-field-list">
-        <label className="settings-field">
-          <span className="settings-field-label">Codex client MCP timeout (seconds)</span>
-          <input
-            className="settings-input"
-            inputMode="numeric"
-            min={1}
-            onChange={event => {
-              const value = event.target.value.trim()
-              const nextTimeoutSec = value ? Number(value) : null
-              onToolTimeoutChange(
-                "codex",
-                Number.isFinite(nextTimeoutSec) && nextTimeoutSec !== null && nextTimeoutSec > 0
-                  ? nextTimeoutSec
-                  : null
-              )
-            }}
-            placeholder="Provider default"
-            type="number"
-            value={skillTimeouts.codex ?? ""}
-          />
-          <span className="settings-field-help">
-            Blank uses Codex&apos;s default MCP tool-call timeout. Async bridge jobs reduce
-            the need for long values. Changes apply on the next install or reinstall.
-          </span>
-        </label>
-
-        <label className="settings-field">
-          <span className="settings-field-label">Claude client MCP timeout (seconds)</span>
-          <input
-            className="settings-input"
-            inputMode="numeric"
-            min={1}
-            onChange={event => {
-              const value = event.target.value.trim()
-              const nextTimeoutSec = value ? Number(value) : null
-              onToolTimeoutChange(
-                "claude",
-                Number.isFinite(nextTimeoutSec) && nextTimeoutSec !== null && nextTimeoutSec > 0
-                  ? nextTimeoutSec
-                  : null
-              )
-            }}
-            placeholder="Provider default"
-            type="number"
-            value={skillTimeouts.claude ?? ""}
-          />
-          <span className="settings-field-help">
-            Blank uses Claude Code&apos;s default MCP tool-call timeout. Async bridge jobs
-            reduce the need for long values. Changes apply on the next install or reinstall.
-          </span>
-        </label>
-      </div>
-
-      {skillsError ? <div className="new-thread-inline-error">{skillsError}</div> : null}
-
-      {!skillsStatus ? (
-        <p className="agent-run-empty">Loading install status.</p>
-      ) : (
-        <div className="automation-provider-list">
-          {(["codex", "claude"] as const).map(provider => {
-            const providerStatus = skillsStatus.providers[provider]
-
-            return (
-              <div className="automation-provider-row" key={provider}>
-                <div className="automation-provider-header">
-                  <span className="automation-provider-name">
-                    {formatProviderLabel(provider)}
-                  </span>
-                  <span
-                    className={`automation-provider-state is-${
-                      providerStatus.skillInstalled &&
-                      providerStatus.mcpInstalled &&
-                      providerStatus.liveHooksInstalled
-                        ? "ready"
-                        : providerStatus.skillInstalled ||
-                            providerStatus.mcpInstalled ||
-                            providerStatus.liveHooksInstalled
-                          ? "partial"
-                          : "idle"
-                    }`}
-                  >
-                    {formatSkillInstallState(providerStatus)}
-                  </span>
-                </div>
-                <div className="settings-meta-grid">
-                  <div className="settings-meta-item">
-                    <span className="settings-meta-label">MCP</span>
-                    <SettingsValue value={providerStatus.mcpInstalled ? "Installed" : "Missing"} />
-                  </div>
-                  <div className="settings-meta-item">
-                    <span className="settings-meta-label">Skill</span>
-                    <SettingsValue
-                      value={providerStatus.skillInstalled ? "Installed" : "Missing"}
-                    />
-                  </div>
-                  <div className="settings-meta-item">
-                    <span className="settings-meta-label">Live hooks</span>
-                    <SettingsValue
-                      value={providerStatus.liveHooksInstalled ? "Installed" : "Missing"}
-                    />
-                  </div>
-                  <div className="settings-meta-item settings-meta-item-wide">
-                    <span className="settings-meta-label">Config path</span>
-                    <SettingsValue monospace value={providerStatus.configPath} />
-                  </div>
-                  <div className="settings-meta-item settings-meta-item-wide">
-                    <span className="settings-meta-label">Skill path</span>
-                    <SettingsValue monospace value={providerStatus.skillPath} />
-                  </div>
-                </div>
-                {providerStatus.error ? (
-                  <div className="new-thread-inline-error">{providerStatus.error}</div>
-                ) : null}
-              </div>
-            )
-          })}
-        </div>
-      )}
-
-      <div className="automation-actions">
-        <button
-          className="ghost-button"
-          disabled={isBusy}
-          onClick={() => onInstall("codex")}
-          type="button"
-        >
-          Install in Codex
-        </button>
-        <button
-          className="ghost-button"
-          disabled={isBusy}
-          onClick={() => onInstall("claude")}
-          type="button"
-        >
-          Install in Claude
-        </button>
-        <button
-          className="ghost-button"
-          disabled={isBusy}
-          onClick={() => onInstall("both")}
-          type="button"
-        >
-          Install both
-        </button>
-        <button
-          className="ghost-button"
-          disabled={isBusy}
-          onClick={() => onInstall("both")}
-          type="button"
-        >
-          Update/Reinstall
-        </button>
-        <button
-          className="ghost-button"
-          disabled={isBusy}
-          onClick={onExportPackage}
-          type="button"
-        >
-          Export package
-        </button>
-        <button
-          className="ghost-button"
-          disabled={isBusy}
-          onClick={() => onCopySetupInstructions("both")}
-          type="button"
-        >
-          Copy setup instructions
-        </button>
-      </div>
-    </section>
-  )
-}
-
-function AgentDashboardPane({
-  bridgeStatus,
-  isLoadingRuns,
-  onCancelRun,
-  onOpenAutomation,
-  onToggleRun,
-  runs,
-  runsError,
-  skillsError,
-  skillsStatus
-}: {
-  bridgeStatus: AgentBridgeHealth | null
-  isLoadingRuns: boolean
-  onCancelRun(runId: string): void
-  onOpenAutomation(): void
-  onToggleRun(runId: string): void
-  runs: AgentRunRecord[]
-  runsError: string | null
-  skillsError: string | null
-  skillsStatus: HandoffSkillsStatus | null
-}) {
-  return (
-    <div className="settings-layout">
-      <button className="agent-dashboard-toolbar" onClick={onOpenAutomation} type="button">
-        <span className="agent-dashboard-toolbar-title">Automation / Skills</span>
-        <span className="agent-dashboard-toolbar-summary">
-          <span className="automation-status-chip">
-            <StatusMarkerIcon state={getAutomationStatusTone({ bridgeStatus })} />
-            <span>Bridge</span>
-          </span>
-          <span className="automation-status-chip">
-            <StatusMarkerIcon
-              state={getAutomationStatusTone({
-                providerStatus: skillsStatus?.providers.codex
-              })}
-            />
-            <span>Codex</span>
-          </span>
-          <span className="automation-status-chip">
-            <StatusMarkerIcon
-              state={getAutomationStatusTone({
-                providerStatus: skillsStatus?.providers.claude
-              })}
-            />
-            <span>Claude</span>
-          </span>
-        </span>
-      </button>
-
-      {skillsError ? <div className="new-thread-inline-error">{skillsError}</div> : null}
-
-      <AgentRunsPane
-        emptyText="No agent invocations recorded yet."
-        isLoading={isLoadingRuns}
-        onCancelRun={onCancelRun}
-        onToggleRun={onToggleRun}
-        runs={runs}
-        runsError={runsError}
-        showAgentName
-        title="Recent invocations"
-      />
-    </div>
-  )
-}
-
-function AgentDetailPane({
-  agent,
-  draft,
-  editorError,
-  isEditing,
-  isLoadingRuns,
-  onCancelEdit,
-  onCancelRun,
-  onDelete,
-  onDraftChange,
-  onDuplicate,
-  onEdit,
-  onReset,
-  onSave,
-  onToggleRun,
-  runs,
-  runsError
-}: {
-  agent: AgentDefinition | null
-  draft: AgentDefinition | null
-  editorError: string | null
-  isEditing: boolean
-  isLoadingRuns: boolean
-  onCancelEdit(): void
-  onCancelRun(runId: string): void
-  onDelete(): void
-  onDraftChange(patch: AgentUpdatePatch): void
-  onDuplicate(): void
-  onEdit(): void
-  onReset(): void
-  onSave(): void
-  onToggleRun(runId: string): void
-  runs: AgentRunRecord[]
-  runsError: string | null
-}) {
-  return (
-    <div className="settings-layout">
-      {isEditing ? (
-        <AgentEditorPane
-          agent={agent}
-          draft={draft}
-          editorError={editorError}
-          onCancel={onCancelEdit}
-          onDraftChange={onDraftChange}
-          onReset={onReset}
-          onSave={onSave}
-        />
-      ) : (
-        <AgentSummaryPane
-          agent={agent}
-          onDelete={onDelete}
-          onDuplicate={onDuplicate}
-          onEdit={onEdit}
-        />
-      )}
-
-      <AgentRunsPane
-        emptyText="No bridge runs recorded for this agent yet."
-        isLoading={isLoadingRuns}
-        onCancelRun={onCancelRun}
-        onToggleRun={onToggleRun}
-        runs={runs}
-        runsError={runsError}
-        showAgentName={false}
-        title="Agent tasks"
-      />
     </div>
   )
 }
@@ -5860,11 +4663,6 @@ export default function App() {
     null
   )
   const [settingsError, setSettingsError] = useState<string | null>(null)
-  const [bridgeStatus, setBridgeStatus] = useState<AgentBridgeHealth | null>(null)
-  const [bridgeSnippets, setBridgeSnippets] = useState<AgentBridgeConfigSnippets | null>(
-    null
-  )
-  const [bridgeError, setBridgeError] = useState<string | null>(null)
   const [skillsStatus, setSkillsStatus] = useState<HandoffSkillsStatus | null>(null)
   const [skillsError, setSkillsError] = useState<string | null>(null)
   const [controlCenterSnapshot, setControlCenterSnapshot] = useState<ControlCenterSnapshot | null>(
@@ -5876,17 +4674,6 @@ export default function App() {
     null
   )
   const [isMutatingSkills, setIsMutatingSkills] = useState(false)
-  const [agents, setAgents] = useState<AgentDefinition[]>([])
-  const [isLoadingAgents, setIsLoadingAgents] = useState(true)
-  const [agentsError, setAgentsError] = useState<string | null>(null)
-  const [agentsPaneView, setAgentsPaneView] = useState<AgentsPaneView>("dashboard")
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
-  const [isEditingAgent, setIsEditingAgent] = useState(false)
-  const [agentDraft, setAgentDraft] = useState<AgentDefinition | null>(null)
-  const [agentEditorError, setAgentEditorError] = useState<string | null>(null)
-  const [agentRuns, setAgentRuns] = useState<AgentRunRecord[]>([])
-  const [isLoadingAgentRuns, setIsLoadingAgentRuns] = useState(false)
-  const [agentRunsError, setAgentRunsError] = useState<string | null>(null)
   const [sessions, setSessions] = useState<SessionListItem[]>([])
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [activeTranscript, setActiveTranscript] =
@@ -6143,15 +4930,6 @@ export default function App() {
     () => sessions.find(session => session.id === activeSessionId) ?? null,
     [activeSessionId, sessions]
   )
-  const sortedAgents = useMemo(() => sortAgentsByName(agents), [agents])
-  const selectedAgent = useMemo(
-    () => agents.find(agent => agent.id === selectedAgentId) ?? null,
-    [agents, selectedAgentId]
-  )
-  const selectedAgentRuns = useMemo(
-    () => agentRuns.filter(run => run.agentId === selectedAgentId),
-    [agentRuns, selectedAgentId]
-  )
   const activeProjectPath =
     activeTranscript && activeTranscript.id === activeSession?.id
       ? activeTranscript.projectPath ?? activeTranscript.sessionCwd ?? null
@@ -6353,30 +5131,6 @@ export default function App() {
     [showToast]
   )
 
-  const loadBridgeInfo = useCallback(async () => {
-    const api = getHandoffApi()
-    if (!api) {
-      setBridgeStatus(null)
-      setBridgeSnippets(null)
-      setBridgeError("The preload bridge did not load. Restart the app.")
-      return
-    }
-
-    try {
-      const [nextBridgeStatus, nextBridgeSnippets] = await Promise.all([
-        api.bridge.getStatus(),
-        api.bridge.getConfigSnippets()
-      ])
-      setBridgeStatus(nextBridgeStatus)
-      setBridgeSnippets(nextBridgeSnippets)
-      setBridgeError(null)
-    } catch (error) {
-      setBridgeStatus(null)
-      setBridgeSnippets(null)
-      setBridgeError(error instanceof Error ? error.message : "Unable to load agent bridge.")
-    }
-  }, [])
-
   const loadSkillsStatus = useCallback(async () => {
     const api = getHandoffApi()
     if (!api) {
@@ -6391,7 +5145,7 @@ export default function App() {
       setSkillsError(null)
     } catch (error) {
       setSkillsStatus(null)
-      setSkillsError(error instanceof Error ? error.message : "Unable to load skills status.")
+      setSkillsError(error instanceof Error ? error.message : "Unable to load live hook status.")
     }
   }, [])
 
@@ -6427,60 +5181,6 @@ export default function App() {
       )
     } finally {
       setIsLoadingControlCenter(false)
-    }
-  }, [])
-
-  const loadAgents = useCallback(async () => {
-    setIsLoadingAgents(true)
-    const api = getHandoffApi()
-
-    if (!api) {
-      setAgents([])
-      setAgentsError("The preload bridge did not load. Restart the app.")
-      setSelectedAgentId(null)
-      setIsLoadingAgents(false)
-      return
-    }
-
-    try {
-      const nextAgents = await api.agents.list()
-      setAgents(nextAgents)
-      setAgentsError(null)
-      setSelectedAgentId(currentSelectedId => {
-        if (currentSelectedId && nextAgents.some(agent => agent.id === currentSelectedId)) {
-          return currentSelectedId
-        }
-        return null
-      })
-    } catch (error) {
-      setAgents([])
-      setAgentsError(error instanceof Error ? error.message : "Unable to load agents.")
-      setSelectedAgentId(null)
-    } finally {
-      setIsLoadingAgents(false)
-    }
-  }, [])
-
-  const loadAgentRuns = useCallback(async () => {
-    setIsLoadingAgentRuns(true)
-    const api = getHandoffApi()
-
-    if (!api) {
-      setAgentRuns([])
-      setAgentRunsError("The preload bridge did not load. Restart the app.")
-      setIsLoadingAgentRuns(false)
-      return
-    }
-
-    try {
-      const nextRuns = sortAgentRunsByStartedAt(await api.bridge.listRuns(undefined, 100))
-      setAgentRuns(nextRuns)
-      setAgentRunsError(null)
-    } catch (error) {
-      setAgentRuns([])
-      setAgentRunsError(error instanceof Error ? error.message : "Unable to load agent runs.")
-    } finally {
-      setIsLoadingAgentRuns(false)
     }
   }, [])
 
@@ -6573,32 +5273,6 @@ export default function App() {
       try {
         await api.clipboard.writeText(text)
         showToast(successLabel)
-      } catch (error) {
-        showToast(
-          error instanceof Error ? error.message : "Unable to copy to clipboard.",
-          "error"
-        )
-      }
-    },
-    [showToast]
-  )
-
-  const copyTextValue = useCallback(
-    async (text: string, successLabel: string) => {
-      const trimmed = text.trim()
-      if (!trimmed) {
-        return
-      }
-
-      const api = getHandoffApi()
-      if (!api) {
-        showToast("Preload bridge unavailable", "error")
-        return
-      }
-
-      try {
-        await api.clipboard.writeText(trimmed)
-        showToast(`Copied ${successLabel}`)
       } catch (error) {
         showToast(
           error instanceof Error ? error.message : "Unable to copy to clipboard.",
@@ -7013,19 +5687,6 @@ export default function App() {
     [handleSettingsPatch]
   )
 
-  const handleSkillToolTimeoutChange = useCallback(
-    (provider: SessionProvider, timeoutSec: number | null) => {
-      handleSettingsPatch({
-        skills: {
-          [provider]: {
-            toolTimeoutSec: timeoutSec
-          }
-        }
-      })
-    },
-    [handleSettingsPatch]
-  )
-
   const toggleThoughtChainEntry = useCallback((entryId: string) => {
     setExpandedThoughtChainIds(current => {
       const next = new Set(current)
@@ -7098,8 +5759,6 @@ export default function App() {
       }
       await Promise.all([
         loadSessions(),
-        loadAgents(),
-        loadBridgeInfo(),
         loadSkillsStatus(),
         loadControlCenterSnapshot(),
         loadThreadOrganization()
@@ -7118,8 +5777,6 @@ export default function App() {
     }
   }, [
     isControlCenterPopoutWindow,
-    loadAgents,
-    loadBridgeInfo,
     loadControlCenterSnapshot,
     loadSessions,
     loadSkillsStatus,
@@ -7156,37 +5813,6 @@ export default function App() {
   useEffect(() => {
     void loadConversation(activeSession)
   }, [activeSession, loadConversation])
-
-  useEffect(() => {
-    setAgentDraft(cloneAgentDefinition(selectedAgent))
-    setAgentEditorError(null)
-  }, [selectedAgent])
-
-  useEffect(() => {
-    if (activeSection !== "agents" || isSettingsOpen) {
-      return
-    }
-
-    void loadAgentRuns()
-  }, [activeSection, isSettingsOpen, loadAgentRuns])
-
-  useEffect(() => {
-    if (activeSection !== "agents" || isSettingsOpen) {
-      return () => undefined
-    }
-
-    if (!agentRuns.some(run => run.status === "running")) {
-      return () => undefined
-    }
-
-    const intervalId = window.setInterval(() => {
-      void loadAgentRuns()
-    }, 4_000)
-
-    return () => {
-      window.clearInterval(intervalId)
-    }
-  }, [activeSection, agentRuns, isSettingsOpen, loadAgentRuns])
 
   useEffect(() => {
     const session = selectedNewThreadSourceSession
@@ -7358,25 +5984,6 @@ export default function App() {
       setActiveSessionId(sessions[0]?.id ?? null)
     }
   }, [activeSessionId, sessions])
-
-  useEffect(() => {
-    if (agents.length === 0) {
-      if (selectedAgentId !== null) {
-        setSelectedAgentId(null)
-      }
-      if (agentsPaneView === "agent") {
-        setAgentsPaneView("dashboard")
-      }
-      return
-    }
-
-    if (selectedAgentId && !agents.some(agent => agent.id === selectedAgentId)) {
-      setSelectedAgentId(null)
-      if (agentsPaneView === "agent") {
-        setAgentsPaneView("dashboard")
-      }
-    }
-  }, [agents, agentsPaneView, selectedAgentId])
 
   useEffect(() => {
     if (activeSection !== "threads" || isSettingsOpen || rightPaneMode !== "search") {
@@ -8315,219 +6922,6 @@ export default function App() {
     [clearThreadDragState, collectionSidebarGroups, persistThreadOrganization, threadDragItem]
   )
 
-  const handleCreateAgent = useCallback(async () => {
-    const api = getHandoffApi()
-    if (!api) {
-      showToast("Preload bridge unavailable", "error")
-      return
-    }
-
-    try {
-      const nextAgent = await api.agents.create()
-      setAgents(currentAgents => [...currentAgents, nextAgent])
-      setSelectedAgentId(nextAgent.id)
-      setAgentsPaneView("agent")
-      setIsEditingAgent(true)
-      setAgentDraft(cloneAgentDefinition(nextAgent))
-      setAgentEditorError(null)
-      setActiveSection("agents")
-      setIsSettingsOpen(false)
-      showToast("Created agent")
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : "Unable to create agent.", "error")
-    }
-  }, [showToast])
-
-  const handleSelectAgent = useCallback((agentId: string) => {
-    setActiveSection("agents")
-    setIsSettingsOpen(false)
-    setSelectedAgentId(agentId)
-    setAgentsPaneView("agent")
-    setIsEditingAgent(false)
-    setAgentEditorError(null)
-  }, [])
-
-  const handleOpenAgentsDashboard = useCallback(() => {
-    setActiveSection("agents")
-    setIsSettingsOpen(false)
-    setAgentsPaneView("dashboard")
-    setIsEditingAgent(false)
-    setAgentEditorError(null)
-  }, [])
-
-  const handleOpenAgentAutomation = useCallback(() => {
-    setActiveSection("agents")
-    setIsSettingsOpen(false)
-    setAgentsPaneView("automation")
-    setIsEditingAgent(false)
-  }, [])
-
-  const handleStartAgentEdit = useCallback(() => {
-    setAgentsPaneView("agent")
-    setIsEditingAgent(true)
-    setAgentEditorError(null)
-  }, [])
-
-  const handleCancelAgentEdit = useCallback(() => {
-    setAgentDraft(cloneAgentDefinition(selectedAgent))
-    setIsEditingAgent(false)
-    setAgentEditorError(null)
-  }, [selectedAgent])
-
-  const handleToggleAgentRun = useCallback((_runId: string) => {
-    return
-  }, [])
-
-  const handleCancelAgentRun = useCallback(
-    async (runId: string) => {
-      const api = getHandoffApi()
-      if (!api) {
-        showToast("The preload bridge did not load. Restart the app.", "error")
-        return
-      }
-
-      try {
-        const nextRun = await api.bridge.cancelRun(runId)
-        if (!nextRun) {
-          showToast("Run not found", "error")
-          return
-        }
-
-        await loadAgentRuns()
-        showToast("Canceled agent run")
-      } catch (error) {
-        showToast(error instanceof Error ? error.message : "Unable to cancel run.", "error")
-      }
-    },
-    [loadAgentRuns, showToast]
-  )
-
-  const handleAgentDraftChange = useCallback((patch: AgentUpdatePatch) => {
-    setAgentDraft(currentDraft => {
-      if (!currentDraft) {
-        return currentDraft
-      }
-
-      const provider = patch.provider ?? currentDraft.provider
-      const normalizedTarget = normalizeComposerTarget({
-        provider,
-        launchMode: "cli",
-        modelId: patch.modelId ?? currentDraft.modelId,
-        fast: patch.fast ?? currentDraft.fast
-      })
-
-      return {
-        ...currentDraft,
-        ...patch,
-        provider,
-        modelId: normalizedTarget.modelId,
-        fast: normalizedTarget.fast
-      }
-    })
-    setAgentEditorError(null)
-  }, [])
-
-  const handleSaveAgent = useCallback(async () => {
-    if (!selectedAgentId || !agentDraft) {
-      return
-    }
-
-    const trimmedName = agentDraft.name.trim()
-    if (!trimmedName) {
-      setAgentEditorError("Agent name is required.")
-      return
-    }
-
-    const api = getHandoffApi()
-    if (!api) {
-      showToast("Preload bridge unavailable", "error")
-      return
-    }
-
-    try {
-      const updatedAgent = await api.agents.update(selectedAgentId, {
-        name: trimmedName,
-        specialty: agentDraft.specialty?.trim() ?? "",
-        provider: agentDraft.provider,
-        modelId: agentDraft.modelId,
-        thinkingLevel: agentDraft.thinkingLevel,
-        fast: agentDraft.fast,
-        timeoutSec: agentDraft.timeoutSec,
-        customInstructions: agentDraft.customInstructions
-      })
-      setAgents(currentAgents =>
-        currentAgents.map(agent => (agent.id === updatedAgent.id ? updatedAgent : agent))
-      )
-      setAgentDraft(cloneAgentDefinition(updatedAgent))
-      setIsEditingAgent(false)
-      setAgentEditorError(null)
-      showToast("Saved agent")
-    } catch (error) {
-      setAgentEditorError(error instanceof Error ? error.message : "Unable to save agent.")
-      showToast(error instanceof Error ? error.message : "Unable to save agent.", "error")
-    }
-  }, [agentDraft, selectedAgentId, showToast])
-
-  const handleResetAgent = useCallback(() => {
-    setAgentDraft(cloneAgentDefinition(selectedAgent))
-    setAgentEditorError(null)
-  }, [selectedAgent])
-
-  const handleDeleteAgent = useCallback(async () => {
-    if (!selectedAgent) {
-      return
-    }
-
-    if (!window.confirm(`Delete "${selectedAgent.name}"?`)) {
-      return
-    }
-
-    const api = getHandoffApi()
-    if (!api) {
-      showToast("Preload bridge unavailable", "error")
-      return
-    }
-
-    try {
-      await api.agents.delete(selectedAgent.id)
-      setAgents(currentAgents =>
-        currentAgents.filter(agent => agent.id !== selectedAgent.id)
-      )
-      setSelectedAgentId(null)
-      setAgentsPaneView("dashboard")
-      setIsEditingAgent(false)
-      setAgentEditorError(null)
-      showToast("Deleted agent")
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : "Unable to delete agent.", "error")
-    }
-  }, [selectedAgent, showToast])
-
-  const handleDuplicateAgent = useCallback(async () => {
-    if (!selectedAgent) {
-      return
-    }
-
-    const api = getHandoffApi()
-    if (!api) {
-      showToast("Preload bridge unavailable", "error")
-      return
-    }
-
-    try {
-      const duplicatedAgent = await api.agents.duplicate(selectedAgent.id)
-      setAgents(currentAgents => [...currentAgents, duplicatedAgent])
-      setSelectedAgentId(duplicatedAgent.id)
-      setAgentsPaneView("agent")
-      setIsEditingAgent(false)
-      setAgentDraft(cloneAgentDefinition(duplicatedAgent))
-      setAgentEditorError(null)
-      showToast("Duplicated agent")
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : "Unable to duplicate agent.", "error")
-    }
-  }, [selectedAgent, showToast])
-
   const handleInstallSkills = useCallback(
     async (target: SkillInstallTarget) => {
       const api = getHandoffApi()
@@ -8543,59 +6937,17 @@ export default function App() {
         setSkillsError(null)
         showToast(
           target === "both"
-            ? "Installed Handoff skills in Codex and Claude"
-            : `Installed Handoff skill in ${formatProviderLabel(target)}`
+            ? "Installed live hooks in Codex and Claude"
+            : `Installed live hooks in ${formatProviderLabel(target)}`
         )
       } catch (error) {
-        setSkillsError(error instanceof Error ? error.message : "Unable to install skills.")
+        setSkillsError(error instanceof Error ? error.message : "Unable to install live hooks.")
         showToast(
-          error instanceof Error ? error.message : "Unable to install skills.",
+          error instanceof Error ? error.message : "Unable to install live hooks.",
           "error"
         )
       } finally {
         setIsMutatingSkills(false)
-      }
-    },
-    [showToast]
-  )
-
-  const handleExportSkillsPackage = useCallback(async () => {
-    const api = getHandoffApi()
-    if (!api) {
-      showToast("Preload bridge unavailable", "error")
-      return
-    }
-
-    setIsMutatingSkills(true)
-    try {
-      const result = await api.skills.exportPackage()
-      showToast(`Exported skills package to ${result.exportPath}`)
-    } catch (error) {
-      showToast(
-        error instanceof Error ? error.message : "Unable to export skills package.",
-        "error"
-      )
-    } finally {
-      setIsMutatingSkills(false)
-    }
-  }, [showToast])
-
-  const handleCopySkillSetupInstructions = useCallback(
-    async (target: SkillInstallTarget) => {
-      const api = getHandoffApi()
-      if (!api) {
-        showToast("Preload bridge unavailable", "error")
-        return
-      }
-
-      try {
-        await api.skills.copySetupInstructions(target)
-        showToast("Copied setup instructions")
-      } catch (error) {
-        showToast(
-          error instanceof Error ? error.message : "Unable to copy setup instructions.",
-          "error"
-        )
       }
     },
     [showToast]
@@ -9345,15 +7697,6 @@ export default function App() {
                 <span className="section-rail-label">Threads</span>
               </button>
               <button
-                aria-pressed={activeSection === "agents"}
-                className={`section-rail-button ${activeSection === "agents" ? "is-active" : ""}`}
-                onClick={() => handleSelectSection("agents")}
-                type="button"
-              >
-                <AgentsIcon />
-                <span className="section-rail-label">Agents</span>
-              </button>
-              <button
                 aria-pressed={activeSection === "selector"}
                 className={`section-rail-button ${activeSection === "selector" ? "is-active" : ""}`}
                 onClick={() => handleSelectSection("selector")}
@@ -9432,18 +7775,6 @@ export default function App() {
 
                   {renderThreadSidebarList()}
                 </>
-              ) : activeSection === "agents" ? (
-                <AgentsListPane
-                  agents={sortedAgents}
-                  agentsError={agentsError}
-                  isDashboardSelected={agentsPaneView === "dashboard"}
-                  isLoading={isLoadingAgents}
-                  onCreate={() => void handleCreateAgent()}
-                  onSelectDashboard={handleOpenAgentsDashboard}
-                  onSelect={handleSelectAgent}
-                  selectedAgentId={selectedAgentId}
-                  stateInfo={stateInfo}
-                />
               ) : (
                 <SelectorSidebarPane controller={selectorSection} />
               )}
@@ -9477,19 +7808,6 @@ export default function App() {
                 <span className="topbar-thread">Settings</span>
               ) : activeSection === "control-center" ? (
                 <span className="topbar-thread">Control Center</span>
-              ) : activeSection === "agents" ? (
-                agentsPaneView === "automation" ? (
-                  <span className="topbar-thread">Automation / Skills</span>
-                ) : agentsPaneView === "agent" && selectedAgent ? (
-                  <>
-                    <span className="topbar-thread">{selectedAgent.name}</span>
-                    <div className="topbar-session-meta">
-                      <ProviderIcon provider={selectedAgent.provider} stateInfo={stateInfo} />
-                    </div>
-                  </>
-                ) : (
-                  <span className="topbar-thread">Agents</span>
-                )
               ) : activeSection === "selector" ? (
                 <span className="topbar-thread">
                   {selectorSection.activeManifest?.name ?? "Selector"}
@@ -9522,15 +7840,7 @@ export default function App() {
             </div>
 
             <div className="toolbar">
-              {!isSettingsOpen && activeSection === "agents" && agentsPaneView === "automation" ? (
-                <button
-                  className="topbar-button"
-                  onClick={handleOpenAgentsDashboard}
-                  type="button"
-                >
-                  Back
-                </button>
-              ) : !isSettingsOpen && activeSection === "threads" && rightPaneMode === "new-thread" ? (
+              {!isSettingsOpen && activeSection === "threads" && rightPaneMode === "new-thread" ? (
                 <button
                   className="topbar-button"
                   onClick={handleCloseNewThread}
@@ -9624,12 +7934,6 @@ export default function App() {
             <div className="transcript-surface">
               {isSettingsOpen ? (
                 <SettingsPane
-                  bridgeError={bridgeError}
-                  bridgeSnippets={bridgeSnippets}
-                  bridgeStatus={bridgeStatus}
-                  onCopyBridgeSnippet={(label, value) => {
-                    void copyTextValue(value, label)
-                  }}
                   onDefaultTerminalSelect={handleDefaultTerminalSelect}
                   onProviderOverrideChange={handleProviderOverrideChange}
                   onProviderReset={handleProviderReset}
@@ -9661,67 +7965,6 @@ export default function App() {
                   skillsStatus={skillsStatus}
                   snapshot={controlCenterSnapshot}
                 />
-              ) : activeSection === "agents" ? (
-                isLoadingAgents && agents.length === 0 && agentsPaneView !== "dashboard" ? (
-                  <EmptyState title="Loading agents" detail="Reading saved agent presets." />
-                ) : agentsPaneView === "dashboard" ? (
-                  <AgentDashboardPane
-                    bridgeStatus={bridgeStatus}
-                    isLoadingRuns={isLoadingAgentRuns}
-                    onCancelRun={runId => {
-                      void handleCancelAgentRun(runId)
-                    }}
-                    onOpenAutomation={handleOpenAgentAutomation}
-                    onToggleRun={handleToggleAgentRun}
-                    runs={agentRuns}
-                    runsError={agentRunsError}
-                    skillsError={skillsError}
-                    skillsStatus={skillsStatus}
-                  />
-                ) : agentsPaneView === "automation" ? (
-                  <AgentAutomationPane
-                    isBusy={isMutatingSkills}
-                    onCopySetupInstructions={target => {
-                      void handleCopySkillSetupInstructions(target)
-                    }}
-                    onExportPackage={() => {
-                      void handleExportSkillsPackage()
-                    }}
-                    onInstall={target => {
-                      void handleInstallSkills(target)
-                    }}
-                    onToolTimeoutChange={handleSkillToolTimeoutChange}
-                    skillTimeouts={{
-                      codex: settingsSnapshot?.settings.skills?.codex?.toolTimeoutSec ?? null,
-                      claude: settingsSnapshot?.settings.skills?.claude?.toolTimeoutSec ?? null
-                    }}
-                    skillsError={skillsError}
-                    skillsStatus={skillsStatus}
-                  />
-                ) : agents.length === 0 ? (
-                  <EmptyState title="No agents yet" detail="Create an agent from the left rail." />
-                ) : (
-                  <AgentDetailPane
-                      agent={selectedAgent}
-                      draft={agentDraft}
-                      editorError={agentEditorError}
-                      isEditing={isEditingAgent}
-                      isLoadingRuns={isLoadingAgentRuns}
-                      onCancelEdit={handleCancelAgentEdit}
-                      onCancelRun={runId => {
-                        void handleCancelAgentRun(runId)
-                      }}
-                      onDelete={() => void handleDeleteAgent()}
-                      onDraftChange={handleAgentDraftChange}
-                      onDuplicate={() => void handleDuplicateAgent()}
-                      onEdit={handleStartAgentEdit}
-                      onReset={handleResetAgent}
-                      onSave={() => void handleSaveAgent()}
-                      onToggleRun={handleToggleAgentRun}
-                      runs={selectedAgentRuns}
-                      runsError={agentRunsError}
-                    />
-                )
               ) : activeSection === "selector" ? (
                 <SelectorDetailPane controller={selectorSection} />
               ) : rightPaneMode === "new-thread" ? (

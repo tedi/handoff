@@ -30,6 +30,22 @@ function createSession(overrides: Partial<SessionIndexEntry> = {}): SessionIndex
 }
 
 describe("buildConversationTranscript", () => {
+  it.each([
+    ["claude-desktop", "desktop"],
+    ["sdk-cli", "cli"]
+  ] as const)("preserves the Claude %s client in transcripts and previews", (entrypoint, client) => {
+    const sessionContent = JSON.stringify({
+      type: "user", entrypoint, timestamp: "2026-03-14T00:00:00.000Z", cwd: "/tmp/project",
+      message: { role: "user", content: "Fix the opener" }
+    })
+    const transcript = buildConversationTranscript({
+      sessionContent, session: createSession({ provider: "claude" }), sessionPath: "/tmp/session.jsonl",
+      options: { includeDiffs: false, includeCommentary: false }
+    })
+    expect(transcript.sessionClient).toBe(client)
+    expect(buildConversationPreview({ provider: "claude", sessionContent }).sessionMeta.client).toBe(client)
+  })
+
   it("bundles Codex commentary into thought chains while excluding them from markdown by default", async () => {
     const transcript = buildConversationTranscript({
       sessionContent: await loadFixture("sample-session.jsonl"),

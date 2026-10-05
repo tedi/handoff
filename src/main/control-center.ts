@@ -9,6 +9,7 @@ import path from "node:path"
 import { promisify } from "node:util"
 
 import chokidar from "chokidar"
+import { readTranscriptTail } from "./transcript-file"
 
 import { buildConversationPreview } from "../shared/parser"
 import type {
@@ -59,14 +60,15 @@ export const CONTROL_CENTER_CLAUDE_EVENTS = [
 const DEFAULT_SOUND_PATH = "/System/Library/Sounds/Glass.aiff"
 const GLOBAL_SOUND_DEBOUNCE_MS = 900
 const THREAD_SOUND_DEBOUNCE_MS = 12_000
-const CLAUDE_TRANSCRIPT_REFRESH_POLL_MS = 1200
+const TRANSCRIPT_REFRESH_POLL_MS = 1200
+const LIVE_THREAD_RECENCY_MS = 24 * 60 * 60 * 1000
 const PREVIEW_MAX_LENGTH = 220
 const LIVE_HOOK_COMMAND_MARKER = CONTROL_CENTER_HOOK_MODE_ARG
 const CODEX_INTERNAL_TITLE_PROMPT_PREFIX =
   "You are a helpful assistant. You will be presented with a user prompt, and your job is to provide a short title"
 
 type SupportedHookEvent = (typeof CONTROL_CENTER_CODEX_EVENTS)[number] | (typeof CONTROL_CENTER_CLAUDE_EVENTS)[number]
-type StoredHostAppId = TerminalAppId | "codex-app" | null
+type StoredHostAppId = TerminalAppId | "codex-app" | "claude-app" | null
 
 type StoredRequestHookKind = "permission" | "pretool"
 
@@ -194,6 +196,11 @@ function normalizeTextPreview(value: string | null | undefined) {
   }
 
   return `${trimmed.slice(0, PREVIEW_MAX_LENGTH - 1).trimEnd()}…`
+}
+
+function hasRecentActivity(timestamp: string) {
+  const time = Date.parse(timestamp)
+  return Number.isFinite(time) && Date.now() - time <= LIVE_THREAD_RECENCY_MS
 }
 
 function buildDefaultThreadName(provider: SessionProvider) {
@@ -607,6 +614,15 @@ function inferLaunchContext(params: {
   provider: SessionProvider
   payload: Record<string, unknown>
 }) {
+  const entrypoint = findFirstString(params.payload, [["entrypoint"], ["payload", "entrypoint"]]) ?? process.env.CLAUDE_CODE_ENTRYPOINT
+  if (params.provider === "claude" && entrypoint === "claude-desktop") {
+    return {
+      launchMode: "app" as const,
+      hostAppId: "claude-app" as const,
+      hostAppLabel: "Claude.app",
+      hostAppExact: true
+    }
+  }
   const terminalProgram = (process.env.TERM_PROGRAM ?? "").trim().toLowerCase()
   const hasTerminalSession =
     Boolean(process.env.TERM_SESSION_ID) || Boolean(process.env.TERM_PROGRAM)
@@ -1357,110 +1373,99 @@ function chooseAssistantPreview(params: {
   }
 }
 
-async function readTranscriptPreview(record: StoredLiveThreadRecord) {
+async function readTranscriptPreview(record: StoredLiveThreadRecord, tailOnly = false) {
   if (!record.transcriptPath || !fs.existsSync(record.transcriptPath)) {
     return null
   }
 
-  const sessionContent = await fsPromises.readFile(record.transcriptPath, "utf8")
+  const sessionContent = tailOnly
+    ? await readTranscriptTail(record.transcriptPath, 512 * 1024)
+    : await fsPromises.readFile(record.transcriptPath, "utf8")
   const preview = buildConversationPreview({
     provider: record.provider,
     sessionContent
   })
+  if (preview.sessionMeta.isSubagent) {
+    return { suppress: true as const }
+  }
+  if (tailOnly && preview.lastMeaningfulActivity === "none" && !preview.specialPreviewKind && !preview.title) {
+    return null
+  }
   const hasNoMeaningfulTranscriptActivity =
     record.provider === "claude" &&
     !record.pendingRequest &&
     preview.lastMeaningfulActivity === "none"
 
   if (hasNoMeaningfulTranscriptActivity && preview.specialPreviewKind) {
-    return {
-      suppress: true as const
-    }
+    return { suppress: true as const }
   }
 
   const lastUserPreview = normalizeTextPreview(preview.lastUserPreview)
   const lastAssistantMessage = normalizeTextPreview(preview.lastAssistantMessage)
   const lastThoughtPreview = normalizeTextPreview(preview.lastThoughtPreview)
-
+  const shouldApplySpecialPreview = Boolean(
+    preview.specialPreviewKind && preview.specialPreviewText &&
+    preview.specialPreviewTimestamp && preview.specialPreviewTimestamp >= record.lastEventAt
+  )
+  const shouldPreserveCompactingState =
+    record.provider === "claude" && record.assistantPreviewKind === "compacting" &&
+    !(shouldApplySpecialPreview && preview.specialPreviewKind === "compacted")
+  const transcriptStatus = preview.lastMeaningfulActivity === "assistant_terminal"
+    ? "completed"
+    : preview.lastMeaningfulActivity === "assistant_activity" || preview.lastMeaningfulActivity === "user"
+      ? "running"
+      : record.status
+  const nextStatus = record.pendingRequest?.type === "approval_request"
+    ? "waiting_permission"
+    : record.pendingRequest?.type === "choice_request"
+      ? "waiting_user"
+      : shouldPreserveCompactingState
+        ? record.status
+        : hasNoMeaningfulTranscriptActivity
+          ? preview.title ? record.status : record.launchMode === "cli" ? "ready" : record.status
+          : record.provider === "claude"
+            ? shouldApplySpecialPreview && preview.specialPreviewKind === "compacted"
+              ? "completed"
+              : shouldApplySpecialPreview && preview.specialPreviewKind === "compacting"
+                ? "running"
+                : transcriptStatus
+            : preview.lastEntryTimestamp && preview.lastEntryTimestamp >= record.lastEventAt
+              ? transcriptStatus
+              : record.status
   const assistantPreview = chooseAssistantPreview({
-    status: record.status,
+    status: nextStatus,
     lastAssistantMessage,
     lastThoughtPreview
   })
-  const shouldApplySpecialPreview =
-    Boolean(
-      preview.specialPreviewKind &&
-        preview.specialPreviewText &&
-        preview.specialPreviewTimestamp &&
-        preview.specialPreviewTimestamp >= record.lastEventAt
-    )
-  const shouldPreserveCompactingState =
-    record.provider === "claude" &&
-    record.assistantPreviewKind === "compacting" &&
-    !(
-      shouldApplySpecialPreview &&
-      preview.specialPreviewKind === "compacted"
-    )
-  const resolvedAssistantPreview =
-    shouldPreserveCompactingState
-      ? {
-          lastAssistantPreview: record.lastAssistantPreview,
-          assistantPreviewKind: record.assistantPreviewKind
-        }
-      : shouldApplySpecialPreview
+  const resolvedAssistantPreview = shouldPreserveCompactingState
+    ? {
+        lastAssistantPreview: record.lastAssistantPreview,
+        assistantPreviewKind: record.assistantPreviewKind
+      }
+    : shouldApplySpecialPreview
       ? {
           lastAssistantPreview: preview.specialPreviewText,
-          assistantPreviewKind: preview.specialPreviewKind as Exclude<
-            typeof preview.specialPreviewKind,
-            null
-          >
+          assistantPreviewKind: preview.specialPreviewKind as Exclude<typeof preview.specialPreviewKind, null>
         }
       : assistantPreview
-  const nextStatus =
-    record.pendingRequest?.type === "approval_request"
-        ? "waiting_permission"
-      : record.pendingRequest?.type === "choice_request"
-        ? "waiting_user"
-        : shouldPreserveCompactingState
-          ? record.status
-          : hasNoMeaningfulTranscriptActivity
-            ? record.launchMode === "cli"
-              ? "ready"
-              : record.status
-            : record.provider === "claude"
-              ? shouldApplySpecialPreview && preview.specialPreviewKind === "compacted"
-                ? "completed"
-                : shouldApplySpecialPreview && preview.specialPreviewKind === "compacting"
-                  ? "running"
-                  : preview.lastMeaningfulActivity === "assistant_terminal"
-                    ? "completed"
-                    : preview.lastMeaningfulActivity === "assistant_activity"
-                      ? "running"
-                      : preview.lastMeaningfulActivity === "user"
-                        ? "running"
-                        : record.status
-              : record.status
 
   const lastEntryTimestamp = preview.lastEntryTimestamp
-  const sessionClient =
-    record.provider === "claude" ? "cli" : preview.sessionMeta.client
+  const sessionClient = preview.sessionMeta.client
   const nextLaunchMode =
-    record.provider === "claude"
-      ? ("cli" as const)
-      : sessionClient === "desktop"
+    sessionClient === "desktop"
         ? ("app" as const)
         : sessionClient === "cli"
           ? ("cli" as const)
           : record.launchMode
 
   const nextHostContext =
-    record.provider === "codex" && sessionClient === "desktop"
+    sessionClient === "desktop"
       ? {
-          hostAppId: "codex-app" as const,
-          hostAppLabel: "Codex.app",
+          hostAppId: record.provider === "claude" ? "claude-app" as const : "codex-app" as const,
+          hostAppLabel: record.provider === "claude" ? "Claude.app" : "Codex.app",
           hostAppExact: true
         }
-      : nextLaunchMode === "cli" && record.hostAppId === "codex-app"
+      : nextLaunchMode === "cli" && (record.hostAppId === "codex-app" || record.hostAppId === "claude-app")
         ? {
             hostAppId: null,
             hostAppLabel: null,
@@ -1474,9 +1479,9 @@ async function readTranscriptPreview(record: StoredLiveThreadRecord) {
 
   return {
     threadName:
-      isFallbackThreadName(record.provider, record.threadName) && lastUserPreview
+      preview.title ?? (isFallbackThreadName(record.provider, record.threadName) && lastUserPreview
         ? lastUserPreview
-        : record.threadName,
+        : record.threadName),
     projectPath:
       preview.sessionMeta.cwd ?? record.projectPath,
     lastUserPreview: lastUserPreview ?? record.lastUserPreview,
@@ -1777,6 +1782,10 @@ export async function runControlCenterHookBridge(params: {
       })
     }
   })
+
+  if (params.provider === "codex" && params.eventName === "Stop") {
+    process.stdout.write("{}\n")
+  }
 }
 
 export function createControlCenterService(
@@ -1796,7 +1805,8 @@ export function createControlCenterService(
   let socketServer: net.Server | null = null
   let spoolWatcher: ReturnType<typeof chokidar.watch> | null = null
   let transcriptWatcher: ReturnType<typeof chokidar.watch> | null = null
-  let claudeTranscriptPollTimer: ReturnType<typeof setInterval> | null = null
+  let transcriptPollTimer: ReturnType<typeof setInterval> | null = null
+  let isInitialized = false
   let lastGlobalSoundAt = 0
   const pendingHookResolutions = new Map<
     string,
@@ -1863,6 +1873,9 @@ export function createControlCenterService(
   }
 
   async function maybePlaySound(previous: StoredLiveThreadRecord | null, next: StoredLiveThreadRecord) {
+    if (!hasRecentActivity(next.lastEventAt)) {
+      return next
+    }
     if (!shouldPlaySound(previous, next)) {
       return next
     }
@@ -1891,6 +1904,7 @@ export function createControlCenterService(
       records: sortLiveThreadRecords(
         [...records.values()]
           .filter(record => !record.dismissedAt)
+          .filter(record => hasRecentActivity(record.lastEventAt) && !sessionInfoById.get(record.id)?.archived)
           .map(serializeRecord)
       )
     } satisfies ControlCenterSnapshot
@@ -1898,7 +1912,7 @@ export function createControlCenterService(
 
   async function refreshTranscriptWatcher() {
     const watchedPaths = [...records.values()]
-      .filter(record => !record.dismissedAt && record.transcriptPath)
+      .filter(record => !record.dismissedAt && hasRecentActivity(record.lastEventAt) && record.transcriptPath)
       .map(record => record.transcriptPath as string)
 
     if (transcriptWatcher) {
@@ -1931,11 +1945,12 @@ export function createControlCenterService(
     })
   }
 
-  async function refreshClaudeTranscriptPreviews() {
+  async function refreshTranscriptPreviews() {
     const targetRecords = [...records.values()].filter(
       record =>
         !record.dismissedAt &&
-        record.provider === "claude" &&
+        hasRecentActivity(record.lastEventAt) &&
+        record.status !== "completed" && record.status !== "failed" &&
         Boolean(record.transcriptPath)
     )
 
@@ -1958,7 +1973,7 @@ export function createControlCenterService(
       return
     }
 
-    const previewUpdate = await readTranscriptPreview(currentRecord)
+    const previewUpdate = await readTranscriptPreview(currentRecord, true)
     if (!previewUpdate) {
       return
     }
@@ -2006,15 +2021,59 @@ export function createControlCenterService(
       return
     }
 
-    records.set(id, nextRecord)
+    records.set(id, await maybePlaySound(currentRecord, nextRecord))
     await persistRecords()
     emitStateChanged(id)
   }
 
   async function reconcileOneSession(session: SessionListItem) {
+    if (session.archived || !session.sessionPath) {
+      return
+    }
     const currentRecord = records.get(session.id)
     if (!currentRecord) {
+      const stat = await fsPromises.stat(session.sessionPath).catch(() => null)
+      if (!stat || !hasRecentActivity(stat.mtime.toISOString())) {
+        return
+      }
+      const seed: StoredLiveThreadRecord = {
+        id: session.id,
+        provider: session.provider,
+        sourceSessionId: session.sourceSessionId,
+        threadName: session.threadName,
+        projectPath: session.projectPath,
+        transcriptPath: session.sessionPath,
+        status: "running",
+        lastEventAt: session.createdAt,
+        lastUserPreview: null,
+        lastAssistantPreview: null,
+        assistantPreviewKind: "none",
+        launchMode: session.provider === "claude" ? "cli" : "app",
+        hostAppId: null,
+        hostAppLabel: null,
+        hostAppExact: false,
+        pendingRequest: null,
+        acknowledgedAt: null,
+        dismissedAt: null,
+        lastSoundAt: null,
+        lastSoundStatus: null
+      }
+      const preview = await readTranscriptPreview(seed).catch(() => null)
+      if (!preview || "suppress" in preview || !hasRecentActivity(preview.lastEventAt) ||
+        (!preview.lastUserPreview && !preview.lastAssistantPreview)) {
+        return
+      }
+      records.set(session.id, { ...seed, ...preview })
+      await persistRecords()
+      emitStateChanged(session.id)
       return
+    }
+
+    if (!hasRecentActivity(currentRecord.lastEventAt)) {
+      const stat = await fsPromises.stat(session.sessionPath).catch(() => null)
+      if (!stat || !hasRecentActivity(stat.mtime.toISOString())) {
+        return
+      }
     }
 
     const nextRecord: StoredLiveThreadRecord = {
@@ -2089,6 +2148,9 @@ export function createControlCenterService(
     }
 
     const existing = records.get(event.id) ?? null
+    if (existing && event.eventAt < existing.lastEventAt && !event.pendingRequest) {
+      return
+    }
     const session = sessionInfoById.get(event.id) ?? null
     const effectiveEventStatus =
       isIdleCliSessionStartEvent(event) ? ("ready" as const) : event.status
@@ -2377,6 +2439,10 @@ export function createControlCenterService(
         sessionInfoById.set(session.id, session)
       })
 
+      if (!isInitialized) {
+        return
+      }
+
       for (const session of sessions) {
         await reconcileOneSession(session)
       }
@@ -2393,6 +2459,9 @@ export function createControlCenterService(
     },
 
     async startWatching() {
+      if (isInitialized) {
+        return
+      }
       await fsPromises.mkdir(paths.rootDir, { recursive: true })
       const persistedRecords = await readPersistedRecords(paths.recordsPath)
       const filteredPersistedRecords = persistedRecords.filter(record => {
@@ -2411,12 +2480,16 @@ export function createControlCenterService(
         return !shouldSuppress
       })
       records = new Map(filteredPersistedRecords.map(record => [record.id, record]))
+      isInitialized = true
 
       if (filteredPersistedRecords.length !== persistedRecords.length) {
         await persistRecords()
       }
 
       await consumeSpool()
+      for (const session of sessionInfoById.values()) {
+        await reconcileOneSession(session)
+      }
       await refreshTranscriptWatcher()
 
       if (!spoolWatcher) {
@@ -2504,10 +2577,10 @@ export function createControlCenterService(
         })
       }
 
-      if (!claudeTranscriptPollTimer) {
-        claudeTranscriptPollTimer = setInterval(() => {
-          void refreshClaudeTranscriptPreviews()
-        }, CLAUDE_TRANSCRIPT_REFRESH_POLL_MS)
+      if (!transcriptPollTimer) {
+        transcriptPollTimer = setInterval(() => {
+          void refreshTranscriptPreviews()
+        }, TRANSCRIPT_REFRESH_POLL_MS)
       }
     },
 
@@ -2531,9 +2604,9 @@ export function createControlCenterService(
         transcriptWatcher = null
       }
 
-      if (claudeTranscriptPollTimer) {
-        clearInterval(claudeTranscriptPollTimer)
-        claudeTranscriptPollTimer = null
+      if (transcriptPollTimer) {
+        clearInterval(transcriptPollTimer)
+        transcriptPollTimer = null
       }
 
       if (socketServer) {

@@ -29,6 +29,14 @@ The app reads:
 
 The sidebar shows `thread_name` sorted by most recent `updated_at`, and the detail pane renders the full transcript with inline diffs.
 
+## Live threads and pop-out
+
+Control Center follows local Claude Code and Codex transcripts, including Work chats that use the local Codex runtime. It discovers recent threads at startup and watches new transcripts as they appear. Threads with activity in the last 24 hours are shown; older history remains available in Threads.
+
+Open **Control Center**, then **Pop out**, to keep the live view visible while working. The main window and pop-out receive the same live updates. Existing provider hooks also supply permission requests and other lifecycle events; the **Install live hooks** controls configure them.
+
+Control Center is enabled by default. Set `HANDOFF_CONTROL_CENTER=0` to disable collection.
+
 ## Build
 
 ```bash

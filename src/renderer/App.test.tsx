@@ -5,7 +5,6 @@ import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import type {
-  AgentDefinition,
   AppStateInfo,
   ConversationTranscript,
   HandoffApi,
@@ -20,7 +19,6 @@ import type {
 import App from "./App"
 
 function createMockApi({
-  agents = [],
   sessions,
   threadOrganization,
   controlCenterRecords = [],
@@ -29,7 +27,6 @@ function createMockApi({
   searchStatus,
   searchQuery
 }: {
-  agents?: AgentDefinition[]
   sessions: Array<Omit<SessionListItem, "createdAt"> & Partial<Pick<SessionListItem, "createdAt">>>
   threadOrganization?: import("../shared/contracts").ThreadOrganizationSettings
   controlCenterRecords?: LiveThreadRecord[]
@@ -68,19 +65,10 @@ function createMockApi({
           homePath: ""
         }
       },
-      skills: {
-        codex: {
-          toolTimeoutSec: null
-        },
-        claude: {
-          toolTimeoutSec: null
-        }
-      },
       terminals: {
         enabledTerminalIds: ["terminal", "ghostty", "warp"],
         defaultTerminalId: "terminal"
       },
-      agents,
       threadOrganization: threadOrganization ?? {
         viewMode: "chronological",
         sortKey: "updated",
@@ -136,32 +124,20 @@ function createMockApi({
   const selectorStateListeners = new Set<
     (event: import("../shared/contracts").SelectorAppStateChangeEvent) => void
   >()
-  let agentState = agents.map(agent => ({ ...agent }))
   let skillsStatusState: HandoffSkillsStatus = {
-    skillName: "handoff-agent-bridge",
-    managedRoot: "/Users/tedikonda/Library/Application Support/Handoff/skills",
-    exportRoot: "/Users/tedikonda/Library/Application Support/Handoff/skill-exports",
     providers: {
       codex: {
         provider: "codex",
         configPath: "/Users/tedikonda/.codex/config.toml",
         configExists: true,
-        skillPath: "/Users/tedikonda/.codex/skills/handoff-agent-bridge/SKILL.md",
-        skillInstalled: false,
-        mcpInstalled: false,
         liveHooksInstalled: false,
-        managedConfigBlock: false,
         error: null
       },
       claude: {
         provider: "claude",
         configPath: "/Users/tedikonda/.claude/settings.json",
         configExists: true,
-        skillPath: "/Users/tedikonda/.claude/skills/handoff-agent-bridge/SKILL.md",
-        skillInstalled: false,
-        mcpInstalled: false,
         liveHooksInstalled: false,
-        managedConfigBlock: false,
         error: null
       }
     }
@@ -209,75 +185,14 @@ function createMockApi({
               ...(patch.providers?.claude ?? {})
             }
           },
-          skills: {
-            codex: {
-              toolTimeoutSec: settingsSnapshot.settings.skills?.codex?.toolTimeoutSec ?? null,
-              ...(patch.skills?.codex ?? {})
-            },
-            claude: {
-              toolTimeoutSec: settingsSnapshot.settings.skills?.claude?.toolTimeoutSec ?? null,
-              ...(patch.skills?.claude ?? {})
-            }
-          },
           terminals: {
             ...settingsSnapshot.settings.terminals,
             ...(patch.terminals ?? {})
           },
-          agents: settingsSnapshot.settings.agents,
           threadOrganization: settingsSnapshot.settings.threadOrganization
         }
       })),
       resetProvider: vi.fn().mockResolvedValue(settingsSnapshot)
-    },
-    agents: {
-      list: vi.fn().mockImplementation(async () => agentState.map(agent => ({ ...agent }))),
-      create: vi.fn().mockImplementation(async () => {
-        const nextAgent: AgentDefinition = {
-          id: `agent-${agentState.length + 1}`,
-          name: `New agent${agentState.length > 0 ? ` ${agentState.length + 1}` : ""}`,
-          specialty: "",
-          provider: "codex",
-          modelId: "gpt-5.4",
-          thinkingLevel: "high",
-          fast: false,
-          timeoutSec: null,
-          customInstructions: ""
-        }
-        agentState = [...agentState, nextAgent]
-        return { ...nextAgent }
-      }),
-      update: vi.fn().mockImplementation(async (id: string, patch) => {
-        const currentAgent = agentState.find(agent => agent.id === id)
-        if (!currentAgent) {
-          throw new Error("Agent not found.")
-        }
-
-        const updatedAgent = {
-          ...currentAgent,
-          ...patch,
-          name: typeof patch.name === "string" ? patch.name.trim() : currentAgent.name
-        }
-        agentState = agentState.map(agent => (agent.id === id ? updatedAgent : agent))
-        return { ...updatedAgent }
-      }),
-      delete: vi.fn().mockImplementation(async (id: string) => {
-        agentState = agentState.filter(agent => agent.id !== id)
-        return { deletedId: id }
-      }),
-      duplicate: vi.fn().mockImplementation(async (id: string) => {
-        const sourceAgent = agentState.find(agent => agent.id === id)
-        if (!sourceAgent) {
-          throw new Error("Agent not found.")
-        }
-
-        const duplicatedAgent: AgentDefinition = {
-          ...sourceAgent,
-          id: `${sourceAgent.id}-copy`,
-          name: `${sourceAgent.name} copy`
-        }
-        agentState = [...agentState, duplicatedAgent]
-        return { ...duplicatedAgent }
-      })
     },
     threads: {
       get: vi.fn().mockResolvedValue(settingsSnapshot.settings.threadOrganization),
@@ -340,39 +255,6 @@ function createMockApi({
         }
       }
     },
-    bridge: {
-      getStatus: vi.fn().mockResolvedValue({
-        status: "ready",
-        message: "Async agent jobs are available through the local MCP bridge.",
-        command: "/Applications/Handoff.app/Contents/MacOS/Handoff",
-        args: ["--agent-bridge-mcp"],
-        entrypointLabel: "handoff-agent-bridge",
-        stateDir: "/Users/tedikonda/Library/Application Support/Handoff/agent-bridge",
-        runsLogPath:
-          "/Users/tedikonda/Library/Application Support/Handoff/agent-bridge/runs.jsonl",
-        locksDir:
-          "/Users/tedikonda/Library/Application Support/Handoff/agent-bridge/locks"
-      }),
-      getConfigSnippets: vi.fn().mockResolvedValue({
-        codexCommand:
-          "codex mcp add handoff-agent-bridge -- '/Applications/Handoff.app/Contents/MacOS/Handoff' '--agent-bridge-mcp'",
-        claudeConfigJson: JSON.stringify(
-          {
-            mcpServers: {
-              "handoff-agent-bridge": {
-                command: "/Applications/Handoff.app/Contents/MacOS/Handoff",
-                args: ["--agent-bridge-mcp"]
-              }
-            }
-          },
-          null,
-          2
-        )
-      }),
-      listRuns: vi.fn().mockResolvedValue([]),
-      getRun: vi.fn().mockResolvedValue(null),
-      cancelRun: vi.fn().mockResolvedValue(null)
-    },
     skills: {
       getStatus: vi.fn().mockImplementation(async () => ({ ...skillsStatusState })),
       install: vi.fn().mockImplementation(async target => {
@@ -383,30 +265,19 @@ function createMockApi({
               target === "codex" || target === "both"
                 ? {
                     ...skillsStatusState.providers.codex,
-                    skillInstalled: true,
-                    mcpInstalled: true,
                     liveHooksInstalled: true,
-                    managedConfigBlock: true
                   }
                 : skillsStatusState.providers.codex,
             claude:
               target === "claude" || target === "both"
                 ? {
                     ...skillsStatusState.providers.claude,
-                    skillInstalled: true,
-                    mcpInstalled: true,
                     liveHooksInstalled: true
                   }
                 : skillsStatusState.providers.claude
           }
         }
         return { ...skillsStatusState }
-      }),
-      exportPackage: vi.fn().mockResolvedValue({
-        exportPath: "/tmp/handoff-skill-export",
-        codexPath: "/tmp/handoff-skill-export/codex/handoff-agent-bridge",
-        claudePath: "/tmp/handoff-skill-export/claude/handoff-agent-bridge",
-        claudePluginPath: "/tmp/handoff-skill-export/.claude-plugin/marketplace.json"
       }),
       copySetupInstructions: vi.fn().mockResolvedValue({ copied: true })
     },
@@ -546,6 +417,7 @@ function createMockApi({
 describe("Handoff App", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+    vi.spyOn(Date, "now").mockReturnValue(new Date("2026-03-14T12:00:00.000Z").getTime())
     window.localStorage.clear()
     window.history.replaceState({}, "", "/")
   })
@@ -614,6 +486,8 @@ describe("Handoff App", () => {
     const threadsButton = screen.getByRole("button", {
       name: /^Threads$/i
     })
+    expect(screen.queryByRole("button", { name: "Agents" })).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Selector" })).toBeInTheDocument()
 
     expect(
       controlCenterButton.compareDocumentPosition(threadsButton) & Node.DOCUMENT_POSITION_FOLLOWING
@@ -2189,44 +2063,6 @@ describe("Handoff App", () => {
     )
   })
 
-  it("opens the agents section, creates an agent, and saves edits", async () => {
-    const { api } = createMockApi({
-      sessions: [],
-      transcriptById: {}
-    })
-
-    window.handoffApp = api
-    render(<App />)
-
-    await userEvent.click(await screen.findByRole("button", { name: "Agents" }))
-
-    expect(await screen.findByRole("button", { name: "Dashboard" })).toBeInTheDocument()
-    expect(await screen.findByText("Recent invocations")).toBeInTheDocument()
-
-    await userEvent.click(screen.getByRole("button", { name: "New agent" }))
-
-    const nameInput = await screen.findByLabelText("Name")
-    expect(nameInput).toHaveValue("New agent")
-
-    await userEvent.clear(nameInput)
-    await userEvent.type(nameInput, "Release reviewer")
-
-    await userEvent.click(screen.getByRole("button", { name: "Save" }))
-
-    expect(api.agents.create).toHaveBeenCalledTimes(1)
-    expect(api.agents.update).toHaveBeenCalledWith("agent-1", {
-      name: "Release reviewer",
-      specialty: "",
-      provider: "codex",
-      modelId: "gpt-5.4",
-      thinkingLevel: "high",
-      fast: false,
-      timeoutSec: null,
-      customInstructions: ""
-    })
-    expect(await screen.findByText("Saved agent")).toBeInTheDocument()
-  })
-
   it("creates a new collection from the threads sidebar and places it first", async () => {
     const { api } = createMockApi({
       sessions: [
@@ -2353,139 +2189,4 @@ describe("Handoff App", () => {
     expect(screen.getByRole("button", { name: "Remove collection" })).toBeInTheDocument()
   })
 
-  it("shows automation setup actions for the selected agent", async () => {
-    const agent: AgentDefinition = {
-      id: "agent-1",
-      name: "Release reviewer",
-      specialty: "Use for release planning and ship reviews.",
-      provider: "codex",
-      modelId: "gpt-5.4",
-      thinkingLevel: "high",
-      fast: false,
-      timeoutSec: null,
-      customInstructions: ""
-    }
-    const { api } = createMockApi({
-      agents: [agent],
-      sessions: [],
-      transcriptById: {}
-    })
-
-    window.handoffApp = api
-    render(<App />)
-
-    await userEvent.click(await screen.findByRole("button", { name: "Agents" }))
-
-    await userEvent.click(await screen.findByRole("button", { name: /Automation \/ Skills/i }))
-
-    expect(await screen.findAllByText("Automation / Skills")).not.toHaveLength(0)
-    const codexTimeoutInput = await screen.findByLabelText(/Codex client MCP timeout \(seconds\)/i)
-    const claudeTimeoutInput = await screen.findByLabelText(/Claude client MCP timeout \(seconds\)/i)
-    expect(codexTimeoutInput).toHaveValue(null)
-    expect(claudeTimeoutInput).toHaveValue(null)
-
-    await userEvent.type(codexTimeoutInput, "600")
-    await waitFor(() =>
-      expect(api.settings.update).toHaveBeenCalledWith({
-        skills: {
-          codex: {
-            toolTimeoutSec: 600
-          }
-        }
-      })
-    )
-
-    await userEvent.click(screen.getByRole("button", { name: "Install both" }))
-    expect(api.skills.install).toHaveBeenCalledWith("both")
-
-    await userEvent.click(screen.getByRole("button", { name: "Copy setup instructions" }))
-    expect(api.skills.copySetupInstructions).toHaveBeenCalledWith("both")
-  })
-
-  it("shows the agent bridge settings card and copy actions", async () => {
-    const { api } = createMockApi({
-      sessions: [],
-      transcriptById: {}
-    })
-
-    window.handoffApp = api
-    render(<App />)
-
-    await userEvent.click(await screen.findByRole("button", { name: /Open settings/i }))
-
-    expect(await screen.findByText("Agent bridge")).toBeInTheDocument()
-    expect(screen.getByText("Codex MCP command")).toBeInTheDocument()
-    expect(screen.getByText("Claude MCP config")).toBeInTheDocument()
-
-    await userEvent.click(screen.getAllByRole("button", { name: "Copy" })[0])
-
-    expect(api.clipboard.writeText).toHaveBeenCalled()
-  })
-
-  it("shows persisted bridge runs under the selected agent", async () => {
-    const agent: AgentDefinition = {
-      id: "agent-1",
-      name: "Release reviewer",
-      provider: "codex",
-      modelId: "gpt-5.4",
-      thinkingLevel: "high",
-      fast: false,
-      timeoutSec: null,
-      customInstructions: ""
-    }
-    const { api } = createMockApi({
-      agents: [agent],
-      sessions: [],
-      transcriptById: {}
-    })
-
-    ;(api.bridge.listRuns as ReturnType<typeof vi.fn>).mockResolvedValue([
-      {
-        runId: "run-1",
-        agentId: "agent-1",
-        agentName: "Release reviewer",
-        status: "completed",
-        provider: "codex",
-        modelId: "gpt-5.4",
-        thinkingLevel: "high",
-        fast: false,
-        projectPath: "/tmp/project",
-        message: "Review this release plan.",
-        context: "Ship this week.",
-        caller: {
-          client: "claude-code",
-          sessionName: "Release planning thread",
-          threadId: "thread-123"
-        },
-        prompt: "prompt",
-        answer: "Looks ready.",
-        error: null,
-        stdout: null,
-        stderr: null,
-        exitCode: 0,
-        workerPid: null,
-        startedAt: "2026-03-14T00:20:00.000Z",
-        finishedAt: "2026-03-14T00:20:10.000Z"
-      }
-    ])
-
-    window.handoffApp = api
-    render(<App />)
-
-    await userEvent.click(await screen.findByRole("button", { name: "Agents" }))
-
-    expect(await screen.findByText("Recent invocations")).toBeInTheDocument()
-    expect(screen.getByText("Release planning thread · thread-123")).toBeInTheDocument()
-
-    await userEvent.click(screen.getByRole("button", { name: /thread-123/i }))
-
-    expect(await screen.findByText(/Started/)).toBeInTheDocument()
-    expect(screen.getByText("Review this release plan.")).toBeInTheDocument()
-    expect(screen.getByText("Looks ready.")).toBeInTheDocument()
-
-    await userEvent.click(screen.getByRole("button", { name: "Release reviewer" }))
-    expect(await screen.findByRole("button", { name: "Edit" })).toBeInTheDocument()
-    expect(screen.getByText("Agent tasks")).toBeInTheDocument()
-    expect(screen.getByText("Release planning thread · thread-123")).toBeInTheDocument()
-  })
 })

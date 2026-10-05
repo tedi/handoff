@@ -1,12 +1,14 @@
 import { clipboard, nativeImage, shell, type IpcMain } from "electron"
 import { execFile } from "node:child_process"
 import fs from "node:fs"
+import fsPromises from "node:fs/promises"
+import os from "node:os"
+import path from "node:path"
 import { promisify } from "node:util"
 import type { SelectorGitDiffMode } from "selector"
 
 import { IPC_CHANNELS } from "../shared/channels"
 import type {
-  AgentUpdatePatch,
   HandoffSettingsSnapshot,
   NewThreadLaunchParams,
   NewThreadLaunchResult,
@@ -288,6 +290,39 @@ async function openProjectPath(
   return { fallbackMessage: null }
 }
 
+async function openClaudeDesktopSession(cliSessionId: string): Promise<OpenActionResult> {
+  const root = path.join(os.homedir(), "Library", "Application Support", "Claude", "claude-code-sessions")
+  async function findSession(directory: string, depth = 0): Promise<string | null> {
+    const entries = await fsPromises.readdir(directory, { withFileTypes: true }).catch(() => [])
+    for (const entry of entries) {
+      const filePath = path.join(directory, entry.name)
+      if (entry.isDirectory() && depth < 2) {
+        const found = await findSession(filePath, depth + 1)
+        if (found) {
+          return found
+        }
+      } else if (entry.isFile() && entry.name.startsWith("local_") && entry.name.endsWith(".json")) {
+        try {
+          const session = JSON.parse(await fsPromises.readFile(filePath, "utf8"))
+          if ((session.cliSessionId === cliSessionId || session.sessionId === `local_${cliSessionId}`) &&
+            typeof session.sessionId === "string" && /^local_[A-Za-z0-9-]{1,64}$/.test(session.sessionId)) {
+            return session.sessionId
+          }
+        } catch {
+          continue
+        }
+      }
+    }
+    return null
+  }
+  const desktopSessionId = await findSession(root)
+  if (!desktopSessionId) {
+    throw new Error("Could not find this session in Claude Desktop.")
+  }
+  await shell.openExternal(`claude://code/continue?session=${encodeURIComponent(desktopSessionId)}`)
+  return { fallbackMessage: null }
+}
+
 function getTerminalIdForHostLabel(hostAppLabel: string | null) {
   if (hostAppLabel === "Ghostty") {
     return "ghostty" as const
@@ -351,6 +386,8 @@ async function openControlCenterThread(params: {
         preferredTerminalId: exactTerminalId
       })
     }
+  } else if (record.launchMode === "app") {
+    result = await openClaudeDesktopSession(record.sourceSessionId)
   } else {
     result = await openClaudeCliSession({
       settingsSnapshot,
@@ -541,17 +578,6 @@ export function registerIpcHandlers(
     IPC_CHANNELS.settings.resetProvider,
     (_event, provider: SessionProvider) => service.settings.resetProvider(provider)
   )
-  ipcMain.handle(IPC_CHANNELS.agents.list, () => service.agents.list())
-  ipcMain.handle(IPC_CHANNELS.agents.create, () => service.agents.create())
-  ipcMain.handle(
-    IPC_CHANNELS.agents.update,
-    (_event, id: string, patch: AgentUpdatePatch) => service.agents.update(id, patch)
-  )
-  ipcMain.handle(IPC_CHANNELS.agents.delete, (_event, id: string) => service.agents.delete(id))
-  ipcMain.handle(
-    IPC_CHANNELS.agents.duplicate,
-    (_event, id: string) => service.agents.duplicate(id)
-  )
   ipcMain.handle(IPC_CHANNELS.threads.get, () => service.threads.get())
   ipcMain.handle(IPC_CHANNELS.threads.update, (_event, settings) =>
     service.threads.update(settings)
@@ -581,27 +607,12 @@ export function registerIpcHandlers(
         actionId
       })
   )
-  ipcMain.handle(IPC_CHANNELS.bridge.getStatus, () => service.bridge.getStatus())
-  ipcMain.handle(IPC_CHANNELS.bridge.getConfigSnippets, () =>
-    service.bridge.getConfigSnippets()
-  )
-  ipcMain.handle(
-    IPC_CHANNELS.bridge.listRuns,
-    (_event, agentId?: string, limit?: number) => service.bridge.listRuns(agentId, limit)
-  )
-  ipcMain.handle(IPC_CHANNELS.bridge.getRun, (_event, runId: string) =>
-    service.bridge.getRun(runId)
-  )
-  ipcMain.handle(IPC_CHANNELS.bridge.cancelRun, (_event, runId: string) =>
-    service.bridge.cancelRun(runId)
-  )
   ipcMain.handle(IPC_CHANNELS.skills.getStatus, () => service.skills.getStatus())
   ipcMain.handle(
     IPC_CHANNELS.skills.install,
     (_event, target: import("../shared/contracts").SkillInstallTarget) =>
       service.skills.install(target)
   )
-  ipcMain.handle(IPC_CHANNELS.skills.exportPackage, () => service.skills.exportPackage())
   ipcMain.handle(
     IPC_CHANNELS.skills.copySetupInstructions,
     async (_event, target: import("../shared/contracts").SkillInstallTarget) => {
@@ -715,12 +726,15 @@ export function registerIpcHandlers(
       _event,
       provider: SessionProvider,
       sessionId: string,
-      sessionClient: SessionClient = "desktop",
+      sessionClient: SessionClient = "unknown",
       workingDirectory: string | null = null
     ) => {
       const settingsSnapshot = await service.settings.get()
 
       if (provider === "claude") {
+        if (sessionClient === "desktop") {
+          return openClaudeDesktopSession(sessionId)
+        }
         return openClaudeCliSession({
           settingsSnapshot,
           sessionId,
@@ -779,11 +793,6 @@ export function registerIpcHandlers(
     ipcMain.removeHandler(IPC_CHANNELS.settings.get)
     ipcMain.removeHandler(IPC_CHANNELS.settings.update)
     ipcMain.removeHandler(IPC_CHANNELS.settings.resetProvider)
-    ipcMain.removeHandler(IPC_CHANNELS.agents.list)
-    ipcMain.removeHandler(IPC_CHANNELS.agents.create)
-    ipcMain.removeHandler(IPC_CHANNELS.agents.update)
-    ipcMain.removeHandler(IPC_CHANNELS.agents.delete)
-    ipcMain.removeHandler(IPC_CHANNELS.agents.duplicate)
     ipcMain.removeHandler(IPC_CHANNELS.threads.get)
     ipcMain.removeHandler(IPC_CHANNELS.threads.update)
     ipcMain.removeHandler(IPC_CHANNELS.controlCenter.getSnapshot)

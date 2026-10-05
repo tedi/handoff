@@ -5,6 +5,7 @@ import path from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 
 import {
+  CONTROL_CENTER_HOOK_MODE_ARG,
   CONTROL_CENTER_CLAUDE_EVENTS,
   CONTROL_CENTER_CODEX_EVENTS
 } from "./control-center"
@@ -45,113 +46,41 @@ describe("createHandoffSkillsService", () => {
     }
   })
 
-  it("installs Codex and Claude skill wiring idempotently", async () => {
+  it("installs only live hooks and keeps provider configuration intact", async () => {
     context = await createSkillsTestContext()
+    const codexConfigPath = path.join(context.codexHome, "config.toml")
+    const codexConfig = 'model = "gpt-5.4"\n'
+    await fs.writeFile(codexConfigPath, codexConfig)
+    const claudeConfigPath = path.join(context.claudeHome, "settings.json")
+    const claudeConfig = {
+      permissions: { allow: ["Read"] },
+      mcpServers: { existing: { command: "existing-server" } }
+    }
+    await fs.writeFile(claudeConfigPath, JSON.stringify(claudeConfig))
     const skills = createHandoffSkillsService({
       dataDir: context.dataDir,
       codexHome: context.codexHome,
       claudeHome: context.claudeHome,
-      bridgeCommand: {
-        command: "/Applications/Handoff.app/Contents/MacOS/Handoff",
-        args: ["--agent-bridge-mcp"]
-      },
       liveHookCommand: {
         command: "/Applications/Handoff.app/Contents/MacOS/Handoff",
         args: []
       }
     })
 
-    const beforeInstall = await skills.getStatus()
-    expect(beforeInstall.providers.codex.skillInstalled).toBe(false)
-    expect(beforeInstall.providers.claude.skillInstalled).toBe(false)
-
-    const afterInstall = await skills.install("both")
-    expect(afterInstall.providers.codex.skillInstalled).toBe(true)
-    expect(afterInstall.providers.codex.mcpInstalled).toBe(true)
-    expect(afterInstall.providers.codex.liveHooksInstalled).toBe(true)
-    expect(afterInstall.providers.claude.skillInstalled).toBe(true)
-    expect(afterInstall.providers.claude.mcpInstalled).toBe(true)
-    expect(afterInstall.providers.claude.liveHooksInstalled).toBe(true)
-
-    const codexConfig = await fs.readFile(path.join(context.codexHome, "config.toml"), "utf8")
-    const codexHooks = JSON.parse(
-      await fs.readFile(path.join(context.codexHome, "hooks.json"), "utf8")
-    ) as Record<string, unknown>
-    const claudeConfig = JSON.parse(
-      await fs.readFile(path.join(context.claudeHome, "settings.json"), "utf8")
-    ) as Record<string, unknown>
-
-    expect(codexConfig).toContain("# BEGIN HANDOFF SKILLS MANAGED BLOCK")
-    expect(codexConfig).toContain('[[skills.config]]')
-    expect(codexConfig).toContain('handoff-agent-bridge')
-    expect(codexConfig).toContain(
-      path.join(context.codexHome, "skills", "handoff-agent-bridge", "SKILL.md")
-    )
-    expect(codexHooks).toMatchObject({
-      hooks: {
-        SessionStart: expect.any(Array),
-        UserPromptSubmit: expect.any(Array),
-        Stop: expect.any(Array)
-      }
-    })
-    expect(claudeConfig).toMatchObject({
-      mcpServers: {
-        "handoff-agent-bridge": {
-          command: "/Applications/Handoff.app/Contents/MacOS/Handoff",
-          args: ["--agent-bridge-mcp"]
-        }
-      },
-      hooks: {
-        SessionStart: expect.any(Array),
-        UserPromptSubmit: expect.any(Array),
-        Stop: expect.any(Array)
-      }
-    })
-
-    await skills.install("both")
-    const codexConfigAfterReinstall = await fs.readFile(
-      path.join(context.codexHome, "config.toml"),
-      "utf8"
-    )
-    await expect(
-      fs.readFile(
-        path.join(context.codexHome, "skills", "handoff-agent-bridge", "SKILL.md"),
-        "utf8"
-      )
-    ).resolves.toContain("threadName")
-    expect(
-      codexConfigAfterReinstall.match(/# BEGIN HANDOFF SKILLS MANAGED BLOCK/g)
-    ).toHaveLength(1)
-  })
-
-  it("exports portable Codex and Claude skill packages", async () => {
-    context = await createSkillsTestContext()
-    const skills = createHandoffSkillsService({
-      dataDir: context.dataDir,
-      codexHome: context.codexHome,
-      claudeHome: context.claudeHome,
-      bridgeCommand: {
-        command: "/Applications/Handoff.app/Contents/MacOS/Handoff",
-        args: ["--agent-bridge-mcp"]
-      },
-      liveHookCommand: {
-        command: "/Applications/Handoff.app/Contents/MacOS/Handoff",
-        args: []
-      }
-    })
-
-    const exportResult = await skills.exportPackage()
-
-    await expect(fs.readFile(path.join(exportResult.codexPath, "SKILL.md"), "utf8")).resolves
-      .toContain("threadName")
-    await expect(
-      fs.readFile(path.join(exportResult.codexPath, "agents", "openai.yaml"), "utf8")
-    ).resolves.toContain("handoff-agent-bridge")
-    await expect(fs.readFile(path.join(exportResult.claudePath, "SKILL.md"), "utf8")).resolves
-      .toContain("threadName")
-    await expect(fs.readFile(exportResult.claudePluginPath, "utf8")).resolves.toContain(
-      "\"handoff-agent-bridge\""
-    )
+    const before = await skills.getStatus()
+    expect(before.providers.codex.liveHooksInstalled).toBe(false)
+    expect(before.providers.claude.liveHooksInstalled).toBe(false)
+    const after = await skills.install("both")
+    expect(after.providers.codex.liveHooksInstalled).toBe(true)
+    expect(after.providers.claude.liveHooksInstalled).toBe(true)
+    expect(await fs.readFile(codexConfigPath, "utf8")).toBe(codexConfig)
+    expect(JSON.parse(await fs.readFile(claudeConfigPath, "utf8"))).toMatchObject(claudeConfig)
+    await expect(fs.access(path.join(context.codexHome, "skills"))).rejects.toMatchObject({ code: "ENOENT" })
+    await expect(fs.access(path.join(context.claudeHome, "skills"))).rejects.toMatchObject({ code: "ENOENT" })
+    const instructions = await skills.getSetupInstructions("both")
+    expect(instructions).toContain("Handoff Control Center")
+    expect(instructions).toContain(CONTROL_CENTER_HOOK_MODE_ARG)
+    expect(instructions).not.toContain("--agent-bridge")
   })
 
   it("preserves existing provider hooks while merging Handoff live hooks idempotently", async () => {
@@ -226,10 +155,6 @@ describe("createHandoffSkillsService", () => {
       dataDir: context.dataDir,
       codexHome: context.codexHome,
       claudeHome: context.claudeHome,
-      bridgeCommand: {
-        command: "/Applications/Handoff.app/Contents/MacOS/Handoff",
-        args: ["--agent-bridge-mcp"]
-      },
       liveHookCommand: {
         command: "/Applications/Handoff.app/Contents/MacOS/Handoff",
         args: []
@@ -258,59 +183,4 @@ describe("createHandoffSkillsService", () => {
     )
   })
 
-  it("applies configured MCP tool timeout settings during install and export", async () => {
-    context = await createSkillsTestContext()
-    await fs.writeFile(
-      path.join(context.dataDir, "settings.json"),
-      JSON.stringify(
-        {
-          providers: {
-            codex: { binaryPath: "", homePath: "" },
-            claude: { binaryPath: "", homePath: "" }
-          },
-          skills: {
-            codex: { toolTimeoutSec: 900 },
-            claude: { toolTimeoutSec: 300 }
-          },
-          terminals: {
-            enabledTerminalIds: ["terminal"],
-            defaultTerminalId: "terminal"
-          },
-          agents: []
-        },
-        null,
-        2
-      ),
-      "utf8"
-    )
-
-    const skills = createHandoffSkillsService({
-      dataDir: context.dataDir,
-      codexHome: context.codexHome,
-      claudeHome: context.claudeHome,
-      bridgeCommand: {
-        command: "/Applications/Handoff.app/Contents/MacOS/Handoff",
-        args: ["--agent-bridge-mcp"]
-      },
-      liveHookCommand: {
-        command: "/Applications/Handoff.app/Contents/MacOS/Handoff",
-        args: []
-      }
-    })
-
-    await skills.install("both")
-
-    await expect(fs.readFile(path.join(context.codexHome, "config.toml"), "utf8")).resolves
-      .toContain("tool_timeout_sec = 900")
-
-    await expect(
-      fs.readFile(path.join(context.claudeHome, "settings.json"), "utf8")
-    ).resolves.toContain('"MCP_TOOL_TIMEOUT": "300"')
-
-    const exportResult = await skills.exportPackage()
-    await expect(fs.readFile(path.join(exportResult.exportPath, "codex", "config-snippet.toml"), "utf8")).resolves
-      .toContain("tool_timeout_sec = 900")
-    await expect(fs.readFile(path.join(exportResult.exportPath, "claude", "mcp-config.json"), "utf8")).resolves
-      .toContain('"MCP_TOOL_TIMEOUT": "300"')
-  })
 })

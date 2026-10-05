@@ -3,13 +3,8 @@ import type { SelectorGitDiffMode } from "selector"
 
 import { IPC_CHANNELS } from "../shared/channels"
 import type {
-  AgentUpdatePatch,
-  AgentBridgeConfigSnippets,
-  AgentBridgeHealth,
-  AgentRunRecord,
   ClipboardWriteResult,
   ControlCenterStateChangeEvent,
-  HandoffSkillsExportResult,
   HandoffSkillsStatus,
   HandoffSettingsPatch,
   HandoffSettingsSnapshot,
@@ -135,38 +130,6 @@ export function createHandoffBridge(
       }
     },
 
-    agents: {
-      list() {
-        return ipcRenderer.invoke(IPC_CHANNELS.agents.list) as Promise<
-          Awaited<ReturnType<HandoffApi["agents"]["list"]>>
-        >
-      },
-
-      create() {
-        return ipcRenderer.invoke(IPC_CHANNELS.agents.create) as Promise<
-          Awaited<ReturnType<HandoffApi["agents"]["create"]>>
-        >
-      },
-
-      update(id: string, patch: AgentUpdatePatch) {
-        return ipcRenderer.invoke(IPC_CHANNELS.agents.update, id, patch) as Promise<
-          Awaited<ReturnType<HandoffApi["agents"]["update"]>>
-        >
-      },
-
-      delete(id: string) {
-        return ipcRenderer.invoke(IPC_CHANNELS.agents.delete, id) as Promise<
-          Awaited<ReturnType<HandoffApi["agents"]["delete"]>>
-        >
-      },
-
-      duplicate(id: string) {
-        return ipcRenderer.invoke(IPC_CHANNELS.agents.duplicate, id) as Promise<
-          Awaited<ReturnType<HandoffApi["agents"]["duplicate"]>>
-        >
-      }
-    },
-
     threads: {
       get() {
         return ipcRenderer.invoke(IPC_CHANNELS.threads.get) as Promise<ThreadOrganizationSettings>
@@ -232,40 +195,6 @@ export function createHandoffBridge(
       }
     },
 
-    bridge: {
-      getStatus() {
-        return ipcRenderer.invoke(IPC_CHANNELS.bridge.getStatus) as Promise<AgentBridgeHealth>
-      },
-
-      getConfigSnippets() {
-        return ipcRenderer.invoke(
-          IPC_CHANNELS.bridge.getConfigSnippets
-        ) as Promise<AgentBridgeConfigSnippets>
-      },
-
-      listRuns(agentId?: string, limit?: number) {
-        return ipcRenderer.invoke(
-          IPC_CHANNELS.bridge.listRuns,
-          agentId,
-          limit
-        ) as Promise<AgentRunRecord[]>
-      },
-
-      getRun(runId: string) {
-        return ipcRenderer.invoke(
-          IPC_CHANNELS.bridge.getRun,
-          runId
-        ) as Promise<AgentRunRecord | null>
-      },
-
-      cancelRun(runId: string) {
-        return ipcRenderer.invoke(
-          IPC_CHANNELS.bridge.cancelRun,
-          runId
-        ) as Promise<AgentRunRecord | null>
-      }
-    },
-
     skills: {
       getStatus() {
         return ipcRenderer.invoke(IPC_CHANNELS.skills.getStatus) as Promise<HandoffSkillsStatus>
@@ -276,12 +205,6 @@ export function createHandoffBridge(
           IPC_CHANNELS.skills.install,
           target
         ) as Promise<HandoffSkillsStatus>
-      },
-
-      exportPackage() {
-        return ipcRenderer.invoke(
-          IPC_CHANNELS.skills.exportPackage
-        ) as Promise<HandoffSkillsExportResult>
       },
 
       copySetupInstructions(target: SkillInstallTarget) {

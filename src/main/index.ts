@@ -8,8 +8,6 @@ import {
   APP_WINDOW_MODE_QUERY_PARAM,
   CONTROL_CENTER_POPOUT_WINDOW_MODE
 } from "../shared/window-mode"
-import { AGENT_BRIDGE_MODE_ARG, AGENT_BRIDGE_WORKER_MODE_ARG, runAgentBridgeWorkerJob } from "./bridge"
-import { runAgentBridgeMcpServer } from "./bridge-server"
 import {
   createControlCenterPopoutWindowManager,
   type ControlCenterPopoutWindowManager
@@ -20,10 +18,7 @@ import { createHandoffService } from "./service"
 import type { SessionProvider } from "../shared/contracts"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const isBridgeMode = process.argv.includes(AGENT_BRIDGE_MODE_ARG)
-const workerModeIndex = process.argv.indexOf(AGENT_BRIDGE_WORKER_MODE_ARG)
-const isWorkerMode = workerModeIndex >= 0
-const workerRunId = isWorkerMode ? process.argv[workerModeIndex + 1] ?? null : null
+const isRemovedAgentMode = process.argv.some(arg => arg === "--agent-bridge-mcp" || arg === "--agent-bridge-worker")
 const hookModeIndex = process.argv.indexOf(CONTROL_CENTER_HOOK_MODE_ARG)
 const isHookMode = hookModeIndex >= 0
 
@@ -35,20 +30,21 @@ function getArgValue(flag: string) {
 const hookProvider = getArgValue("--provider")
 const hookEventName = getArgValue("--event")
 
-const service = isBridgeMode || isWorkerMode || isHookMode
+function isFeatureEnabled(envName: string, defaultValue = false) {
+  const value = process.env[envName]?.trim().toLowerCase()
+  if (!value) {
+    return defaultValue
+  }
+  return value === "1" || value === "true" || value === "yes"
+}
+
+const service = isHookMode || isRemovedAgentMode
   ? null
   : createHandoffService({
       appDir: app.getAppPath(),
       dataDir: app.getPath("userData"),
-      bridgeCommand: app.isPackaged
-        ? {
-            command: process.execPath,
-            args: [AGENT_BRIDGE_MODE_ARG]
-          }
-        : {
-            command: process.execPath,
-            args: [app.getAppPath(), AGENT_BRIDGE_MODE_ARG]
-          },
+      controlCenterEnabled: isFeatureEnabled("HANDOFF_CONTROL_CENTER", true),
+      searchEnabled: isFeatureEnabled("HANDOFF_SEARCH"),
       liveHookCommand: app.isPackaged
         ? {
             command: process.execPath,
@@ -122,24 +118,9 @@ async function createMainWindow() {
 }
 
 app.whenReady().then(async () => {
-  if (isBridgeMode) {
-    await runAgentBridgeMcpServer()
-    return
-  }
-
-  if (isWorkerMode) {
-    app.dock?.hide()
-
-    if (!workerRunId) {
-      app.exit(1)
-      return
-    }
-
-    await runAgentBridgeWorkerJob({
-      dataDir: app.getPath("userData"),
-      runId: workerRunId
-    })
-    app.exit(0)
+  if (isRemovedAgentMode) {
+    console.error("Handoff Agents has been removed. Disable the old handoff-agent-bridge MCP entry.")
+    app.exit(1)
     return
   }
 
@@ -238,8 +219,10 @@ app.whenReady().then(async () => {
     disposeSelectorStateSubscription()
   }
 
-  await service.startWatching()
   await createMainWindow()
+  void service.startWatching().catch(error => {
+    console.error("Failed to start Handoff background services.", error)
+  })
 
   app.on("activate", async () => {
     if (!mainWindow || mainWindow.isDestroyed()) {

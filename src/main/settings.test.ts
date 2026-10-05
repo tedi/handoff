@@ -16,70 +16,31 @@ describe("createHandoffSettingsStore", () => {
     }
   })
 
-  it("persists agent specialty and timeout across create and update", async () => {
+  it("keeps saved legacy data while updating the remaining settings", async () => {
     baseDir = await fs.mkdtemp(path.join(os.tmpdir(), "handoff-settings-"))
     const dataDir = path.join(baseDir, "user-data")
+    await fs.mkdir(dataDir, { recursive: true })
+    const legacyAgents = [{ id: "agent-1", name: "Release reviewer" }]
+    await fs.writeFile(path.join(dataDir, "settings.json"), JSON.stringify({
+      agents: legacyAgents,
+      skills: { codex: { toolTimeoutSec: 900 } }
+    }))
     const settingsStore = createHandoffSettingsStore({
       dataDir,
       codexHome: path.join(baseDir, ".codex"),
       claudeHome: path.join(baseDir, ".claude")
     })
 
-    const createdAgent = await settingsStore.createAgent()
-    const updatedAgent = await settingsStore.updateAgent(createdAgent.id, {
-      name: "Release reviewer",
-      specialty: "Use for release planning and ship reviews.",
-      timeoutSec: 900
-    })
-    const agents = await settingsStore.listAgents()
-    const persistedSettings = JSON.parse(
-      await fs.readFile(path.join(dataDir, "settings.json"), "utf8")
-    ) as {
-      agents: Array<{ id: string; specialty?: string; timeoutSec?: number | null }>
-    }
-
-    expect(updatedAgent.specialty).toBe("Use for release planning and ship reviews.")
-    expect(updatedAgent.timeoutSec).toBe(900)
-    expect(agents[0]?.specialty).toBe("Use for release planning and ship reviews.")
-    expect(agents[0]?.timeoutSec).toBe(900)
-    expect(
-      persistedSettings.agents.find(agent => agent.id === createdAgent.id)?.specialty
-    ).toBe("Use for release planning and ship reviews.")
-    expect(
-      persistedSettings.agents.find(agent => agent.id === createdAgent.id)?.timeoutSec
-    ).toBe(900)
-  })
-
-  it("persists provider MCP timeout settings", async () => {
-    baseDir = await fs.mkdtemp(path.join(os.tmpdir(), "handoff-settings-"))
-    const dataDir = path.join(baseDir, "user-data")
-    const settingsStore = createHandoffSettingsStore({
-      dataDir,
-      codexHome: path.join(baseDir, ".codex"),
-      claudeHome: path.join(baseDir, ".claude")
-    })
-
-    const updatedSnapshot = await settingsStore.update(
-      {
-        skills: {
-          codex: { toolTimeoutSec: 900 },
-          claude: { toolTimeoutSec: 300 }
-        }
-      },
-      []
-    )
-    const persistedSettings = JSON.parse(
-      await fs.readFile(path.join(dataDir, "settings.json"), "utf8")
-    ) as {
-      skills?: {
-        codex?: { toolTimeoutSec?: number | null }
-        claude?: { toolTimeoutSec?: number | null }
-      }
-    }
-
-    expect(updatedSnapshot.settings.skills?.codex.toolTimeoutSec).toBe(900)
-    expect(updatedSnapshot.settings.skills?.claude.toolTimeoutSec).toBe(300)
-    expect(persistedSettings.skills?.codex?.toolTimeoutSec).toBe(900)
-    expect(persistedSettings.skills?.claude?.toolTimeoutSec).toBe(300)
+    const snapshot = await settingsStore.update({
+      providers: { codex: { binaryPath: "/custom/codex" } }
+    }, [])
+    expect(snapshot.settings).not.toHaveProperty("agents")
+    expect(snapshot.settings).not.toHaveProperty("skills")
+    expect(snapshot.settings.providers.codex.binaryPath).toBe("/custom/codex")
+    expect(snapshot.settings.threadOrganization.viewMode).toBe("chronological")
+    const persisted = JSON.parse(await fs.readFile(path.join(dataDir, "settings.json"), "utf8"))
+    expect(persisted.agents).toEqual(legacyAgents)
+    expect(persisted.skills.codex.toolTimeoutSec).toBe(900)
+    expect(persisted.providers.codex.binaryPath).toBe("/custom/codex")
   })
 })

@@ -3,7 +3,7 @@ import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { createHandoffService } from "./service"
 
@@ -559,6 +559,85 @@ describe("handoff service", () => {
     })
   })
 
+  it("uses Claude titles ahead of index summaries and first messages", async () => {
+    await fs.appendFile(env.claudeIndexedSessionPath, "\n" + JSON.stringify({
+      type: "custom-title", sessionId: env.claudeIndexedId, customTitle: "Named indexed thread"
+    }) + "\n")
+    await fs.appendFile(env.claudeFallbackSessionPath, "\n" + [
+      { type: "custom-title", sessionId: env.claudeFallbackId, customTitle: "Older title" },
+      { type: "custom-title", sessionId: env.claudeFallbackId, customTitle: "Named fallback thread" }
+    ].map(record => JSON.stringify(record)).join("\n") + "\n")
+    const sessions = await service.sessions.list()
+    expect(sessions.find(session => session.id === `claude:${env.claudeIndexedId}`)?.threadName).toBe("Named indexed thread")
+    expect(sessions.find(session => session.id === `claude:${env.claudeFallbackId}`)?.threadName).toBe("Named fallback thread")
+  })
+
+  it("keeps Claude metadata accurate around large tool output", async () => {
+    const previous = (await service.sessions.list()).find(session => session.id === `claude:${env.claudeFallbackId}`)
+    const timestamp = new Date().toISOString()
+    await fs.appendFile(env.claudeFallbackSessionPath, "\n" + [
+      { type: "attachment", data: "x".repeat(1024 * 1024) },
+      { type: "assistant", timestamp, sessionId: env.claudeFallbackId, message: { content: [{ type: "text", text: "Finished the large-output task" }], stop_reason: "end_turn" } }
+    ].map(record => JSON.stringify(record)).join("\n") + "\n")
+    await service.app.refresh()
+    const updated = (await service.sessions.list()).find(session => session.id === `claude:${env.claudeFallbackId}`)
+    expect(updated?.updatedAt).toBe(timestamp)
+    expect(updated?.projectPath).toBe(previous?.projectPath)
+    expect(updated?.threadName).toBe(previous?.threadName)
+  })
+
+  it("discovers new nested Codex transcripts without a renderer requesting the session list", async () => {
+    await service.startWatching()
+    const id = "11111111-2222-4333-8444-555555555555"
+    const sessionDir = path.join(env.codexHome, "sessions", "2026", "10", "04")
+    const sessionPath = path.join(sessionDir, `rollout-${id}.jsonl`)
+    const timestamp = new Date().toISOString()
+    await fs.mkdir(sessionDir, { recursive: true })
+    await fs.writeFile(sessionPath, [
+      { type: "session_meta", timestamp, payload: { id, cwd: "/tmp/project", source: "vscode", originator: "Codex Desktop" } },
+      { type: "event_msg", timestamp, payload: { type: "task_started", turn_id: "turn-live" } },
+      { type: "response_item", timestamp, payload: { type: "message", role: "user", content: [{ type: "input_text", text: "New live task" }] } }
+    ].map(record => JSON.stringify(record)).join("\n") + "\n")
+
+    await vi.waitFor(async () => {
+      const snapshot = await service.controlCenter.getSnapshot()
+      expect(snapshot.records.find(record => record.id === `codex:${id}`)).toMatchObject({
+        status: "running", lastUserPreview: "New live task", hostAppLabel: "Codex.app"
+      })
+    }, { timeout: 5000 })
+  })
+
+  it("can disable Control Center without reading persisted live-thread state", async () => {
+    await service.dispose()
+
+    const dataDir = path.join(env.baseDir, "disabled-control-center-data")
+    const controlCenterDir = path.join(dataDir, "control-center")
+    await fs.mkdir(controlCenterDir, { recursive: true })
+    await fs.writeFile(
+      path.join(controlCenterDir, "live-threads.json"),
+      "{not valid json"
+    )
+
+    service = createHandoffService({
+      appDir: env.appDir,
+      dataDir,
+      codexHome: env.codexHome,
+      claudeHome: env.claudeHome,
+      controlCenterEnabled: false
+    })
+
+    await expect(service.startWatching()).resolves.toBeUndefined()
+    await expect(service.controlCenter.getSnapshot()).resolves.toEqual({
+      records: []
+    })
+    await expect(
+      service.controlCenter.performAction("codex:live-1", "request-1", "approve")
+    ).resolves.toMatchObject({
+      fallbackMessage: "Control Center is disabled.",
+      snapshot: { records: [] }
+    })
+  })
+
   it("exposes selector state info, roots, manifests, and file search through the shared service", async () => {
     await service.dispose()
 
@@ -801,63 +880,4 @@ describe("handoff service", () => {
     })
   })
 
-  it("creates, updates, duplicates, and deletes persisted agents", async () => {
-    expect(await service.agents.list()).toEqual([])
-
-    const createdAgent = await service.agents.create()
-    expect(createdAgent).toMatchObject({
-      name: "New agent",
-      provider: "codex",
-      modelId: "gpt-5.4",
-      thinkingLevel: "high",
-      fast: false,
-      timeoutSec: null,
-      customInstructions: ""
-    })
-
-    const updatedAgent = await service.agents.update(createdAgent.id, {
-      name: "Claude reviewer",
-      provider: "claude",
-      modelId: "gpt-5.4",
-      thinkingLevel: "max",
-      fast: true,
-      customInstructions: "Review carefully."
-    })
-
-    expect(updatedAgent).toMatchObject({
-      name: "Claude reviewer",
-      provider: "claude",
-      modelId: "opus",
-      thinkingLevel: "max",
-      fast: false,
-      timeoutSec: null,
-      customInstructions: "Review carefully."
-    })
-
-    const duplicatedAgent = await service.agents.duplicate(updatedAgent.id)
-    expect(duplicatedAgent).toMatchObject({
-      name: "Claude reviewer copy",
-      provider: "claude",
-      modelId: "opus",
-      timeoutSec: null
-    })
-
-    await expect(
-      service.agents.update(updatedAgent.id, {
-        name: "   "
-      })
-    ).rejects.toThrow("Agent name is required.")
-
-    await expect(service.agents.delete(updatedAgent.id)).resolves.toEqual({
-      deletedId: updatedAgent.id
-    })
-
-    const remainingAgents = await service.agents.list()
-    expect(remainingAgents).toHaveLength(1)
-    expect(remainingAgents[0]?.id).toBe(duplicatedAgent.id)
-
-    const snapshot = await service.settings.get()
-    expect(snapshot.settings.agents).toHaveLength(1)
-    expect(snapshot.settings.agents[0]?.name).toBe("Claude reviewer copy")
-  })
 })

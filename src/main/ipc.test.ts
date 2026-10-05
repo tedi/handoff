@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import os from "node:os"
+import fs from "node:fs/promises"
+import path from "node:path"
+import { shell } from "electron"
 
 import { IPC_CHANNELS } from "../shared/channels"
 import type { HandoffSettingsSnapshot } from "../shared/contracts"
@@ -83,7 +86,6 @@ const settingsSnapshot: HandoffSettingsSnapshot = {
       enabledTerminalIds: ["terminal", "ghostty"],
       defaultTerminalId: "ghostty"
     },
-    agents: [],
     threadOrganization: {
       viewMode: "chronological",
       sortKey: "updated",
@@ -147,13 +149,6 @@ describe("registerIpcHandlers", () => {
         update: vi.fn(),
         resetProvider: vi.fn()
       },
-      agents: {
-        list: vi.fn().mockResolvedValue([]),
-        create: vi.fn(),
-        update: vi.fn(),
-        delete: vi.fn(),
-        duplicate: vi.fn()
-      },
       controlCenter: {
         getSnapshot: vi.fn().mockResolvedValue({ records: [] }),
         getRecord: vi.fn().mockResolvedValue(null),
@@ -214,6 +209,39 @@ describe("registerIpcHandlers", () => {
     })
   })
 
+  it("opens Claude Desktop sessions from the viewer and Control Center using the desktop session ID", async () => {
+    const baseDir = await fs.mkdtemp(path.join(os.tmpdir(), "handoff-claude-open-"))
+    const home = vi.spyOn(os, "homedir").mockReturnValue(baseDir)
+    const sessionsDir = path.join(baseDir, "Library", "Application Support", "Claude", "claude-code-sessions", "account", "organization")
+    await fs.mkdir(sessionsDir, { recursive: true })
+    await fs.writeFile(path.join(sessionsDir, "local_desktop-session.json"), JSON.stringify({
+      sessionId: "local_desktop-session", cliSessionId: "cli-session"
+    }))
+    const ipcMain = createIpcMainStub()
+    const service = {
+      settings: { get: vi.fn().mockResolvedValue(settingsSnapshot) },
+      controlCenter: {
+        getRecord: vi.fn().mockResolvedValue({
+          provider: "claude", sourceSessionId: "cli-session", launchMode: "app",
+          hostAppLabel: "Claude.app", hostAppExact: true, pendingRequest: null
+        }),
+        acknowledge: vi.fn()
+      }
+    } as any
+    try {
+      registerIpcHandlers(ipcMain as any, service)
+      await ipcMain.invoke(IPC_CHANNELS.app.openSourceSession, "claude", "cli-session", "desktop", "/tmp/project")
+      await ipcMain.invoke(IPC_CHANNELS.controlCenter.open, "claude:cli-session")
+      expect(shell.openExternal).toHaveBeenNthCalledWith(1, "claude://code/continue?session=local_desktop-session")
+      expect(shell.openExternal).toHaveBeenNthCalledWith(2, "claude://code/continue?session=local_desktop-session")
+      expect(terminalMocks.openShellCommandInTerminal).not.toHaveBeenCalled()
+      expect(service.controlCenter.acknowledge).toHaveBeenCalledWith("claude:cli-session")
+    } finally {
+      home.mockRestore()
+      await fs.rm(baseDir, { recursive: true, force: true })
+    }
+  })
+
   it("opens control center CLI threads in the exact stored host when available", async () => {
     const ipcMain = createIpcMainStub()
     const service = {
@@ -225,13 +253,6 @@ describe("registerIpcHandlers", () => {
         get: vi.fn().mockResolvedValue(settingsSnapshot),
         update: vi.fn(),
         resetProvider: vi.fn()
-      },
-      agents: {
-        list: vi.fn().mockResolvedValue([]),
-        create: vi.fn(),
-        update: vi.fn(),
-        delete: vi.fn(),
-        duplicate: vi.fn()
       },
       controlCenter: {
         getSnapshot: vi.fn().mockResolvedValue({ records: [] }),
@@ -307,13 +328,6 @@ describe("registerIpcHandlers", () => {
         update: vi.fn(),
         resetProvider: vi.fn()
       },
-      agents: {
-        list: vi.fn().mockResolvedValue([]),
-        create: vi.fn(),
-        update: vi.fn(),
-        delete: vi.fn(),
-        duplicate: vi.fn()
-      },
       controlCenter: {
         getSnapshot: vi.fn().mockResolvedValue({ records: [] }),
         getRecord: vi.fn().mockResolvedValue(null),
@@ -360,13 +374,6 @@ describe("registerIpcHandlers", () => {
         get: vi.fn().mockResolvedValue(settingsSnapshot),
         update: vi.fn(),
         resetProvider: vi.fn()
-      },
-      agents: {
-        list: vi.fn().mockResolvedValue([]),
-        create: vi.fn(),
-        update: vi.fn(),
-        delete: vi.fn(),
-        duplicate: vi.fn()
       },
       controlCenter: {
         getSnapshot: vi.fn().mockResolvedValue({ records: [] }),
@@ -432,13 +439,6 @@ describe("registerIpcHandlers", () => {
         update: vi.fn(),
         resetProvider: vi.fn()
       },
-      agents: {
-        list: vi.fn().mockResolvedValue([]),
-        create: vi.fn(),
-        update: vi.fn(),
-        delete: vi.fn(),
-        duplicate: vi.fn()
-      },
       controlCenter: {
         getSnapshot: vi.fn().mockResolvedValue({ records: [] }),
         getRecord: vi.fn().mockResolvedValue(null),
@@ -485,13 +485,6 @@ describe("registerIpcHandlers", () => {
         get: vi.fn().mockResolvedValue(settingsSnapshot),
         update: vi.fn(),
         resetProvider: vi.fn()
-      },
-      agents: {
-        list: vi.fn().mockResolvedValue([]),
-        create: vi.fn(),
-        update: vi.fn(),
-        delete: vi.fn(),
-        duplicate: vi.fn()
       },
       controlCenter: {
         getSnapshot: vi.fn().mockResolvedValue({ records: [] }),
@@ -610,13 +603,6 @@ describe("registerIpcHandlers", () => {
         update: vi.fn(),
         resetProvider: vi.fn()
       },
-      agents: {
-        list: vi.fn().mockResolvedValue([]),
-        create: vi.fn(),
-        update: vi.fn(),
-        delete: vi.fn(),
-        duplicate: vi.fn()
-      },
       controlCenter: {
         getSnapshot: vi.fn().mockResolvedValue({ records: [] }),
         getRecord: vi.fn().mockResolvedValue(null),
@@ -654,7 +640,7 @@ describe("registerIpcHandlers", () => {
     expect(selectorService.exports.regenerateAndCopy).toHaveBeenCalledWith("alpha")
   })
 
-  it("forwards bridge ipc calls to the bridge service", async () => {
+  it("forwards live hook IPC calls to the installer", async () => {
     const ipcMain = createIpcMainStub()
     const service = {
       app: {
@@ -666,13 +652,6 @@ describe("registerIpcHandlers", () => {
         update: vi.fn(),
         resetProvider: vi.fn()
       },
-      agents: {
-        list: vi.fn().mockResolvedValue([]),
-        create: vi.fn(),
-        update: vi.fn(),
-        delete: vi.fn(),
-        duplicate: vi.fn()
-      },
       controlCenter: {
         getSnapshot: vi.fn().mockResolvedValue({ records: [] }),
         getRecord: vi.fn().mockResolvedValue(null),
@@ -680,20 +659,9 @@ describe("registerIpcHandlers", () => {
         dismiss: vi.fn().mockResolvedValue({ records: [] }),
         dismissCompleted: vi.fn().mockResolvedValue({ records: [] })
       },
-      bridge: {
-        getStatus: vi.fn().mockResolvedValue({ status: "ready" }),
-        getConfigSnippets: vi.fn().mockResolvedValue({
-          codexCommand: "codex mcp add handoff-agent-bridge -- ...",
-          claudeConfigJson: "{}"
-        }),
-        listRuns: vi.fn().mockResolvedValue([]),
-        getRun: vi.fn().mockResolvedValue(null),
-        cancelRun: vi.fn().mockResolvedValue(null)
-      },
       skills: {
-        getStatus: vi.fn().mockResolvedValue({ skillName: "handoff-agent-bridge" }),
-        install: vi.fn().mockResolvedValue({ skillName: "handoff-agent-bridge" }),
-        exportPackage: vi.fn().mockResolvedValue({ exportPath: "/tmp/export" }),
+        getStatus: vi.fn().mockResolvedValue({ providers: {} }),
+        install: vi.fn().mockResolvedValue({ providers: {} }),
         getSetupInstructions: vi.fn().mockResolvedValue("manual setup")
       },
       sessions: {
@@ -737,24 +705,12 @@ describe("registerIpcHandlers", () => {
 
     registerIpcHandlers(ipcMain as any, service)
 
-    await ipcMain.invoke(IPC_CHANNELS.bridge.getStatus)
-    await ipcMain.invoke(IPC_CHANNELS.bridge.getConfigSnippets)
-    await ipcMain.invoke(IPC_CHANNELS.bridge.listRuns, "agent-1", 25)
-    await ipcMain.invoke(IPC_CHANNELS.bridge.getRun, "run-1")
-    await ipcMain.invoke(IPC_CHANNELS.bridge.cancelRun, "run-2")
     await ipcMain.invoke(IPC_CHANNELS.skills.getStatus)
     await ipcMain.invoke(IPC_CHANNELS.skills.install, "both")
-    await ipcMain.invoke(IPC_CHANNELS.skills.exportPackage)
     await ipcMain.invoke(IPC_CHANNELS.skills.copySetupInstructions, "claude")
 
-    expect(service.bridge.getStatus).toHaveBeenCalled()
-    expect(service.bridge.getConfigSnippets).toHaveBeenCalled()
-    expect(service.bridge.listRuns).toHaveBeenCalledWith("agent-1", 25)
-    expect(service.bridge.getRun).toHaveBeenCalledWith("run-1")
-    expect(service.bridge.cancelRun).toHaveBeenCalledWith("run-2")
     expect(service.skills.getStatus).toHaveBeenCalled()
     expect(service.skills.install).toHaveBeenCalledWith("both")
-    expect(service.skills.exportPackage).toHaveBeenCalled()
     expect(service.skills.getSetupInstructions).toHaveBeenCalledWith("claude")
   })
 })

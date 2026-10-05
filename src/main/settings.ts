@@ -1,13 +1,9 @@
-import { randomUUID } from "node:crypto"
 import fs from "node:fs"
 import fsPromises from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 
 import type {
-  AgentDefinition,
-  AgentDeleteResult,
-  AgentUpdatePatch,
   HandoffSettings,
   HandoffSettingsPatch,
   HandoffSettingsSnapshot,
@@ -15,17 +11,12 @@ import type {
   ProviderSettingsInfo,
   SessionListItem,
   SessionProvider,
-  SkillProviderSettings,
   TerminalAppId,
   TerminalOption,
   TerminalPreferences,
   ThreadCollection,
   ThreadOrganizationSettings
 } from "../shared/contracts"
-import {
-  getDefaultComposerModelId,
-  normalizeComposerTarget
-} from "../shared/provider-config"
 
 const TERMINAL_OPTIONS: ReadonlyArray<{
   id: TerminalAppId
@@ -69,8 +60,6 @@ interface SettingsStoreOptions {
   claudeHome: string
 }
 
-const SUPPORTED_THINKING_LEVELS = new Set(["low", "medium", "high", "max"])
-const MAX_AGENT_TIMEOUT_SEC = 1_800
 const THREAD_VIEW_MODES = new Set(["chronological", "project", "collection"])
 const THREAD_SORT_KEYS = new Set(["updated", "created"])
 
@@ -117,12 +106,6 @@ function getDefaultTerminalPreferences(): TerminalPreferences {
   }
 }
 
-function getDefaultSkillProviderSettings(): SkillProviderSettings {
-  return {
-    toolTimeoutSec: null
-  }
-}
-
 function getDefaultSettings(params: SettingsStoreOptions): HandoffSettings {
   void params
   return {
@@ -136,12 +119,7 @@ function getDefaultSettings(params: SettingsStoreOptions): HandoffSettings {
         homePath: ""
       }
     },
-    skills: {
-      codex: getDefaultSkillProviderSettings(),
-      claude: getDefaultSkillProviderSettings()
-    },
     terminals: getDefaultTerminalPreferences(),
-    agents: [],
     threadOrganization: getDefaultThreadOrganizationSettings()
   }
 }
@@ -153,106 +131,6 @@ function getDefaultThreadOrganizationSettings(): ThreadOrganizationSettings {
     projects: {},
     collections: []
   }
-}
-
-function buildUniqueAgentName(existingAgents: AgentDefinition[], baseName: string) {
-  const normalizedExistingNames = new Set(
-    existingAgents.map(agent => agent.name.trim().toLowerCase()).filter(Boolean)
-  )
-  const trimmedBaseName = baseName.trim() || "New agent"
-
-  if (!normalizedExistingNames.has(trimmedBaseName.toLowerCase())) {
-    return trimmedBaseName
-  }
-
-  let suffix = 2
-  while (normalizedExistingNames.has(`${trimmedBaseName} ${suffix}`.toLowerCase())) {
-    suffix += 1
-  }
-
-  return `${trimmedBaseName} ${suffix}`
-}
-
-function normalizeThinkingLevel(value: unknown) {
-  if (typeof value === "string" && SUPPORTED_THINKING_LEVELS.has(value)) {
-    return value as AgentDefinition["thinkingLevel"]
-  }
-
-  return "high"
-}
-
-function normalizeAgentTimeoutSec(value: unknown) {
-  if (value === null || value === undefined || value === "") {
-    return null
-  }
-
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-    return null
-  }
-
-  return Math.min(Math.floor(value), MAX_AGENT_TIMEOUT_SEC)
-}
-
-function normalizeAgentDefinition(
-  value: unknown,
-  existingAgents: AgentDefinition[],
-  fallbackName: string
-): AgentDefinition | null {
-  if (!value || typeof value !== "object") {
-    return null
-  }
-
-  const candidate = value as Partial<AgentDefinition>
-  const provider = candidate.provider === "claude" ? "claude" : "codex"
-  const normalizedTarget = normalizeComposerTarget({
-    provider,
-    launchMode: "cli",
-    modelId:
-      typeof candidate.modelId === "string" && candidate.modelId.trim()
-        ? candidate.modelId
-        : getDefaultComposerModelId(provider),
-    fast: candidate.fast === true
-  })
-  const requestedId = typeof candidate.id === "string" ? candidate.id.trim() : ""
-  const nextId =
-    requestedId && !existingAgents.some(agent => agent.id === requestedId)
-      ? requestedId
-      : randomUUID()
-  const requestedName = typeof candidate.name === "string" ? candidate.name.trim() : ""
-
-  return {
-    id: nextId,
-    name: requestedName || buildUniqueAgentName(existingAgents, fallbackName),
-    specialty:
-      typeof candidate.specialty === "string" ? candidate.specialty : "",
-    provider,
-    modelId: normalizedTarget.modelId,
-    thinkingLevel: normalizeThinkingLevel(candidate.thinkingLevel),
-    fast: normalizedTarget.fast,
-    timeoutSec: normalizeAgentTimeoutSec(candidate.timeoutSec),
-    customInstructions:
-      typeof candidate.customInstructions === "string" ? candidate.customInstructions : ""
-  }
-}
-
-function normalizeAgents(value: unknown) {
-  if (!Array.isArray(value)) {
-    return [] as AgentDefinition[]
-  }
-
-  const agents: AgentDefinition[] = []
-  for (const candidate of value) {
-    const normalizedAgent = normalizeAgentDefinition(
-      candidate,
-      agents,
-      "New agent"
-    )
-    if (normalizedAgent) {
-      agents.push(normalizedAgent)
-    }
-  }
-
-  return agents
 }
 
 function normalizeThreadOrder(value: unknown) {
@@ -438,22 +316,6 @@ function normalizeTerminalPreferences(
   }
 }
 
-function normalizeSkillProviderSettings(
-  value: unknown,
-  fallback: SkillProviderSettings
-): SkillProviderSettings {
-  if (!value || typeof value !== "object") {
-    return {
-      toolTimeoutSec: fallback.toolTimeoutSec
-    }
-  }
-
-  const candidate = value as Partial<SkillProviderSettings>
-  return {
-    toolTimeoutSec: normalizeAgentTimeoutSec(candidate.toolTimeoutSec)
-  }
-}
-
 function normalizeSettings(
   value: unknown,
   params: SettingsStoreOptions
@@ -470,12 +332,7 @@ function normalizeSettings(
       codex: normalizeProviderOverrides(candidate.providers?.codex, defaults.providers.codex),
       claude: normalizeProviderOverrides(candidate.providers?.claude, defaults.providers.claude)
     },
-    skills: {
-      codex: normalizeSkillProviderSettings(candidate.skills?.codex, defaults.skills?.codex ?? getDefaultSkillProviderSettings()),
-      claude: normalizeSkillProviderSettings(candidate.skills?.claude, defaults.skills?.claude ?? getDefaultSkillProviderSettings())
-    },
     terminals: normalizeTerminalPreferences(candidate.terminals, defaults.terminals),
-    agents: normalizeAgents(candidate.agents),
     threadOrganization: normalizeThreadOrganizationSettings(candidate.threadOrganization)
   }
 }
@@ -495,68 +352,11 @@ function mergeSettingsPatch(
         ...(patch.providers?.claude ?? {})
       }
     },
-    skills: {
-      codex: {
-        ...(current.skills?.codex ?? getDefaultSkillProviderSettings()),
-        ...(patch.skills?.codex ?? {})
-      },
-      claude: {
-        ...(current.skills?.claude ?? getDefaultSkillProviderSettings()),
-        ...(patch.skills?.claude ?? {})
-      }
-    },
     terminals: {
       ...current.terminals,
       ...(patch.terminals ?? {})
     },
-    agents: current.agents,
     threadOrganization: current.threadOrganization
-  }
-}
-
-function createDefaultAgentDefinition(existingAgents: AgentDefinition[]): AgentDefinition {
-  return {
-    id: randomUUID(),
-    name: buildUniqueAgentName(existingAgents, "New agent"),
-    specialty: "",
-    provider: "codex",
-    modelId: getDefaultComposerModelId("codex"),
-    thinkingLevel: "high",
-    fast: false,
-    timeoutSec: null,
-    customInstructions: ""
-  }
-}
-
-function buildUpdatedAgentDefinition(
-  currentAgent: AgentDefinition,
-  patch: AgentUpdatePatch
-): AgentDefinition {
-  const provider = patch.provider ?? currentAgent.provider
-  const normalizedTarget = normalizeComposerTarget({
-    provider,
-    launchMode: "cli",
-    modelId: patch.modelId ?? currentAgent.modelId,
-    fast: patch.fast ?? currentAgent.fast
-  })
-  const nextName = (patch.name ?? currentAgent.name).trim()
-
-  if (!nextName) {
-    throw new Error("Agent name is required.")
-  }
-
-  return {
-    ...currentAgent,
-    name: nextName,
-    specialty: (patch.specialty ?? currentAgent.specialty ?? "").trim(),
-    provider,
-    modelId: normalizedTarget.modelId,
-    thinkingLevel: normalizeThinkingLevel(patch.thinkingLevel ?? currentAgent.thinkingLevel),
-    fast: normalizedTarget.fast,
-    timeoutSec: normalizeAgentTimeoutSec(
-      patch.timeoutSec === undefined ? currentAgent.timeoutSec : patch.timeoutSec
-    ),
-    customInstructions: patch.customInstructions ?? currentAgent.customInstructions
   }
 }
 
@@ -761,6 +561,7 @@ async function buildSettingsSnapshot(params: {
 export function createHandoffSettingsStore(options: SettingsStoreOptions) {
   const settingsPath = path.join(options.dataDir, "settings.json")
   let cachedSettings: HandoffSettings | null = null
+  let persistedFields: Record<string, unknown> = {}
 
   async function loadSettings() {
     if (cachedSettings) {
@@ -769,7 +570,11 @@ export function createHandoffSettingsStore(options: SettingsStoreOptions) {
 
     try {
       const content = await fsPromises.readFile(settingsPath, "utf8")
-      cachedSettings = normalizeSettings(JSON.parse(content), options)
+      const parsed = JSON.parse(content)
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        persistedFields = parsed
+      }
+      cachedSettings = normalizeSettings(parsed, options)
     } catch {
       cachedSettings = getDefaultSettings(options)
     }
@@ -780,7 +585,11 @@ export function createHandoffSettingsStore(options: SettingsStoreOptions) {
   async function persistSettings(settings: HandoffSettings) {
     const normalized = normalizeSettings(settings, options)
     await fsPromises.mkdir(path.dirname(settingsPath), { recursive: true })
-    await fsPromises.writeFile(settingsPath, JSON.stringify(normalized, null, 2), "utf8")
+    await fsPromises.writeFile(
+      settingsPath,
+      JSON.stringify({ ...persistedFields, ...normalized }, null, 2),
+      "utf8"
+    )
     cachedSettings = normalized
     return normalized
   }
@@ -793,15 +602,10 @@ export function createHandoffSettingsStore(options: SettingsStoreOptions) {
           codex: { ...settings.providers.codex },
           claude: { ...settings.providers.claude }
         },
-        skills: {
-          codex: { ...(settings.skills?.codex ?? getDefaultSkillProviderSettings()) },
-          claude: { ...(settings.skills?.claude ?? getDefaultSkillProviderSettings()) }
-        },
         terminals: {
           enabledTerminalIds: [...settings.terminals.enabledTerminalIds],
           defaultTerminalId: settings.terminals.defaultTerminalId
         },
-        agents: settings.agents.map(agent => ({ ...agent })),
         threadOrganization: {
           ...settings.threadOrganization,
           projects: Object.fromEntries(
@@ -833,82 +637,6 @@ export function createHandoffSettingsStore(options: SettingsStoreOptions) {
         threadOrganization: normalizeThreadOrganizationSettings(threadOrganization)
       })
       return normalizeThreadOrganizationSettings(persistedSettings.threadOrganization)
-    },
-
-    async listAgents() {
-      const settings = await loadSettings()
-      return settings.agents.map(agent => ({ ...agent }))
-    },
-
-    async createAgent() {
-      const currentSettings = await loadSettings()
-      const nextAgent = createDefaultAgentDefinition(currentSettings.agents)
-      const persistedSettings = await persistSettings({
-        ...currentSettings,
-        agents: [...currentSettings.agents, nextAgent]
-      })
-
-      return persistedSettings.agents.find(agent => agent.id === nextAgent.id) ?? nextAgent
-    },
-
-    async updateAgent(id: string, patch: AgentUpdatePatch) {
-      const currentSettings = await loadSettings()
-      const currentAgent = currentSettings.agents.find(agent => agent.id === id)
-
-      if (!currentAgent) {
-        throw new Error("Agent not found.")
-      }
-
-      const updatedAgent = buildUpdatedAgentDefinition(currentAgent, patch)
-      const persistedSettings = await persistSettings({
-        ...currentSettings,
-        agents: currentSettings.agents.map(agent =>
-          agent.id === id ? updatedAgent : agent
-        )
-      })
-
-      return persistedSettings.agents.find(agent => agent.id === id) ?? updatedAgent
-    },
-
-    async deleteAgent(id: string): Promise<AgentDeleteResult> {
-      const currentSettings = await loadSettings()
-
-      if (!currentSettings.agents.some(agent => agent.id === id)) {
-        throw new Error("Agent not found.")
-      }
-
-      await persistSettings({
-        ...currentSettings,
-        agents: currentSettings.agents.filter(agent => agent.id !== id)
-      })
-
-      return {
-        deletedId: id
-      }
-    },
-
-    async duplicateAgent(id: string) {
-      const currentSettings = await loadSettings()
-      const sourceAgent = currentSettings.agents.find(agent => agent.id === id)
-
-      if (!sourceAgent) {
-        throw new Error("Agent not found.")
-      }
-
-      const duplicatedAgent: AgentDefinition = {
-        ...sourceAgent,
-        id: randomUUID(),
-        name: buildUniqueAgentName(currentSettings.agents, `${sourceAgent.name} copy`)
-      }
-      const persistedSettings = await persistSettings({
-        ...currentSettings,
-        agents: [...currentSettings.agents, duplicatedAgent]
-      })
-
-      return (
-        persistedSettings.agents.find(agent => agent.id === duplicatedAgent.id) ??
-        duplicatedAgent
-      )
     },
 
     async getSnapshot(sessions: SessionListItem[]) {

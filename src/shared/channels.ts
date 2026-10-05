@@ -13,13 +13,6 @@ export const IPC_CHANNELS = {
     update: "handoff:settings:update",
     resetProvider: "handoff:settings:reset-provider"
   },
-  agents: {
-    list: "handoff:agents:list",
-    create: "handoff:agents:create",
-    update: "handoff:agents:update",
-    delete: "handoff:agents:delete",
-    duplicate: "handoff:agents:duplicate"
-  },
   threads: {
     get: "handoff:threads:get",
     update: "handoff:threads:update"
@@ -31,17 +24,9 @@ export const IPC_CHANNELS = {
     dismiss: "handoff:control-center:dismiss",
     dismissCompleted: "handoff:control-center:dismiss-completed"
   },
-  bridge: {
-    getStatus: "handoff:bridge:get-status",
-    getConfigSnippets: "handoff:bridge:get-config-snippets",
-    listRuns: "handoff:bridge:list-runs",
-    getRun: "handoff:bridge:get-run",
-    cancelRun: "handoff:bridge:cancel-run"
-  },
   skills: {
     getStatus: "handoff:skills:get-status",
     install: "handoff:skills:install",
-    exportPackage: "handoff:skills:export-package",
     copySetupInstructions: "handoff:skills:copy-setup-instructions"
   },
   selector: {

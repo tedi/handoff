@@ -2,12 +2,13 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import {
   buildNormalizedHookEvent,
   classifyLiveThreadStatusFromHook,
-  createControlCenterService
+  createControlCenterService,
+  runControlCenterHookBridge
 } from "./control-center"
 
 describe("classifyLiveThreadStatusFromHook", () => {
@@ -137,10 +138,167 @@ describe("buildNormalizedHookEvent", () => {
 describe("createControlCenterService", () => {
   const tempDirs: string[] = []
 
+  beforeEach(() => {
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-03-14T12:00:00.000Z"))
+  })
+
   afterEach(async () => {
+    vi.restoreAllMocks()
     await Promise.all(
       tempDirs.splice(0).map(dir => fs.rm(dir, { recursive: true, force: true }))
     )
+  })
+
+  it.each(["codex", "claude"] as const)("discovers %s transcripts without hooks and follows completion", async provider => {
+    const baseDir = await fs.mkdtemp(path.join(os.tmpdir(), "handoff-live-discovery-"))
+    tempDirs.push(baseDir)
+    const transcriptPath = path.join(baseDir, "live.jsonl")
+    const now = new Date(Date.now()).toISOString()
+    const records = provider === "codex"
+      ? [
+          { type: "session_meta", timestamp: now, payload: { source: "vscode", originator: "Codex Desktop", cwd: "/tmp/project" } },
+          { type: "event_msg", timestamp: now, payload: { type: "task_started", turn_id: "turn-1" } },
+          { type: "response_item", timestamp: now, payload: { type: "message", role: "user", content: [{ type: "input_text", text: "Build the live view" }] } }
+        ]
+      : [
+          { type: "user", timestamp: now, cwd: "/tmp/project", message: { role: "user", content: "Build the live view" } },
+          { type: "assistant", timestamp: now, message: { content: [{ type: "tool_use", id: "tool-1", name: "Read", input: {} }], stop_reason: "tool_use" } }
+        ]
+    await fs.writeFile(transcriptPath, records.map(record => JSON.stringify(record)).join("\n") + "\n")
+    const service = createControlCenterService({ dataDir: path.join(baseDir, "data"), onPlaySound: vi.fn() })
+    try {
+      // Renderer requests can arrive before background startup finishes.
+      await service.reconcileSessions([{
+        id: `${provider}:live`, sourceSessionId: "live", provider, archived: false,
+        threadName: "Live view", createdAt: now, updatedAt: now,
+        projectPath: "/tmp/project", sessionPath: transcriptPath
+      }])
+      await service.startWatching()
+      expect((await service.getSnapshot()).records[0]).toMatchObject({
+        id: `${provider}:live`, status: "running", lastUserPreview: "Build the live view"
+      })
+
+      const completedAt = new Date(Date.now() + 1000).toISOString()
+      const completion = provider === "codex"
+        ? { type: "event_msg", timestamp: completedAt, payload: { type: "task_complete", turn_id: "turn-1" } }
+        : { type: "assistant", timestamp: completedAt, message: { content: [{ type: "text", text: "Done" }], stop_reason: "end_turn" } }
+      await fs.appendFile(transcriptPath, JSON.stringify(completion) + "\n")
+      await vi.waitFor(async () => {
+        expect((await service.getSnapshot()).records[0]?.status).toBe("completed")
+      }, { timeout: 4000 })
+    } finally {
+      await service.dispose()
+    }
+  })
+
+  it("keeps old history and internal subagents out of the live view", async () => {
+    const baseDir = await fs.mkdtemp(path.join(os.tmpdir(), "handoff-live-filter-"))
+    tempDirs.push(baseDir)
+    const now = new Date(Date.now()).toISOString()
+    const old = new Date(Date.now() - 48 * 60 * 60 * 1000)
+    const oldPath = path.join(baseDir, "old.jsonl")
+    const helperPath = path.join(baseDir, "helper.jsonl")
+    await fs.writeFile(oldPath, JSON.stringify({ type: "response_item", timestamp: old.toISOString(), payload: { type: "message", role: "user", content: [{ type: "input_text", text: "Old task" }] } }))
+    await fs.utimes(oldPath, old, old)
+    await fs.writeFile(helperPath, [
+      { type: "session_meta", timestamp: now, payload: { source: { subagent: { other: "guardian" } } } },
+      { type: "response_item", timestamp: now, payload: { type: "message", role: "user", content: [{ type: "input_text", text: "Internal helper" }] } }
+    ].map(record => JSON.stringify(record)).join("\n"))
+    const service = createControlCenterService({ dataDir: path.join(baseDir, "data"), onPlaySound: vi.fn() })
+    try {
+      await service.startWatching()
+      await service.reconcileSessions([oldPath, helperPath].map((sessionPath, index) => ({
+        id: `codex:${index}`, sourceSessionId: String(index), provider: "codex" as const,
+        archived: false, threadName: "Task", createdAt: now, updatedAt: now,
+        projectPath: null, sessionPath
+      })))
+      expect((await service.getSnapshot()).records).toEqual([])
+    } finally {
+      await service.dispose()
+    }
+  })
+
+  it("uses Claude's title and follows renames while preserving thread status", async () => {
+    const baseDir = await fs.mkdtemp(path.join(os.tmpdir(), "handoff-claude-title-"))
+    tempDirs.push(baseDir)
+    const timestamp = new Date(Date.now()).toISOString()
+    const sessionPath = path.join(baseDir, "thread.jsonl")
+    await fs.writeFile(sessionPath, [
+      { type: "user", timestamp, message: { content: "A long first message that should not be the title" } },
+      { type: "custom-title", customTitle: "Onboarding workout history UX" }
+    ].map(record => JSON.stringify(record)).join("\n") + "\n")
+    const service = createControlCenterService({ dataDir: path.join(baseDir, "data"), onPlaySound: vi.fn() })
+    try {
+      await service.startWatching()
+      await service.reconcileSessions([{
+        id: "claude:titled", sourceSessionId: "titled", provider: "claude", archived: false,
+        threadName: "First message fallback", createdAt: timestamp, updatedAt: timestamp,
+        projectPath: "/tmp/project", sessionPath
+      }])
+      expect((await service.getSnapshot()).records[0]).toMatchObject({
+        threadName: "Onboarding workout history UX", status: "running"
+      })
+      await fs.appendFile(sessionPath, JSON.stringify({ type: "custom-title", customTitle: "Renamed workout history" }) + "\n")
+      await vi.waitFor(async () => {
+        expect((await service.getSnapshot()).records[0]).toMatchObject({
+          threadName: "Renamed workout history", status: "running"
+        })
+      }, { timeout: 4000 })
+    } finally {
+      await service.dispose()
+    }
+  })
+
+  it("discovers Claude Desktop threads and keeps their app source during refresh", async () => {
+    const baseDir = await fs.mkdtemp(path.join(os.tmpdir(), "handoff-claude-desktop-"))
+    tempDirs.push(baseDir)
+    const now = new Date(Date.now()).toISOString()
+    const transcriptPath = path.join(baseDir, "desktop.jsonl")
+    await fs.writeFile(transcriptPath, JSON.stringify({
+      type: "user", entrypoint: "claude-desktop", timestamp: now, cwd: "/tmp/project",
+      message: { content: "Fix the opener" }
+    }) + "\n")
+    const service = createControlCenterService({ dataDir: path.join(baseDir, "data"), onPlaySound: vi.fn() })
+    try {
+      await service.startWatching()
+      await service.reconcileSessions([{
+        id: "claude:desktop", sourceSessionId: "desktop", provider: "claude", archived: false,
+        threadName: "Desktop thread", createdAt: now, updatedAt: now, projectPath: "/tmp/project", sessionPath: transcriptPath
+      }])
+      expect((await service.getSnapshot()).records[0]).toMatchObject({
+        launchMode: "app", hostAppLabel: "Claude.app", hostAppExact: true
+      })
+      await fs.appendFile(transcriptPath, JSON.stringify({
+        type: "assistant", timestamp: new Date(Date.now() + 1000).toISOString(),
+        message: { content: [{ type: "text", text: "Done" }], stop_reason: "end_turn" }
+      }) + "\n")
+      await vi.waitFor(async () => {
+        expect((await service.getSnapshot()).records[0]).toMatchObject({
+          status: "completed", launchMode: "app", hostAppLabel: "Claude.app"
+        })
+      }, { timeout: 4000 })
+    } finally {
+      await service.dispose()
+    }
+  })
+
+  it("returns valid Codex Stop output when queuing an event while Handoff is closed", async () => {
+    const baseDir = await fs.mkdtemp(path.join(os.tmpdir(), "handoff-stop-hook-"))
+    tempDirs.push(baseDir)
+    const stdin = vi.spyOn(process.stdin, Symbol.asyncIterator).mockImplementation(async function* () {
+      yield Buffer.from(JSON.stringify({ session_id: "stopped-session" }))
+      return undefined
+    })
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true)
+    try {
+      await runControlCenterHookBridge({ dataDir: baseDir, provider: "codex", eventName: "Stop" })
+      expect(stdout).toHaveBeenCalledWith("{}\n")
+      const event = JSON.parse(await fs.readFile(path.join(baseDir, "control-center", "hook-events.jsonl"), "utf8"))
+      expect(event).toMatchObject({ provider: "codex", status: "completed" })
+    } finally {
+      stdin.mockRestore()
+      stdout.mockRestore()
+    }
   })
 
   it("reconciles live hook events with transcript previews and plays sound on reply-needed transitions", async () => {
@@ -263,8 +421,9 @@ describe("createControlCenterService", () => {
       id: "codex:live-1",
       threadName: "Control Center live thread",
       lastUserPreview: "Please implement the plan.",
-      lastAssistantPreview: "Inspecting the codebase.",
-      assistantPreviewKind: "thinking",
+      lastAssistantPreview: "Implemented the Control Center flow.",
+      assistantPreviewKind: "message",
+      status: "completed",
       launchMode: "app",
       hostAppLabel: "Codex.app",
       hostAppExact: true
@@ -309,7 +468,8 @@ describe("createControlCenterService", () => {
     tempDirs.push(baseDir)
 
     const service = createControlCenterService({
-      dataDir: path.join(baseDir, "user-data")
+      dataDir: path.join(baseDir, "user-data"),
+      onPlaySound: vi.fn()
     })
 
     await service.startWatching()
@@ -460,7 +620,8 @@ describe("createControlCenterService", () => {
     )
 
     const service = createControlCenterService({
-      dataDir: path.join(baseDir, "user-data")
+      dataDir: path.join(baseDir, "user-data"),
+      onPlaySound: vi.fn()
     })
 
     await service.startWatching()
@@ -545,7 +706,9 @@ describe("createControlCenterService", () => {
       "utf8"
     )
 
-    await new Promise(resolve => setTimeout(resolve, 150))
+    await vi.waitFor(async () => {
+      expect((await service.getSnapshot()).records[0]?.status).toBe("completed")
+    }, { timeout: 3000 })
 
     snapshot = await service.getSnapshot()
     expect(snapshot.records[0]).toMatchObject({
@@ -581,7 +744,8 @@ describe("createControlCenterService", () => {
     )
 
     const service = createControlCenterService({
-      dataDir: path.join(baseDir, "user-data")
+      dataDir: path.join(baseDir, "user-data"),
+      onPlaySound: vi.fn()
     })
 
     await service.startWatching()
@@ -645,7 +809,8 @@ describe("createControlCenterService", () => {
     tempDirs.push(baseDir)
 
     const service = createControlCenterService({
-      dataDir: path.join(baseDir, "user-data")
+      dataDir: path.join(baseDir, "user-data"),
+      onPlaySound: vi.fn()
     })
 
     await service.startWatching()
@@ -684,7 +849,8 @@ describe("createControlCenterService", () => {
     tempDirs.push(baseDir)
 
     const service = createControlCenterService({
-      dataDir: path.join(baseDir, "user-data")
+      dataDir: path.join(baseDir, "user-data"),
+      onPlaySound: vi.fn()
     })
 
     await service.startWatching()
@@ -769,7 +935,8 @@ describe("createControlCenterService", () => {
     )
 
     const service = createControlCenterService({
-      dataDir: path.join(baseDir, "user-data")
+      dataDir: path.join(baseDir, "user-data"),
+      onPlaySound: vi.fn()
     })
 
     await service.startWatching()

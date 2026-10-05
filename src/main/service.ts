@@ -7,14 +7,7 @@ import chokidar from "chokidar"
 
 import { buildConversationTranscript } from "../shared/parser"
 import type {
-  AgentDefinition,
-  AgentBridgeConfigSnippets,
-  AgentBridgeHealth,
-  AgentDeleteResult,
-  AgentRunRecord,
-  AgentUpdatePatch,
   AppStateInfo,
-  AskAgentResult,
   ControlCenterActionResult,
   ControlCenterSnapshot,
   ControlCenterStateChangeEvent,
@@ -34,7 +27,6 @@ import type {
   ThreadOrganizationSettings,
   TranscriptOptions
 } from "../shared/contracts"
-import { createAgentBridgeService, type AgentBridgeService } from "./bridge"
 import {
   type ControlCenterStoredThreadRecord,
   createControlCenterService,
@@ -53,6 +45,7 @@ import {
   type HandoffSelectorService
 } from "./selector"
 import { createHandoffSettingsStore } from "./settings"
+import { readTranscriptTail } from "./transcript-file"
 
 const SESSION_FILENAME_PATTERN =
   /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i
@@ -62,19 +55,18 @@ const CLAUDE_HIDDEN_USER_PREFIXES = [
   "<local-command-caveat>",
   "<system-reminder>"
 ]
+const CODEX_METADATA_READ_BYTES = 256 * 1024
+const SESSION_METADATA_CONCURRENCY = 16
 
 export interface HandoffServiceOptions {
   appDir?: string
   dataDir?: string
   codexHome?: string
   claudeHome?: string
+  controlCenterEnabled?: boolean
   selectorStateDir?: string
   searchEnabled?: boolean
   searchService?: HandoffSearchService
-  bridgeCommand?: {
-    command: string
-    args: string[]
-  }
   liveHookCommand?: {
     command: string
     args: string[]
@@ -90,13 +82,6 @@ export interface HandoffService {
     get(): Promise<HandoffSettingsSnapshot>
     update(patch: HandoffSettingsPatch): Promise<HandoffSettingsSnapshot>
     resetProvider(provider: SessionProvider): Promise<HandoffSettingsSnapshot>
-  }
-  agents: {
-    list(): Promise<AgentDefinition[]>
-    create(): Promise<AgentDefinition>
-    update(id: string, patch: AgentUpdatePatch): Promise<AgentDefinition>
-    delete(id: string): Promise<AgentDeleteResult>
-    duplicate(id: string): Promise<AgentDefinition>
   }
   threads: {
     get(): Promise<ThreadOrganizationSettings>
@@ -115,19 +100,11 @@ export interface HandoffService {
     dismiss(id: string): Promise<ControlCenterSnapshot>
     dismissCompleted(): Promise<ControlCenterSnapshot>
   }
-  bridge: {
-    getStatus(): Promise<AgentBridgeHealth>
-    getConfigSnippets(): Promise<AgentBridgeConfigSnippets>
-    listRuns(agentId?: string, limit?: number): Promise<AgentRunRecord[]>
-    getRun(runId: string): Promise<AgentRunRecord | null>
-    cancelRun(runId: string): Promise<AgentRunRecord | null>
-  }
   skills: {
     getStatus(): Promise<import("../shared/contracts").HandoffSkillsStatus>
     install(
       target: import("../shared/contracts").SkillInstallTarget
     ): Promise<import("../shared/contracts").HandoffSkillsStatus>
-    exportPackage(): Promise<import("../shared/contracts").HandoffSkillsExportResult>
     getSetupInstructions(
       target: import("../shared/contracts").SkillInstallTarget
     ): Promise<string>
@@ -166,9 +143,67 @@ interface CacheState {
   pathById: Map<string, string>
 }
 
+function createDisabledControlCenterService(): ControlCenterService {
+  const emptySnapshot = { records: [] } satisfies ControlCenterSnapshot
+
+  return {
+    async getSnapshot() {
+      return emptySnapshot
+    },
+
+    async getRecord() {
+      return null
+    },
+
+    async acknowledge() {
+      return null
+    },
+
+    async delegatePendingRequest() {
+      return null
+    },
+
+    async performAction() {
+      return {
+        snapshot: emptySnapshot,
+        fallbackMessage: "Control Center is disabled."
+      }
+    },
+
+    async dismiss() {
+      return emptySnapshot
+    },
+
+    async dismissCompleted() {
+      return emptySnapshot
+    },
+
+    async reconcileSessions() {
+      return undefined
+    },
+
+    async ingestHookEvent() {
+      return undefined
+    },
+
+    async startWatching() {
+      return undefined
+    },
+
+    onStateChanged() {
+      return () => undefined
+    },
+
+    async dispose() {
+      return undefined
+    }
+  }
+}
+
 interface CodexSessionFileMetadata {
   projectPath: string | null
   createdAt: string | null
+  isSubagent: boolean
 }
 
 interface SessionLocation {
@@ -178,12 +213,45 @@ interface SessionLocation {
 
 interface ClaudeSessionFileMetadata {
   sourceSessionId: string | null
+  title: string | null
   firstUserText: string | null
   createdAt: string | null
   updatedAt: string | null
   projectPath: string | null
   isSidechain: boolean
   shouldIgnore: boolean
+}
+
+async function readFilePrefix(filePath: string, byteLimit: number) {
+  const handle = await fs.open(filePath, "r")
+  try {
+    const buffer = Buffer.alloc(byteLimit)
+    const { bytesRead } = await handle.read(buffer, 0, byteLimit, 0)
+    return buffer.subarray(0, bytesRead).toString("utf8")
+  } finally {
+    await handle.close()
+  }
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>
+) {
+  const results = new Array<R>(items.length)
+  let nextIndex = 0
+
+  async function runWorker() {
+    while (nextIndex < items.length) {
+      const index = nextIndex
+      nextIndex += 1
+      results[index] = await mapper(items[index]!, index)
+    }
+  }
+
+  const workerCount = Math.min(concurrency, items.length)
+  await Promise.all(Array.from({ length: workerCount }, runWorker))
+  return results
 }
 
 function createSessionKey(provider: SessionProvider, sessionId: string) {
@@ -334,16 +402,18 @@ async function readCodexSessionFileMetadata(
 ): Promise<CodexSessionFileMetadata> {
   let content = ""
   try {
-    content = await fs.readFile(sessionPath, "utf8")
+    content = await readFilePrefix(sessionPath, CODEX_METADATA_READ_BYTES)
   } catch {
     return {
       projectPath: null,
-      createdAt: null
+      createdAt: null,
+      isSubagent: false
     }
   }
 
   let projectPath: string | null = null
   let createdAt: string | null = null
+  let isSubagent = false
 
   for (const rawLine of content.split(/\r?\n/)) {
     const line = rawLine.trim()
@@ -366,6 +436,8 @@ async function readCodexSessionFileMetadata(
       continue
     }
 
+    isSubagent = isRecord(record.payload.source) && "subagent" in record.payload.source
+
     const cwd =
       typeof record.payload.cwd === "string" ? record.payload.cwd.trim() : ""
     if (!projectPath) {
@@ -377,11 +449,16 @@ async function readCodexSessionFileMetadata(
     if (sessionTimestamp && (!createdAt || sessionTimestamp < createdAt)) {
       createdAt = sessionTimestamp
     }
+
+    if (projectPath && createdAt) {
+      break
+    }
   }
 
   return {
     projectPath,
-    createdAt
+    createdAt,
+    isSubagent
   }
 }
 
@@ -477,14 +554,27 @@ function isClaudeMistakeUserMessage(text: string) {
 }
 
 async function readClaudeSessionFileMetadata(
-  sessionPath: string
+  sessionPath: string,
+  readWholeFile = false
 ): Promise<ClaudeSessionFileMetadata> {
   let content = ""
+  let boundedRead = false
   try {
-    content = await fs.readFile(sessionPath, "utf8")
+    const stat = await fs.stat(sessionPath)
+    boundedRead = !readWholeFile && stat.size > CODEX_METADATA_READ_BYTES * 2
+    if (boundedRead) {
+      const [head, tail] = await Promise.all([
+        readFilePrefix(sessionPath, CODEX_METADATA_READ_BYTES),
+        readTranscriptTail(sessionPath, CODEX_METADATA_READ_BYTES)
+      ])
+      content = `${head}\n${tail}`
+    } else {
+      content = await fs.readFile(sessionPath, "utf8")
+    }
   } catch {
     return {
       sourceSessionId: null,
+      title: null,
       firstUserText: null,
       createdAt: null,
       updatedAt: null,
@@ -495,6 +585,7 @@ async function readClaudeSessionFileMetadata(
   }
 
   let sourceSessionId: string | null = null
+  let title: string | null = null
   let firstUserText: string | null = null
   let createdAt: string | null = null
   let updatedAt: string | null = null
@@ -520,6 +611,9 @@ async function readClaudeSessionFileMetadata(
 
     if (!sourceSessionId && typeof record.sessionId === "string") {
       sourceSessionId = record.sessionId
+    }
+    if (record.type === "custom-title" && typeof record.customTitle === "string" && record.customTitle.trim()) {
+      title = record.customTitle.trim()
     }
 
     if (!createdAt && typeof record.timestamp === "string") {
@@ -591,8 +685,13 @@ async function readClaudeSessionFileMetadata(
     !hasUserImageContent &&
     (hasVisibleUserText || !firstUserText)
 
+  if (boundedRead && shouldIgnore) {
+    return readClaudeSessionFileMetadata(sessionPath, true)
+  }
+
   return {
     sourceSessionId,
+    title,
     firstUserText,
     createdAt,
     updatedAt,
@@ -607,6 +706,10 @@ function resolveClaudeThreadName(params: {
   firstPrompt?: unknown
   fileMetadata?: ClaudeSessionFileMetadata | null
 }) {
+  const title = truncateTitle(params.fileMetadata?.title ?? "")
+  if (title) {
+    return title
+  }
   const summary = typeof params.summary === "string" ? truncateTitle(params.summary) : ""
   if (summary) {
     return summary
@@ -648,8 +751,36 @@ async function loadCodexEntries(params: {
     }))
 
   const dedupedEntries = dedupeSessionEntries(rawEntries)
-  const entries = await Promise.all(
-    dedupedEntries.map(async entry => {
+  const indexedIds = new Set(dedupedEntries.map(entry => entry.id))
+  const recentUnindexedEntries = await mapWithConcurrency(
+    [...locationsById.entries()].filter(([id, location]) => !indexedIds.has(id) && !location.archived),
+    SESSION_METADATA_CONCURRENCY,
+    async ([id, location]): Promise<SessionIndexEntry | null> => {
+      const stat = await fs.stat(location.path).catch(() => null)
+      if (!stat || Date.now() - stat.mtimeMs > 24 * 60 * 60 * 1000) {
+        return null
+      }
+      const metadata = await readCodexSessionFileMetadata(location.path)
+      if (metadata.isSubagent) {
+        return null
+      }
+      return {
+        id,
+        sourceSessionId: id.slice("codex:".length),
+        provider: "codex",
+        archived: false,
+        threadName: "Codex conversation",
+        createdAt: metadata.createdAt ?? stat.birthtime.toISOString(),
+        updatedAt: stat.mtime.toISOString(),
+        projectPath: metadata.projectPath
+      }
+    }
+  )
+  dedupedEntries.push(...recentUnindexedEntries.filter((entry): entry is SessionIndexEntry => entry !== null))
+  const entries = await mapWithConcurrency(
+    dedupedEntries,
+    SESSION_METADATA_CONCURRENCY,
+    async entry => {
       const sessionPath = locationsById.get(entry.id)?.path
       if (!sessionPath) {
         return entry
@@ -661,7 +792,7 @@ async function loadCodexEntries(params: {
         createdAt: metadata.createdAt ?? entry.createdAt,
         projectPath: metadata.projectPath
       }
-    })
+    }
   )
 
   return {
@@ -702,19 +833,7 @@ async function loadClaudeIndexEntries(projectDir: string, indexPath: string) {
         : path.join(projectDir, `${sourceSessionId}.jsonl`)
 
     const sessionPathExists = await fileExists(preferredPath)
-    const shouldInspectFileMetadata =
-      !sessionPathExists ||
-      typeof rawEntry.modified !== "string" ||
-      typeof rawEntry.projectPath !== "string" ||
-      typeof rawEntry.summary !== "string" ||
-      rawEntry.summary.trim() === "" ||
-      typeof rawEntry.firstPrompt !== "string" ||
-      rawEntry.firstPrompt === "No prompt" ||
-      isClaudeMistakeUserMessage(rawEntry.firstPrompt)
-    const fileMetadata =
-      shouldInspectFileMetadata
-        ? await readClaudeSessionFileMetadata(preferredPath)
-        : null
+    const fileMetadata = await readClaudeSessionFileMetadata(preferredPath)
 
     if (fileMetadata?.isSidechain || fileMetadata?.shouldIgnore) {
       continue
@@ -850,29 +969,16 @@ export function createHandoffService(
     cwd: appDir,
     stateDir: options.selectorStateDir
   })
-  const controlCenterService: ControlCenterService = createControlCenterService({
-    dataDir
-  })
-  const bridgeService =
-    createAgentBridgeService({
-      dataDir,
-      codexHome,
-      claudeHome,
-      bridgeCommand:
-        options.bridgeCommand ?? {
-          command: process.execPath,
-          args: [appDir, "--agent-bridge-mcp"]
-      }
-  })
+  const controlCenterEnabled = options.controlCenterEnabled ?? true
+  const controlCenterService: ControlCenterService = controlCenterEnabled
+    ? createControlCenterService({
+        dataDir
+      })
+    : createDisabledControlCenterService()
   const skillsService: HandoffSkillsService = createHandoffSkillsService({
     dataDir,
     codexHome,
     claudeHome,
-    bridgeCommand:
-      options.bridgeCommand ?? {
-        command: process.execPath,
-        args: [appDir, "--agent-bridge-mcp"]
-      },
     liveHookCommand:
       options.liveHookCommand ?? {
         command: process.execPath,
@@ -880,6 +986,7 @@ export function createHandoffService(
       }
   })
   const normalizedIndexPath = indexPath.replaceAll("\\", "/")
+  const normalizedSessionsRoot = sessionsRoot.replaceAll("\\", "/")
   const normalizedArchivedSessionsRoot = archivedSessionsRoot.replaceAll("\\", "/")
   const normalizedClaudeProjectsRoot = claudeProjectsRoot.replaceAll("\\", "/")
 
@@ -888,6 +995,7 @@ export function createHandoffService(
   let selectedSessionWatcher: ReturnType<typeof chokidar.watch> | null = null
   let selectedSessionPath: string | null = null
   let emitTimer: NodeJS.Timeout | null = null
+  let cachePromise: Promise<CacheState> | null = null
   let pendingEvent: {
     reason: HandoffStateChangeReason
     changedPath: string | null
@@ -940,51 +1048,63 @@ export function createHandoffService(
   }
 
   async function loadCache() {
-    const [{ entries: codexEntries, pathById: codexPathById }, { entries: claudeEntries, pathById: claudePathById }] =
-      await Promise.all([
-        loadCodexEntries({ indexPath, sessionsRoot, archivedSessionsRoot }),
-        loadClaudeEntries(claudeProjectsRoot).catch(error => {
-          if (
-            error &&
-            typeof error === "object" &&
-            "code" in error &&
-            error.code === "ENOENT"
-          ) {
-            return { entries: [] as SessionIndexEntry[], pathById: new Map<string, string>() }
-          }
-
-          throw error
-        })
-      ])
-
-    const entries = dedupeSessionEntries([...codexEntries, ...claudeEntries])
-    const byId = new Map(entries.map(entry => [entry.id, entry]))
-    const pathById = new Map<string, string>()
-    codexPathById.forEach((value, key) => {
-      pathById.set(key, value)
-    })
-    claudePathById.forEach((value, key) => {
-      pathById.set(key, value)
-    })
-
-    cache = {
-      entries,
-      byId,
-      pathById
+    if (cachePromise) {
+      return cachePromise
     }
 
-    const resolvedSessions = entries.map(entry => ({
-      ...entry,
-      sessionPath: pathById.get(entry.id) ?? null
-    }))
+    cachePromise = (async () => {
+      const [{ entries: codexEntries, pathById: codexPathById }, { entries: claudeEntries, pathById: claudePathById }] =
+        await Promise.all([
+          loadCodexEntries({ indexPath, sessionsRoot, archivedSessionsRoot }),
+          loadClaudeEntries(claudeProjectsRoot).catch(error => {
+            if (
+              error &&
+              typeof error === "object" &&
+              "code" in error &&
+              error.code === "ENOENT"
+            ) {
+              return { entries: [] as SessionIndexEntry[], pathById: new Map<string, string>() }
+            }
 
-    if (searchService) {
-      void searchService.syncSessions(resolvedSessions)
+            throw error
+          })
+        ])
+
+      const entries = dedupeSessionEntries([...codexEntries, ...claudeEntries])
+      const byId = new Map(entries.map(entry => [entry.id, entry]))
+      const pathById = new Map<string, string>()
+      codexPathById.forEach((value, key) => {
+        pathById.set(key, value)
+      })
+      claudePathById.forEach((value, key) => {
+        pathById.set(key, value)
+      })
+
+      cache = {
+        entries,
+        byId,
+        pathById
+      }
+
+      const resolvedSessions = entries.map(entry => ({
+        ...entry,
+        sessionPath: pathById.get(entry.id) ?? null
+      }))
+
+      if (searchService) {
+        void searchService.syncSessions(resolvedSessions)
+      }
+
+      await controlCenterService.reconcileSessions(resolvedSessions)
+
+      return cache
+    })()
+
+    try {
+      return await cachePromise
+    } finally {
+      cachePromise = null
     }
-
-    await controlCenterService.reconcileSessions(resolvedSessions)
-
-    return cache
   }
 
   async function getCache() {
@@ -1053,28 +1173,6 @@ export function createHandoffService(
       }
     },
 
-    agents: {
-      async list() {
-        return settingsStore.listAgents()
-      },
-
-      async create() {
-        return settingsStore.createAgent()
-      },
-
-      async update(id, patch) {
-        return settingsStore.updateAgent(id, patch)
-      },
-
-      async delete(id) {
-        return settingsStore.deleteAgent(id)
-      },
-
-      async duplicate(id) {
-        return settingsStore.duplicateAgent(id)
-      }
-    },
-
     threads: {
       async get() {
         return settingsStore.getThreadOrganization()
@@ -1117,28 +1215,6 @@ export function createHandoffService(
       }
     },
 
-    bridge: {
-      async getStatus() {
-        return bridgeService.getStatus()
-      },
-
-      async getConfigSnippets() {
-        return bridgeService.getConfigSnippets()
-      },
-
-      async listRuns(agentId, limit) {
-        return bridgeService.listRuns(agentId, limit)
-      },
-
-      async getRun(runId) {
-        return bridgeService.getRun(runId)
-      },
-
-      async cancelRun(runId) {
-        return bridgeService.cancelRun(runId)
-      }
-    },
-
     skills: {
       async getStatus() {
         return skillsService.getStatus()
@@ -1146,10 +1222,6 @@ export function createHandoffService(
 
       async install(target) {
         return skillsService.install(target)
-      },
-
-      async exportPackage() {
-        return skillsService.exportPackage()
       },
 
       async getSetupInstructions(target) {
@@ -1221,17 +1293,17 @@ export function createHandoffService(
         return
       }
 
-      await loadCache()
       await selectorService.startWatching()
       await controlCenterService.startWatching()
+      await loadCache()
 
-      listWatcher = chokidar.watch([indexPath, claudeProjectsRoot, archivedSessionsRoot], {
+      listWatcher = chokidar.watch([indexPath, sessionsRoot, claudeProjectsRoot, archivedSessionsRoot], {
         ignoreInitial: true,
         awaitWriteFinish: {
           stabilityThreshold: 100,
           pollInterval: 25
         },
-        ignored: watchedPath => {
+        ignored: (watchedPath, stats) => {
           const normalizedPath = watchedPath.replaceAll("\\", "/")
 
           if (
@@ -1249,16 +1321,50 @@ export function createHandoffService(
             return true
           }
 
-          return (
+          return Boolean(stats?.isFile() && (
             !normalizedPath.endsWith("/sessions-index.json") &&
             !normalizedPath.endsWith(".jsonl")
-          )
+          ))
         }
       })
 
-      listWatcher.on("all", async (_eventName, changedPath) => {
+      listWatcher.on("all", async (eventName, changedPath) => {
+        const normalizedPath = changedPath.replaceAll("\\", "/")
+        const sourceSessionId = changedPath.match(SESSION_FILENAME_PATTERN)?.[1]
+        const provider = normalizedPath.startsWith(`${normalizedSessionsRoot}/`) ? "codex" : "claude"
+        const knownSession = sourceSessionId ? cache?.byId.get(createSessionKey(provider, sourceSessionId)) : null
+        if (provider === "codex" && sourceSessionId && !knownSession && eventName !== "unlink") {
+          const metadata = await readCodexSessionFileMetadata(changedPath)
+          if (metadata.isSubagent) {
+            return
+          }
+        }
+        if (eventName === "change" && knownSession && controlCenterEnabled) {
+          await controlCenterService.reconcileSessions([{
+            ...knownSession,
+            sessionPath: changedPath
+          }]).catch(error => {
+            console.error("Failed to refresh a live thread.", error)
+          })
+          const liveRecord = await controlCenterService.getRecord(knownSession.id)
+          if (knownSession.provider === "claude" && liveRecord && liveRecord.threadName !== knownSession.threadName) {
+            knownSession.threadName = liveRecord.threadName
+            scheduleStateChanged("index-changed", changedPath)
+          }
+          return
+        }
+
         cache = null
         scheduleStateChanged("index-changed", changedPath ?? null)
+        if (controlCenterEnabled && (eventName === "add" || eventName === "change")) {
+          await loadCache().catch(error => {
+            console.error("Failed to refresh live thread discovery.", error)
+          })
+        }
+      })
+      await new Promise<void>((resolve, reject) => {
+        listWatcher?.once("ready", resolve)
+        listWatcher?.once("error", reject)
       })
     },
 
