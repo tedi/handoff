@@ -212,7 +212,7 @@ function ProviderIcon({
   )
 }
 
-const SECTION_RAIL_WIDTH = 76
+const SECTION_RAIL_WIDTH = 160
 const DEFAULT_SIDEBAR_WIDTH = 280
 const MIN_SIDEBAR_WIDTH = 220
 const SIDEBAR_WIDTH_STORAGE_KEY = "handoff.sidebar-width"
@@ -1273,7 +1273,7 @@ function ControlCenterStatusIndicator({
     return (
       <span
         aria-hidden="true"
-        className={`control-center-status-loader is-glowing-arc${
+        className={`control-center-status-loader${
           tone === "compacting" ? " is-compacting" : ""
         }`}
       />
@@ -1288,35 +1288,32 @@ function ControlCenterStatusIndicator({
   )
 }
 
-function LiveThreadAssistantPreviewLine({
-  popout = false,
-  record
-}: {
-  popout?: boolean
-  record: LiveThreadRecord
-}) {
-  const previewText = record.lastAssistantPreview ?? getLiveThreadAssistantFallback(record)
-  const lineClassName = popout
-    ? "control-center-popout-preview-line"
-    : "control-center-preview-line"
-  const previewTone =
-    !record.lastAssistantPreview && record.status === "ready"
-      ? "ready"
-      : record.assistantPreviewKind
-
-  return (
-    <span className={`${lineClassName} is-${previewTone}`}>
-      {previewText}
-    </span>
-  )
+function cleanLiveThreadPreview(value: string | null) {
+  return (value ?? "")
+    .replace(/<(task-notification|system-reminder|tool_result|tool-result)\b[^>]*>[\s\S]*?(?:<\/\1>|$)/gi, "")
+    .replace(/```[\s\S]*?(?:```|$)/g, "")
+    .replace(/!?\[([^\]]*)\]\([^)]+\)/g, "$1")
+    .replace(/<[^>]*>/g, "")
+    .replace(/(?:\/Users\/|\/private\/|\/tmp\/|\/home\/)[^\s,;<>`"')\]]+/g, path =>
+      `a local file${path.match(/[.!?:]+$/)?.[0] ?? ""}`
+    )
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "")
+    .replace(/(?:^|\n)\s{0,3}(?:#{1,6}\s+|[-*+]\s+|>\s*|\d+\.\s+)/g, " ")
+    .replace(/(\*\*|__|~~)(.*?)\1/g, "$2")
+    .replace(/(?<!\w)[*_]([^*_]+)[*_](?!\w)/g, "$1")
+    .replace(/`/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
 }
 
-function shouldShowLiveThreadUserPreview(record: LiveThreadRecord) {
-  if (record.status === "ready" && !record.lastUserPreview) {
-    return false
-  }
+function LiveThreadAssistantPreviewLine({ record }: { record: LiveThreadRecord }) {
+  const previewText = cleanLiveThreadPreview(record.lastAssistantPreview)
 
-  return true
+  return (
+    <span className="control-center-preview-line">
+      {previewText || getLiveThreadAssistantFallback(record)}
+    </span>
+  )
 }
 
 function getPendingRequestTone(request: ControlCenterPendingRequest) {
@@ -1348,8 +1345,37 @@ function getLiveThreadProjectLabel(projectPath: string | null) {
 }
 
 function getLiveThreadTitle(record: LiveThreadRecord) {
-  const projectLabel = getLiveThreadProjectLabel(record.projectPath)
-  return projectLabel ? `${projectLabel} · ${record.threadName}` : record.threadName
+  const title = cleanLiveThreadPreview(record.threadName)
+  if (/^queue job\b/i.test(title)) {
+    return title.match(/\btitle\s+["“]([^"”]+)["”]/i)?.[1] ?? "Queued task"
+  }
+  return title || `${formatProviderLabel(record.provider)} thread`
+}
+
+function getLiveThreadGroups(records: LiveThreadRecord[]) {
+  const groups: Array<{ id: string; label: string; records: LiveThreadRecord[] }> = [
+    { id: "attention", label: "Needs attention", records: [] },
+    { id: "working", label: "Working", records: [] },
+    { id: "replies", label: "New replies", records: [] },
+    { id: "earlier", label: "Earlier", records: [] }
+  ]
+
+  for (const record of records) {
+    let groupIndex = 3
+    if (
+      record.pendingRequest || record.status === "waiting_permission" ||
+      record.status === "waiting_user" || record.status === "failed"
+    ) {
+      groupIndex = 0
+    } else if (record.status === "running") {
+      groupIndex = 1
+    } else if (isCompletedUnseen(record)) {
+      groupIndex = 2
+    }
+    groups[groupIndex].records.push(record)
+  }
+
+  return groups.filter(group => group.records.length > 0)
 }
 
 function getLiveThreadAssistantFallback(record: LiveThreadRecord) {
@@ -1374,17 +1400,6 @@ function getLiveThreadAssistantFallback(record: LiveThreadRecord) {
   }
 
   return "Working…"
-}
-
-function shouldShowControlCenterPopoutPreviews(record: LiveThreadRecord) {
-  return (
-    !record.pendingRequest &&
-    (record.status === "ready" ||
-      record.status === "running" ||
-      record.status === "waiting_user" ||
-      record.status === "waiting_permission" ||
-      isCompletedUnseen(record))
-  )
 }
 
 function buildMarkdownExport(
@@ -3079,108 +3094,6 @@ function SearchResultsPane({
   )
 }
 
-function ControlCenterSidebarPane({
-  snapshot,
-  isLoading,
-  isBusy,
-  skillsError,
-  skillsStatus,
-  onDismissCompleted,
-  onInstall
-}: {
-  snapshot: ControlCenterSnapshot | null
-  isLoading: boolean
-  isBusy: boolean
-  skillsError: string | null
-  skillsStatus: HandoffSkillsStatus | null
-  onDismissCompleted(): void
-  onInstall(target: SkillInstallTarget): void
-}) {
-  const records = snapshot?.records ?? []
-  const needsAttentionCount = records.filter(record =>
-    record.status === "waiting_permission" || record.status === "waiting_user"
-  ).length
-  const completedCount = records.filter(record =>
-    record.status === "completed" || record.status === "failed"
-  ).length
-  const missingProviders =
-    skillsStatus === null
-      ? []
-      : (["codex", "claude"] as const).filter(
-          provider => !skillsStatus.providers[provider].liveHooksInstalled
-        )
-
-  return (
-    <div className="control-center-sidebar">
-      <section className="control-center-sidebar-card">
-        <div className="control-center-sidebar-header">
-          <span className="control-center-sidebar-title">Live threads</span>
-          <span className="count-pill">{records.length}</span>
-        </div>
-        <div className="control-center-sidebar-metrics">
-          <span className="control-center-sidebar-metric">
-            <strong>{needsAttentionCount}</strong>
-            <span>Needs attention</span>
-          </span>
-          <span className="control-center-sidebar-metric">
-            <strong>{completedCount}</strong>
-            <span>Completed</span>
-          </span>
-        </div>
-        <button
-          className="ghost-button"
-          disabled={completedCount === 0}
-          onClick={onDismissCompleted}
-          type="button"
-        >
-          Dismiss completed
-        </button>
-      </section>
-
-      <section className="control-center-sidebar-card">
-        <div className="control-center-sidebar-header">
-          <span className="control-center-sidebar-title">Live hooks</span>
-        </div>
-        {isLoading ? (
-          <span className="control-center-sidebar-note">Loading live hook status.</span>
-        ) : skillsError ? (
-          <span className="control-center-sidebar-note">{skillsError}</span>
-        ) : skillsStatus ? (
-          <div className="control-center-hook-list">
-            {(["codex", "claude"] as const).map(provider => (
-              <div className="control-center-hook-row" key={provider}>
-                <span>{formatProviderLabel(provider)}</span>
-                <span
-                  className={`automation-provider-state is-${
-                    skillsStatus.providers[provider].liveHooksInstalled ? "ready" : "idle"
-                  }`}
-                >
-                  {skillsStatus.providers[provider].liveHooksInstalled ? "Ready" : "Missing"}
-                </span>
-              </div>
-            ))}
-          </div>
-        ) : null}
-        {missingProviders.length > 0 ? (
-          <div className="control-center-inline-actions">
-            {missingProviders.map(provider => (
-              <button
-                className="ghost-button"
-                disabled={isBusy}
-                key={provider}
-                onClick={() => onInstall(provider)}
-                type="button"
-              >
-                Install {formatProviderLabel(provider)}
-              </button>
-            ))}
-          </div>
-        ) : null}
-      </section>
-    </div>
-  )
-}
-
 function ControlCenterPendingRequestPreview({
   preview
 }: {
@@ -3310,12 +3223,125 @@ function ControlCenterPendingRequestCard({
   )
 }
 
+function ControlCenterThreadList({
+  records,
+  compact = false,
+  onDismiss,
+  onOpenThread,
+  onPerformAction,
+  pendingActionKey
+}: {
+  records: LiveThreadRecord[]
+  compact?: boolean
+  onDismiss(threadId: string): void
+  onOpenThread(threadId: string): void
+  onPerformAction(threadId: string, requestId: string, actionId: string): void
+  pendingActionKey: string | null
+}) {
+  return (
+    <div className="control-center-list">
+      {getLiveThreadGroups(records).map(group => {
+        const rows = (
+          <div role="list" aria-label={group.label}>
+            {group.records.map(record => {
+              const displayTone = getLiveThreadDisplayTone(record)
+              const title = getLiveThreadTitle(record)
+              const projectLabel = getLiveThreadProjectLabel(record.projectPath)
+              const statusLabel = getLiveThreadDisplayStatusLabel(record)
+              const target = record.hostAppExact && record.hostAppLabel
+                ? record.hostAppLabel
+                : record.launchMode === "cli" ? "Terminal" : formatProviderLabel(record.provider)
+              const stateLabel = record.assistantPreviewKind === "compacting"
+                ? "Compacting"
+                : isCompletedUnseen(record) ? "New reply" : formatLiveThreadStatus(record.status)
+
+              return (
+                <article
+                  className={`control-center-thread-row ${compact ? "control-center-popout-row" : "control-center-card"}${
+                    displayTone ? ` is-${displayTone}` : ""
+                  }`}
+                  key={record.id}
+                  role="listitem"
+                >
+                  <button
+                    aria-label={`Open ${title} in ${target}. ${stateLabel}.`}
+                    className="control-center-thread-open"
+                    onClick={() => onOpenThread(record.id)}
+                    title={`Open in ${target}`}
+                    type="button"
+                  >
+                    <span className="control-center-thread-indicator">
+                      <ControlCenterStatusIndicator tone={getLiveThreadIndicatorTone(record)} />
+                    </span>
+                    <span className="control-center-thread-body">
+                      <span className="control-center-title" title={record.threadName}>
+                        {title}
+                      </span>
+                      <span className="control-center-thread-context">
+                        {projectLabel && !/^queue-[0-9a-f-]+$/i.test(projectLabel) ? `${projectLabel} · ` : ""}
+                        <span className={`provider-label-${record.provider}`}>
+                          {formatProviderLabel(record.provider)}
+                        </span>
+                        {statusLabel ? ` · ${statusLabel}` : ""}
+                      </span>
+                      {!record.pendingRequest && group.id !== "earlier" ? (
+                        <LiveThreadAssistantPreviewLine record={record} />
+                      ) : null}
+                    </span>
+                    <span className="control-center-time">
+                      {formatRelativeTimestamp(record.lastEventAt)}
+                    </span>
+                  </button>
+                  {!record.pendingRequest ? (
+                    <button
+                      aria-label={`Archive ${record.threadName}`}
+                      className="control-center-archive-button"
+                      onClick={() => onDismiss(record.id)}
+                      type="button"
+                    >
+                      <ArchiveIcon />
+                    </button>
+                  ) : null}
+                  {record.pendingRequest ? (
+                    <ControlCenterPendingRequestCard
+                      compact={compact}
+                      onOpenThread={onOpenThread}
+                      onPerformAction={onPerformAction}
+                      pendingActionKey={pendingActionKey}
+                      record={record}
+                    />
+                  ) : null}
+                </article>
+              )
+            })}
+          </div>
+        )
+        const heading = (
+          <>{group.label}<span>{group.records.length}</span></>
+        )
+        return group.id === "earlier" ? (
+          <details className="control-center-group is-earlier" key={group.id}>
+            <summary className="control-center-group-heading">{heading}</summary>
+            {rows}
+          </details>
+        ) : (
+          <section className="control-center-group" key={group.id} aria-label={group.label}>
+            <h3 className="control-center-group-heading">{heading}</h3>
+            {rows}
+          </section>
+        )
+      })}
+    </div>
+  )
+}
+
 function ControlCenterPane({
   snapshot,
   error,
   isBusy,
   isLoading,
   skillsStatus,
+  skillsError,
   pendingActionKey,
   onDismiss,
   onDismissCompleted,
@@ -3328,6 +3354,7 @@ function ControlCenterPane({
   isBusy: boolean
   isLoading: boolean
   skillsStatus: HandoffSkillsStatus | null
+  skillsError: string | null
   pendingActionKey: string | null
   onDismiss(threadId: string): void
   onDismissCompleted(): void
@@ -3339,164 +3366,93 @@ function ControlCenterPane({
   const completedCount = records.filter(record =>
     record.status === "completed" || record.status === "failed"
   ).length
-  const missingLiveHookProviders =
-    skillsStatus === null
-      ? []
-      : (["codex", "claude"] as const).filter(
-          provider => !skillsStatus.providers[provider].liveHooksInstalled
-        )
-
-  if (error) {
-    return <EmptyState title="Unable to load Control Center" detail={error} />
-  }
-
-  if (isLoading && records.length === 0) {
-    return <EmptyState title="Loading Control Center" detail="Listening for live provider updates." />
-  }
-
-  if (records.length === 0) {
-    return (
-      <div className="control-center-layout">
-        <EmptyState
-          title="No live threads"
-          detail={
-            missingLiveHookProviders.length > 0
-              ? "Install live hooks for Codex and Claude to populate Control Center as threads update."
-              : "Start a Codex or Claude thread and it will appear here as soon as Handoff receives live events."
-          }
-        />
-        <div className="control-center-inline-actions is-centered">
-          {missingLiveHookProviders.length === 0 ? (
-            <button className="ghost-button" onClick={onDismissCompleted} type="button">
-              Dismiss completed
-            </button>
-          ) : (
-            <>
-              {missingLiveHookProviders.map(provider => (
-                <button
-                  className="ghost-button"
-                  disabled={isBusy}
-                  key={provider}
-                  onClick={() => onInstall(provider)}
-                  type="button"
-                >
-                  Install {formatProviderLabel(provider)} live hooks
-                </button>
-              ))}
-              <button
-                className="ghost-button"
-                disabled={isBusy}
-                onClick={() => onInstall("both")}
-                type="button"
-              >
-                Install both
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-    )
-  }
+  const workingCount = records.filter(record =>
+    record.status === "running" && !record.pendingRequest
+  ).length
+  const replyCount = records.filter(isCompletedUnseen).length
+  const attentionCount = records.filter(record =>
+    record.pendingRequest || record.status === "waiting_permission" ||
+    record.status === "waiting_user" || record.status === "failed"
+  ).length
+  const summary = [
+    attentionCount ? `${attentionCount} ${attentionCount === 1 ? "thread needs" : "threads need"} attention.` : "",
+    workingCount ? `${workingCount} ${workingCount === 1 ? "thread" : "threads"} working.` : "",
+    replyCount ? `${replyCount} new ${replyCount === 1 ? "reply" : "replies"}.` : ""
+  ].filter(Boolean).join(" ") || "You're all caught up."
+  const missingProviders = skillsStatus === null ? [] : (["codex", "claude"] as const).filter(
+    provider => !skillsStatus.providers[provider].liveHooksInstalled
+  )
+  const summaryText = error
+    ? "Your threads couldn't be loaded."
+    : isLoading && records.length === 0 ? "Loading your threads…" : summary
 
   return (
     <div className="control-center-layout">
-      <div className="control-center-toolbar">
+      <header className="control-center-toolbar">
         <div className="control-center-toolbar-copy">
-          <h2>Live threads</h2>
-          <p>Updates arrive from provider hooks and transcript reconciliation. Click any row to reopen it in the source app.</p>
+          <h2>Your work</h2>
+          <p>{summaryText}</p>
         </div>
         <button
-          className="ghost-button"
+          className="control-center-clear-button"
           disabled={completedCount === 0}
           onClick={onDismissCompleted}
           type="button"
         >
-          Dismiss completed
+          Clear finished
         </button>
-      </div>
+      </header>
 
-      <div className="control-center-list" role="list">
-        {records.map(record => {
-          const displayTone = getLiveThreadDisplayTone(record)
-          const indicatorTone = getLiveThreadIndicatorTone(record)
-          const statusLabel = record.pendingRequest
-            ? null
-            : getLiveThreadDisplayStatusLabel(record)
+      {error ? (
+        <EmptyState title="Unable to load your threads" detail={error} />
+      ) : records.length === 0 ? (
+        <EmptyState
+          title={isLoading ? "Loading your threads" : "No live threads"}
+          detail={isLoading ? "Checking Claude and Codex." : "Start a thread in Claude or Codex. It will appear here."}
+        />
+      ) : (
+        <ControlCenterThreadList
+          records={records}
+          onDismiss={onDismiss}
+          onOpenThread={onOpenThread}
+          onPerformAction={onPerformAction}
+          pendingActionKey={pendingActionKey}
+        />
+      )}
 
-          return (
-            <article
-              className={`control-center-card${
-                displayTone ? ` is-${displayTone}` : ""
-              }`}
-              key={`${record.id}:${record.lastEventAt}`}
-            >
+      <details
+        className="control-center-connections"
+        open={missingProviders.length > 0 || Boolean(skillsError)}
+      >
+        <summary>Connections{missingProviders.length > 0 ? " need setup" : ""}</summary>
+        {skillsError ? <p>{skillsError}</p> : null}
+        {skillsStatus ? (["codex", "claude"] as const).map(provider => (
+          <div className="control-center-connection" key={provider}>
+            <span className={`provider-label-${provider}`}>{formatProviderLabel(provider)}</span>
+            <span>{skillsStatus.providers[provider].liveHooksInstalled ? "Ready" : "Setup needed"}</span>
+            {!skillsStatus.providers[provider].liveHooksInstalled ? (
               <button
-                className="control-center-card-main"
-                onClick={() => onOpenThread(record.id)}
+                className="control-center-clear-button"
+                disabled={isBusy}
+                onClick={() => onInstall(provider)}
                 type="button"
               >
-                <div className="control-center-card-header">
-                  <div className="control-center-title-group">
-                    <ControlCenterStatusIndicator tone={indicatorTone} />
-                    <span className="control-center-title">{getLiveThreadTitle(record)}</span>
-                  </div>
-
-                  <div className="control-center-card-meta">
-                    <span className={`control-center-pill is-provider-${record.provider}`}>
-                      {formatProviderLabel(record.provider)}
-                    </span>
-                    {record.hostAppExact && record.hostAppLabel ? (
-                      <span className="control-center-pill">{record.hostAppLabel}</span>
-                    ) : null}
-                    {statusLabel ? (
-                      <span className={`control-center-pill is-${displayTone ?? "running"}`}>
-                        {statusLabel}
-                      </span>
-                    ) : null}
-                    <span className="control-center-meta-slot">
-                      <span className="control-center-time">
-                        {formatRelativeTimestamp(record.lastEventAt)}
-                      </span>
-                      {!record.pendingRequest ? (
-                        <button
-                          aria-label={`Archive ${record.threadName}`}
-                          className="control-center-archive-button"
-                          onClick={event => {
-                            event.stopPropagation()
-                            onDismiss(record.id)
-                          }}
-                          type="button"
-                        >
-                          <ArchiveIcon />
-                        </button>
-                      ) : null}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="control-center-previews">
-                  {shouldShowLiveThreadUserPreview(record) ? (
-                    <span className="control-center-preview-line">
-                      <span className="control-center-preview-label">You:</span>{" "}
-                      {record.lastUserPreview ?? "No prompt captured yet."}
-                    </span>
-                  ) : null}
-                  <LiveThreadAssistantPreviewLine record={record} />
-                </div>
+                Connect {formatProviderLabel(provider)}
               </button>
-
-              {record.pendingRequest ? (
-                <ControlCenterPendingRequestCard
-                  onOpenThread={onOpenThread}
-                  onPerformAction={onPerformAction}
-                  pendingActionKey={pendingActionKey}
-                  record={record}
-                />
-              ) : null}
-            </article>
-          )
-        })}
-      </div>
+            ) : null}
+          </div>
+        )) : <p>Checking connections…</p>}
+        {missingProviders.length > 1 ? (
+          <button
+            className="control-center-clear-button"
+            disabled={isBusy}
+            onClick={() => onInstall("both")}
+            type="button"
+          >
+            Connect both
+          </button>
+        ) : null}
+      </details>
     </div>
   )
 }
@@ -3525,10 +3481,7 @@ function ControlCenterPopoutPane({
   return (
     <div className="control-center-popout-shell">
       <header className="control-center-popout-header">
-        <div className="control-center-popout-title-group">
-          <span className="control-center-popout-title">Control Center</span>
-          <span className="count-pill">{records.length}</span>
-        </div>
+        <span className="control-center-popout-title">Your work</span>
         <button
           aria-label="Close pop-out"
           className="control-center-popout-close"
@@ -3538,159 +3491,22 @@ function ControlCenterPopoutPane({
           ×
         </button>
       </header>
-
       {error ? (
         <div className="control-center-popout-empty">{error}</div>
       ) : isLoading && records.length === 0 ? (
-        <div className="control-center-popout-empty">Loading live threads…</div>
+        <div className="control-center-popout-empty">Loading your threads…</div>
       ) : records.length === 0 ? (
         <div className="control-center-popout-empty">No live threads</div>
       ) : (
-        <div className="control-center-popout-list" role="list">
-          {records.map(record => {
-            const displayTone = getLiveThreadDisplayTone(record)
-            const indicatorTone = getLiveThreadIndicatorTone(record)
-            const statusLabel = record.pendingRequest
-              ? null
-              : getLiveThreadDisplayStatusLabel(record)
-            const shouldShowPreviews = shouldShowControlCenterPopoutPreviews(record)
-
-            if (record.pendingRequest) {
-              return (
-                <article
-                  className={`control-center-popout-inline-card${
-                    displayTone ? ` is-${displayTone}` : ""
-                  }`}
-                  key={`${record.id}:${record.lastEventAt}`}
-                >
-                  <div className="control-center-popout-inline-meta">
-                    <span className={`control-center-pill is-provider-${record.provider}`}>
-                      {formatProviderLabel(record.provider)}
-                    </span>
-                    {record.hostAppExact && record.hostAppLabel ? (
-                      <span className="control-center-pill">{record.hostAppLabel}</span>
-                    ) : null}
-                    <span className="control-center-meta-slot">
-                      <span className="control-center-time">
-                        {formatRelativeTimestamp(record.lastEventAt)}
-                      </span>
-                    </span>
-                  </div>
-                  <ControlCenterPendingRequestCard
-                    compact
-                    onOpenThread={onOpenThread}
-                    onPerformAction={onPerformAction}
-                    pendingActionKey={pendingActionKey}
-                    record={record}
-                  />
-                </article>
-              )
-            }
-
-            return (
-              <article
-                className={`control-center-popout-row${
-                  displayTone ? ` is-${displayTone}` : ""
-                }${shouldShowPreviews ? " has-previews" : ""}`}
-                key={`${record.id}:${record.lastEventAt}`}
-              >
-                <button
-                  className={`control-center-popout-row-main${
-                    shouldShowPreviews ? " has-previews" : ""
-                  }`}
-                  onClick={() => onOpenThread(record.id)}
-                  type="button"
-                >
-                  {shouldShowPreviews ? (
-                    <>
-                      <div className="control-center-popout-row-header">
-                        <span className="control-center-popout-row-title-group">
-                          <ControlCenterStatusIndicator tone={indicatorTone} />
-                          <span className="control-center-popout-row-title">
-                            {getLiveThreadTitle(record)}
-                          </span>
-                        </span>
-                        <span className="control-center-popout-row-meta">
-                          <span className={`control-center-pill is-provider-${record.provider}`}>
-                            {formatProviderLabel(record.provider)}
-                          </span>
-                          {record.hostAppExact && record.hostAppLabel ? (
-                            <span className="control-center-pill">{record.hostAppLabel}</span>
-                          ) : null}
-                          {statusLabel ? (
-                            <span className={`control-center-pill is-${displayTone ?? "running"}`}>
-                              {statusLabel}
-                            </span>
-                          ) : null}
-                          <span className="control-center-meta-slot control-center-meta-slot-popout">
-                            <span className="control-center-time">
-                              {formatRelativeTimestamp(record.lastEventAt)}
-                            </span>
-                            <button
-                              aria-label={`Archive ${record.threadName}`}
-                              className="control-center-archive-button control-center-archive-button-popout"
-                              onClick={event => {
-                                event.stopPropagation()
-                                onDismiss(record.id)
-                              }}
-                              type="button"
-                            >
-                              <ArchiveIcon />
-                            </button>
-                          </span>
-                        </span>
-                      </div>
-                      <div className="control-center-popout-row-previews">
-                        {shouldShowLiveThreadUserPreview(record) ? (
-                          <span className="control-center-popout-preview-line">
-                            <span className="control-center-preview-label">You:</span>{" "}
-                            {record.lastUserPreview ?? "No prompt captured yet."}
-                          </span>
-                        ) : null}
-                        <LiveThreadAssistantPreviewLine popout record={record} />
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <ControlCenterStatusIndicator tone={indicatorTone} />
-                      <span className="control-center-popout-row-title">
-                        {getLiveThreadTitle(record)}
-                      </span>
-                      <span className="control-center-popout-row-meta">
-                        <span className={`control-center-pill is-provider-${record.provider}`}>
-                          {formatProviderLabel(record.provider)}
-                        </span>
-                        {record.hostAppExact && record.hostAppLabel ? (
-                          <span className="control-center-pill">{record.hostAppLabel}</span>
-                        ) : null}
-                        {statusLabel ? (
-                          <span className={`control-center-pill is-${displayTone ?? "running"}`}>
-                            {statusLabel}
-                          </span>
-                        ) : null}
-                      <span className="control-center-meta-slot control-center-meta-slot-popout">
-                        <span className="control-center-time">
-                          {formatRelativeTimestamp(record.lastEventAt)}
-                        </span>
-                        <button
-                          aria-label={`Archive ${record.threadName}`}
-                          className="control-center-archive-button control-center-archive-button-popout"
-                          onClick={event => {
-                            event.stopPropagation()
-                            onDismiss(record.id)
-                            }}
-                            type="button"
-                          >
-                            <ArchiveIcon />
-                          </button>
-                        </span>
-                      </span>
-                    </>
-                  )}
-                </button>
-              </article>
-            )
-          })}
+        <div className="control-center-popout-list">
+          <ControlCenterThreadList
+            compact
+            records={records}
+            onDismiss={onDismiss}
+            onOpenThread={onOpenThread}
+            onPerformAction={onPerformAction}
+            pendingActionKey={pendingActionKey}
+          />
         </div>
       )}
     </div>
@@ -7621,7 +7437,7 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${activeSection === "control-center" ? " has-control-center-layout" : ""}`}>
       {isCreateCollectionDialogOpen ? (
         <CollectionCreateDialog
           inputRef={newCollectionInputRef}
@@ -7659,7 +7475,7 @@ export default function App() {
         style={workspaceStyle}
       >
         <section className="section-rail">
-          <div className="section-rail-top">
+          <header className="section-rail-header">
             <button
               aria-label={isSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
               className="sidebar-toggle-button section-rail-collapse-button"
@@ -7674,7 +7490,8 @@ export default function App() {
                 <span className="sidebar-toggle-divider" />
               </span>
             </button>
-
+          </header>
+          <div className="section-rail-top">
             <div className="section-rail-nav">
               <button
                 aria-pressed={activeSection === "control-center"}
@@ -7727,21 +7544,7 @@ export default function App() {
         <section className={`sidebar-pane ${isSidebarCollapsed ? "is-collapsed" : ""}`}>
           {!isSidebarCollapsed ? (
             <>
-              {activeSection === "control-center" ? (
-                <ControlCenterSidebarPane
-                  isLoading={isLoadingControlCenter}
-                  isBusy={isMutatingSkills}
-                  onDismissCompleted={() => {
-                    void handleDismissCompletedControlCenterThreads()
-                  }}
-                  onInstall={target => {
-                    void handleInstallSkills(target)
-                  }}
-                  skillsError={skillsError}
-                  skillsStatus={skillsStatus}
-                  snapshot={controlCenterSnapshot}
-                />
-              ) : activeSection === "threads" ? (
+              {activeSection === "control-center" ? null : activeSection === "threads" ? (
                 <>
                   <div className="sidebar-header">
                     <div className="sidebar-header-controls">
@@ -7871,22 +7674,6 @@ export default function App() {
                   Pop out
                 </button>
               ) : null}
-              {!isSettingsOpen && activeSection === "control-center" ? (
-                <button
-                  className="topbar-button"
-                  disabled={
-                    !(controlCenterSnapshot?.records ?? []).some(
-                      record => record.status === "completed" || record.status === "failed"
-                    )
-                  }
-                  onClick={() => {
-                    void handleDismissCompletedControlCenterThreads()
-                  }}
-                  type="button"
-                >
-                  Dismiss completed
-                </button>
-              ) : null}
               {!isSettingsOpen &&
               ((activeSection === "threads" && rightPaneMode !== "new-thread") ||
                 activeSection === "control-center") ? (
@@ -7962,6 +7749,7 @@ export default function App() {
                     void handlePerformControlCenterAction(threadId, requestId, actionId)
                   }}
                   pendingActionKey={pendingControlCenterActionKey}
+                  skillsError={skillsError}
                   skillsStatus={skillsStatus}
                   snapshot={controlCenterSnapshot}
                 />

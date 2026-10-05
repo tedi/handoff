@@ -501,9 +501,9 @@ describe("Handoff App", () => {
     )
 
     expect(api.app.openControlCenterPopout).toHaveBeenCalledTimes(1)
-    expect(await screen.findByText("client · Live onboarding flow")).toBeInTheDocument()
+    expect(await screen.findByText("Live onboarding flow")).toBeInTheDocument()
     await userEvent.click(
-      screen.getByRole("button", { name: /client · Live onboarding flow/i })
+      screen.getByRole("button", { name: /Open Live onboarding flow/i })
     )
 
     await waitFor(() => {
@@ -622,19 +622,15 @@ describe("Handoff App", () => {
 
     render(<App />)
 
-    expect(await screen.findByText("Control Center")).toBeInTheDocument()
+    expect(await screen.findByText("Your work")).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /^Threads$/i })).not.toBeInTheDocument()
-    expect(
-      screen.getByText((_content, node) =>
-        node?.textContent === "You: PLEASE IMPLEMENT THIS PLAN"
-      )
-    ).toBeInTheDocument()
+    expect(screen.queryByText(/PLEASE IMPLEMENT THIS PLAN/)).not.toBeInTheDocument()
     expect(screen.getByText("Implemented the onboarding flow changes.")).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /Dismiss completed/i })).not.toBeInTheDocument()
-    expect(await screen.findByText("Needs reply")).toBeInTheDocument()
+    expect(await screen.findByText(/Needs reply/)).toBeInTheDocument()
 
     await userEvent.click(
-      screen.getByRole("button", { name: /client · Investigate live focus/i })
+      screen.getByRole("button", { name: /Open Investigate live focus/i })
     )
     await waitFor(() => {
       expect(api.controlCenter.open).toHaveBeenCalledWith("claude:live-1")
@@ -725,7 +721,9 @@ describe("Handoff App", () => {
       })
     )
 
-    expect(await screen.findByText("Ready")).toBeInTheDocument()
+    await screen.findByText("Earlier")
+    await userEvent.click(screen.getByText("Earlier"))
+    expect(screen.getByRole("button", { name: /Open Claude conversation.*Ready/ })).toBeInTheDocument()
     expect(screen.queryByText(/No prompt captured yet\./i)).not.toBeInTheDocument()
   })
 
@@ -762,13 +760,10 @@ describe("Handoff App", () => {
 
     render(<App />)
 
+    expect(await screen.findByText("Onboarding flow")).toBeInTheDocument()
+    expect(screen.queryByText(/the placeholder text is still off center/)).not.toBeInTheDocument()
     expect(
-      await screen.findByText((_content, node) =>
-        node?.textContent === "You: the placeholder text is still off center"
-      )
-    ).toBeInTheDocument()
-    expect(
-      screen.getByRole("button", { name: /client · Onboarding flow/i }).querySelector(
+      screen.getByRole("button", { name: /Open Onboarding flow/i }).querySelector(
         ".control-center-status-loader"
       )
     ).toBeInTheDocument()
@@ -975,7 +970,7 @@ describe("Handoff App", () => {
     )
 
     const rowButton = await screen.findByRole("button", {
-      name: /client · Review live output/i
+      name: /Open Review live output/i
     })
     const rowCard = rowButton.closest(".control-center-card")
     const dot = rowCard?.querySelector(".control-center-popout-dot")
@@ -993,15 +988,12 @@ describe("Handoff App", () => {
 
     await waitFor(() => {
       expect(api.controlCenter.open).toHaveBeenCalledWith("claude:done-1")
-      expect(rowCard).not.toHaveClass("is-completed-unseen")
-      expect(rowCard?.querySelector(".control-center-popout-dot")).not.toHaveClass("is-ready")
-      expect(rowCard?.querySelector(".control-center-popout-dot")).not.toHaveClass(
-        "is-completed-unseen"
-      )
+      expect(document.querySelector(".control-center-card.is-completed-unseen")).toBeNull()
+      expect(screen.queryByRole("heading", { name: /New replies/i })).not.toBeInTheDocument()
     })
   })
 
-  it("highlights completed unseen rows in the pop-out and clears the border, pill, and dot after open", async () => {
+  it("moves completed replies into Earlier after opening them from the pop-out", async () => {
     const { api } = createMockApi({
       sessions: [],
       controlCenterRecords: [
@@ -1034,18 +1026,14 @@ describe("Handoff App", () => {
     render(<App />)
 
     const rowButton = await screen.findByRole("button", {
-      name: /client · Ship pop-out polish/i
+      name: /Open Ship pop-out polish/i
     })
     const rowContainer = rowButton.closest(".control-center-popout-row")
     const dot = rowButton.querySelector(".control-center-popout-dot")
 
     expect(rowContainer).toHaveClass("is-completed-unseen")
     expect(dot).toHaveClass("is-completed-unseen")
-    expect(
-      screen.getByText((_content, node) =>
-        node?.textContent === "You: Can you ship the pop-out changes?"
-      )
-    ).toBeInTheDocument()
+    expect(screen.queryByText(/Can you ship the pop-out changes/)).not.toBeInTheDocument()
     expect(screen.getByText(/The pop-out updates are ready\./i)).toBeInTheDocument()
     expect(screen.queryByText(/^Done$/)).not.toBeInTheDocument()
 
@@ -1053,17 +1041,61 @@ describe("Handoff App", () => {
 
     await waitFor(() => {
       expect(api.controlCenter.open).toHaveBeenCalledWith("claude:done-2")
-      expect(rowContainer).not.toHaveClass("is-completed-unseen")
-      expect(rowButton.querySelector(".control-center-popout-dot")).not.toHaveClass("is-ready")
-      expect(rowButton.querySelector(".control-center-popout-dot")).not.toHaveClass(
-        "is-completed-unseen"
-      )
+      expect(document.querySelector(".control-center-popout-row.is-completed-unseen")).toBeNull()
+      expect(screen.queryByRole("heading", { name: /New replies/i })).not.toBeInTheDocument()
       expect(
         screen.queryByText((_content, node) =>
           node?.textContent === "You: Can you ship the pop-out changes?"
         )
       ).not.toBeInTheDocument()
     })
+  })
+
+  it("groups work by state, cleans reply previews, and keeps earlier threads accessible", async () => {
+    const base: LiveThreadRecord = {
+      id: "codex:working", sourceSessionId: "working", provider: "codex",
+      threadName: "Check covers", projectPath: "/tmp/client", transcriptPath: null,
+      status: "running", lastEventAt: "2026-03-14T02:00:00.000Z",
+      lastUserPreview: "<task-notification>internal prompt</task-notification>",
+      lastAssistantPreview: "**Checking** [covers](https://example.com) in `/Users/tedikonda/project/covers.json`.",
+      assistantPreviewKind: "message", launchMode: "app", hostAppLabel: "Codex.app",
+      hostAppExact: true, pendingRequest: null, acknowledgedAt: null, dismissedAt: null
+    }
+    const { api } = createMockApi({
+      sessions: [], transcriptById: {},
+      controlCenterRecords: [
+        { ...base, id: "claude:earlier", provider: "claude", threadName: "Earlier review", status: "completed", acknowledgedAt: "2026-03-14T02:05:00.000Z" },
+        { ...base, id: "claude:reply", provider: "claude", threadName: "Cover reply", status: "completed", lastAssistantPreview: "<task-notification><task-id>internal</task-id></task-notification>**The covers are ready.**" },
+        base,
+        { ...base, id: "claude:failed", provider: "claude", threadName: "Retry build", status: "failed", lastAssistantPreview: "<system-reminder>internal</system-reminder>" }
+      ]
+    })
+    window.handoffApp = api
+    render(<App />)
+    await userEvent.click(await screen.findByRole("button", { name: /Control Center/i }))
+
+    expect(within(screen.getByRole("list", { name: "Needs attention" })).getByText("Retry build")).toBeInTheDocument()
+    expect(within(screen.getByRole("list", { name: "Working" })).getByText("Check covers")).toBeInTheDocument()
+    expect(within(screen.getByRole("list", { name: "New replies" })).getByText("Cover reply")).toBeInTheDocument()
+    expect(screen.getByText("Checking covers in a local file.")).toBeInTheDocument()
+    expect(screen.getByText("The covers are ready.")).toBeInTheDocument()
+    expect(screen.getByText("The latest run failed.")).toBeInTheDocument()
+    expect(screen.queryByText(/internal prompt|task-notification|system-reminder|tedikonda\/project/)).not.toBeInTheDocument()
+    expect(document.querySelector("button button")).toBeNull()
+    expect(document.querySelector(".control-center-group.is-earlier")).not.toHaveAttribute("open")
+
+    await userEvent.click(screen.getByRole("button", { name: "Connect both" }))
+    expect(api.skills.install).toHaveBeenCalledWith("both")
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Connect both" })).not.toBeInTheDocument()
+    })
+
+    await userEvent.click(screen.getByText("Earlier"))
+    await userEvent.click(screen.getByRole("button", { name: /Open Earlier review/ }))
+    expect(api.controlCenter.open).toHaveBeenCalledWith("claude:earlier")
+    await userEvent.click(screen.getByRole("button", { name: "Clear finished" }))
+    expect(api.controlCenter.dismissCompleted).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole("button", { name: /Open Check covers/ })).toBeInTheDocument()
   })
 
   it("renders a mixed-source sidebar and switches source-aware actions with the selected transcript", async () => {
